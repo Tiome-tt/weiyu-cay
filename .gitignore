@@ -1,0 +1,19 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+target/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local brainstorming companion artifacts
+.superpowers/
