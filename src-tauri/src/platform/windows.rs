@@ -171,8 +171,12 @@ fn replace_file_with_backup_using<O: ReplaceOperations>(
         return match operations.move_replace(backup_storage, destination) {
             Ok(()) => Err(PublishFailure::not_published(error)),
             Err(restore_error) => {
-                let descriptor_result =
-                    persist_recovery_descriptor(source, destination, backup_storage);
+                let descriptor_result = persist_recovery_descriptor_using(
+                    source,
+                    destination,
+                    backup_storage,
+                    operations,
+                );
                 let diagnostic = match descriptor_result {
                     Ok(()) => format!("{error}; restoring backup failed with Windows error {restore_error}; recovery descriptor persisted"),
                     Err(marker) => format!("{error}; restoring backup failed with Windows error {restore_error}; recovery descriptor failed: {marker}"),
@@ -242,10 +246,11 @@ fn recovery_descriptor_path(destination: &Path) -> PathBuf {
     ))
 }
 
-fn persist_recovery_descriptor(
+fn persist_recovery_descriptor_using<O: ReplaceOperations>(
     source: &Path,
     destination: &Path,
     backup: &Path,
+    operations: &mut O,
 ) -> Result<(), CommandError> {
     let parent = destination
         .parent()
@@ -264,6 +269,19 @@ fn persist_recovery_descriptor(
         backup_identity: FileIdentity::from_path(backup)?,
     };
     let marker = recovery_descriptor_path(destination);
+    match fs::symlink_metadata(&marker) {
+        Ok(_) => {
+            return Err(CommandError::conflict(
+                "an unresolved recovery descriptor already exists",
+            ))
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(CommandError::io(format!(
+                "could not inspect recovery descriptor: {source}"
+            )))
+        }
+    }
     let temporary = marker.with_file_name(format!(".replace-recovery.{}.tmp", Uuid::now_v7()));
     let mut file = OpenOptions::new()
         .create_new(true)
@@ -282,14 +300,13 @@ fn persist_recovery_descriptor(
             CommandError::io(format!("could not sync recovery descriptor: {source}"))
         })?;
     drop(file);
-    if marker.exists() {
-        fs::remove_file(&marker).map_err(|source| {
-            CommandError::io(format!("could not replace recovery descriptor: {source}"))
-        })?;
-    }
-    fs::rename(&temporary, &marker).map_err(|source| {
-        CommandError::io(format!("could not publish recovery descriptor: {source}"))
-    })
+    operations
+        .move_replace(&temporary, &marker)
+        .map_err(|code| {
+            CommandError::io(format!(
+                "could not publish recovery descriptor with write-through: Windows error {code}"
+            ))
+        })
 }
 
 pub fn recover_file(destination: &Path) -> Result<(), CommandError> {
@@ -697,8 +714,8 @@ fn wide(value: &OsStr) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_replace_error, replace_file_with_backup_using, FileIdentity, ReplaceFailureAction,
-        ReplaceOperations,
+        classify_replace_error, persist_recovery_descriptor_using, replace_file_with_backup_using,
+        FileIdentity, ReplaceFailureAction, ReplaceOperations,
     };
     use crate::storage::atomic_file::PublishState;
     use std::{collections::VecDeque, fs, path::Path};
@@ -706,6 +723,7 @@ mod tests {
     struct FakeReplaceOperations {
         replace_results: VecDeque<Result<(), i32>>,
         move_results: VecDeque<Result<(), i32>>,
+        moves: Vec<(std::path::PathBuf, std::path::PathBuf)>,
     }
 
     impl ReplaceOperations for FakeReplaceOperations {
@@ -719,6 +737,8 @@ mod tests {
         }
 
         fn move_replace(&mut self, source: &Path, destination: &Path) -> Result<(), i32> {
+            self.moves
+                .push((source.to_path_buf(), destination.to_path_buf()));
             match self.move_results.pop_front().expect("move result") {
                 Ok(()) => fs::rename(source, destination)
                     .map_err(|error| error.raw_os_error().unwrap_or(1)),
@@ -758,6 +778,7 @@ mod tests {
         let mut operations = FakeReplaceOperations {
             replace_results: VecDeque::from([Err(1177)]),
             move_results: VecDeque::from([Ok(())]),
+            moves: Vec::new(),
         };
 
         let failure =
@@ -780,7 +801,8 @@ mod tests {
         let backup_identity = FileIdentity::from_path(&backup).unwrap();
         let mut operations = FakeReplaceOperations {
             replace_results: VecDeque::from([Err(1177)]),
-            move_results: VecDeque::from([Err(32)]),
+            move_results: VecDeque::from([Err(32), Ok(())]),
+            moves: Vec::new(),
         };
 
         let failure =
@@ -804,7 +826,8 @@ mod tests {
         fs::write(root.path().join("backup-wal"), b"old wal").unwrap();
         let mut failed = FakeReplaceOperations {
             replace_results: VecDeque::from([Err(1177)]),
-            move_results: VecDeque::from([Err(32)]),
+            move_results: VecDeque::from([Err(32), Ok(())]),
+            moves: Vec::new(),
         };
         let failure =
             replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
@@ -859,7 +882,8 @@ mod tests {
         fs::rename(&destination, &backup).unwrap();
         let mut failed = FakeReplaceOperations {
             replace_results: VecDeque::from([Err(1177)]),
-            move_results: VecDeque::from([Err(32)]),
+            move_results: VecDeque::from([Err(32), Ok(())]),
+            moves: Vec::new(),
         };
         assert_eq!(
             replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
@@ -881,5 +905,126 @@ mod tests {
                 .unwrap_err();
         assert_eq!(error.code(), crate::error::CommandErrorCode::Validation);
         assert!(super::validate_regular_file_metadata(0, true).is_ok());
+    }
+
+    #[test]
+    fn recovery_descriptor_publication_uses_write_through_adapter_and_preserves_temp_on_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("index.sqlite");
+        let backup = root.path().join("backup");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&backup, b"old").unwrap();
+        let mut operations = FakeReplaceOperations {
+            replace_results: VecDeque::new(),
+            move_results: VecDeque::from([Err(5)]),
+            moves: Vec::new(),
+        };
+
+        assert!(
+            persist_recovery_descriptor_using(&source, &destination, &backup, &mut operations,)
+                .is_err()
+        );
+
+        assert_eq!(operations.moves.len(), 1);
+        assert_eq!(
+            operations.moves[0].1,
+            super::recovery_descriptor_path(&destination)
+        );
+        assert!(operations.moves[0].0.is_file());
+        assert_eq!(fs::read(source).unwrap(), b"new");
+        assert_eq!(fs::read(backup).unwrap(), b"old");
+    }
+
+    #[test]
+    fn unresolved_recovery_descriptor_is_never_deleted_or_overwritten() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("index.sqlite");
+        let backup = root.path().join("backup");
+        let marker = super::recovery_descriptor_path(&destination);
+        fs::write(&source, b"new").unwrap();
+        fs::write(&backup, b"old").unwrap();
+        fs::write(&marker, b"unresolved descriptor").unwrap();
+        let mut operations = FakeReplaceOperations {
+            replace_results: VecDeque::new(),
+            move_results: VecDeque::new(),
+            moves: Vec::new(),
+        };
+
+        assert!(
+            persist_recovery_descriptor_using(&source, &destination, &backup, &mut operations,)
+                .is_err()
+        );
+
+        assert!(operations.moves.is_empty());
+        assert_eq!(fs::read(marker).unwrap(), b"unresolved descriptor");
+        assert_eq!(fs::read(source).unwrap(), b"new");
+        assert_eq!(fs::read(backup).unwrap(), b"old");
+    }
+
+    fn recovery_required_note_writer(
+        paths: &crate::storage::paths::StoragePaths,
+        id: crate::domain::NoteId,
+        kind: crate::domain::NoteKind,
+        bytes: &[u8],
+    ) -> crate::storage::atomic_file::PublishResult {
+        let directory = paths.note_dir(id, kind).unwrap();
+        let destination = directory.join("note.md");
+        let source = directory.join("injected-source.tmp");
+        let backup = directory.join("injected-backup.tmp");
+        fs::write(&source, bytes).unwrap();
+        fs::rename(&destination, &backup).unwrap();
+        let mut failed = FakeReplaceOperations {
+            replace_results: VecDeque::from([Err(1177)]),
+            move_results: VecDeque::from([Err(32), Ok(())]),
+            moves: Vec::new(),
+        };
+        replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
+    }
+
+    #[test]
+    fn repository_load_recovers_note_and_consumes_application_recovery_signal() {
+        use crate::{
+            domain::{NoteDocument, NoteId, NoteKind},
+            storage::{database::Database, paths::StoragePaths, repository::NoteRepository},
+        };
+        let root = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(root.path()).unwrap();
+        let database = Database::open(paths.database()).unwrap();
+        database.migrate().unwrap();
+        let id = NoteId::parse_str("019c0000-0000-7000-8000-000000000402").unwrap();
+        let original = NoteDocument {
+            id,
+            kind: NoteKind::Formal,
+            title: "Recovery load".to_owned(),
+            folder_id: None,
+            tags: Vec::new(),
+            markdown: "old canonical body".to_owned(),
+            revision: 0,
+            created_at: "2026-07-31T00:00:00Z".to_owned(),
+            updated_at: "2026-07-31T00:00:00Z".to_owned(),
+        };
+        let repository = NoteRepository::new(paths.clone(), database);
+        repository.create(original.clone()).unwrap();
+        let repository = NoteRepository::new_with_writer(
+            paths.clone(),
+            Database::open(paths.database()).unwrap(),
+            recovery_required_note_writer,
+        );
+        let mut updated = original.clone();
+        updated.markdown = "new interrupted body".to_owned();
+        assert!(repository.save(updated, 0).is_err());
+        let note_dir = paths.note_dir(id, NoteKind::Formal).unwrap();
+        let descriptor = note_dir.join(".note.md.replace-recovery.json");
+        let signal = paths.root().join("recovery-needed.json");
+        assert!(descriptor.is_file());
+        assert!(signal.is_file());
+
+        let loaded = repository.load(id).unwrap();
+
+        assert_eq!(loaded.markdown, original.markdown);
+        assert!(!descriptor.exists());
+        assert!(!signal.exists());
     }
 }

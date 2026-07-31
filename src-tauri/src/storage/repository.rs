@@ -14,6 +14,8 @@ use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
 use uuid::Uuid;
 
 const REBUILD_MARKER: &str = "rebuild-needed.json";
+const RECOVERY_MARKER: &str = "recovery-needed.json";
+const NOTE_RECOVERY_DESCRIPTOR: &str = ".note.md.replace-recovery.json";
 
 pub struct NoteRepository {
     paths: StoragePaths,
@@ -36,7 +38,7 @@ struct NoteMetadata {
     updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RebuildMarker<'a> {
     reason: &'a str,
@@ -92,17 +94,17 @@ impl NoteRepository {
     pub fn load(&self, id: NoteId) -> Result<NoteDocument, CommandError> {
         let mut found = None;
         for kind in [NoteKind::Formal, NoteKind::Temporary] {
-            let path = self.document_path(id, kind)?;
-            match fs::symlink_metadata(&path) {
+            let note_directory = self.paths.note_dir(id, kind)?;
+            match fs::symlink_metadata(&note_directory) {
                 Err(source) if source.kind() == ErrorKind::NotFound => continue,
                 Err(source) => {
                     return Err(CommandError::io(format!(
-                        "could not inspect note document: {source}"
+                        "could not inspect note directory: {source}"
                     )))
                 }
-                Ok(metadata) if metadata.file_type().is_symlink() => {
+                Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
                     return Err(CommandError::validation(
-                        "canonical note document must not be a symlink",
+                        "canonical note directory must be a directory and not a symlink",
                     ))
                 }
                 Ok(_) => {}
@@ -114,6 +116,14 @@ impl NoteRepository {
                 &[collection, id_string.as_str()],
                 false,
             )?;
+            let recovery_pending = directory.regular_file_exists(NOTE_RECOVERY_DESCRIPTOR)?;
+            directory.recover("note.md")?;
+            if recovery_pending {
+                self.consume_recovery_marker(id)?;
+            }
+            if !directory.regular_file_exists("note.md")? {
+                continue;
+            }
             let bytes = directory.read("note.md", 64 * 1024 * 1024)?;
             let contents = String::from_utf8(bytes).map_err(|source| {
                 CommandError::validation(format!("note document is not UTF-8: {source}"))
@@ -288,6 +298,41 @@ impl NoteRepository {
         .map_err(PublishFailure::into_error)
     }
 
+    fn write_recovery_marker(&self, id: NoteId) -> Result<(), CommandError> {
+        let marker = serde_json::to_vec(&RebuildMarker {
+            reason: "atomic_replace_recovery_required",
+            note_id: id,
+        })
+        .map_err(|source| {
+            CommandError::io(format!("could not serialize recovery marker: {source}"))
+        })?;
+        crate::storage::atomic_file::atomic_replace_contained(
+            self.paths.root(),
+            &[],
+            RECOVERY_MARKER,
+            &marker,
+        )
+        .map(|_| ())
+        .map_err(PublishFailure::into_error)
+    }
+
+    fn consume_recovery_marker(&self, id: NoteId) -> Result<(), CommandError> {
+        let root = crate::platform::SafeDirectory::open(self.paths.root(), &[], false)?;
+        if !root.regular_file_exists(RECOVERY_MARKER)? {
+            return Ok(());
+        }
+        let marker_bytes = root.read(RECOVERY_MARKER, 64 * 1024)?;
+        let marker: RebuildMarker<'_> =
+            serde_json::from_slice(&marker_bytes).map_err(|source| {
+                CommandError::validation(format!("recovery marker is invalid: {source}"))
+            })?;
+        if marker.note_id == id {
+            root.remove_checked(RECOVERY_MARKER)?;
+            root.sync()?;
+        }
+        Ok(())
+    }
+
     fn validate_folder_exists(&self, folder_id: Option<FolderId>) -> Result<(), CommandError> {
         let Some(folder_id) = folder_id else {
             return Ok(());
@@ -322,6 +367,17 @@ impl NoteRepository {
                     return Err(CommandError::io(format!(
                         "{}; rebuild marker failed: {}",
                         original.diagnostic().unwrap_or("directory sync failed"),
+                        marker_error.diagnostic().unwrap_or("marker write failed")
+                    )));
+                }
+                Err(original)
+            }
+            Err(failure) if failure.state() == PublishState::RecoveryRequired => {
+                let original = failure.into_error();
+                if let Err(marker_error) = self.write_recovery_marker(document.id) {
+                    return Err(CommandError::io(format!(
+                        "{}; recovery marker failed: {}",
+                        original.diagnostic().unwrap_or("atomic recovery required"),
                         marker_error.diagnostic().unwrap_or("marker write failed")
                     )));
                 }
