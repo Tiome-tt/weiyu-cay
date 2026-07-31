@@ -11,7 +11,7 @@ import type { EditorMode, NoteDocument } from '../../domain/model'
 import type { AssetPort, NotePort, SearchPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
 import { MarkdownPreview } from './MarkdownPreview'
-import { MarkdownSource } from './MarkdownSource'
+import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
 
 interface EditorPaneProps {
@@ -47,6 +47,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const [tagTransactionActive, setTagTransactionActive] = useState(false)
   const previewRef = useRef<HTMLElement>(null)
   const sourceScrollRef = useRef<HTMLElement | null>(null)
+  const sourceRef = useRef<MarkdownSourceHandle>(null)
   const splitPointerRef = useRef<number | null>(null)
   const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
   const tagRequestRef = useRef(0)
@@ -65,8 +66,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     if (search === undefined) return
     const noteId = document.id
     const request = ++tagRequestRef.current
+    const source = sourceRef.current
     setTagTransactionActive(true)
     try {
+      await source?.beginEditBarrier()
+      if (tagRequestRef.current !== request) return
       if (!(await autosave.flush())) throw new Error('markdown flush failed')
       if (tagRequestRef.current !== request) return
       await search.updateTags(noteId, tags)
@@ -75,6 +79,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       if (tagRequestRef.current !== request || authoritative.id !== noteId) return
       onDocumentAdopt?.(authoritative)
     } finally {
+      source?.endEditBarrier()
       setTagTransactionActive(false)
     }
   }
@@ -149,6 +154,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       >
         <div className="editor-document__source" hidden={mode === 'preview'}>
           <MarkdownSource
+            ref={sourceRef}
             markdown={autosave.markdown}
             noteId={document.id}
             assets={assets}

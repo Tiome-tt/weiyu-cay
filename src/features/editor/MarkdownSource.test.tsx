@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MarkdownSource } from './MarkdownSource'
+import { createRef } from 'react'
+import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { fakeAssetPort, noteId, pngBytes } from '../../test/fakes'
 
 afterEach(cleanup)
@@ -152,5 +153,36 @@ describe('MarkdownSource', () => {
     )
     view.dispatch({ changes: { from: 4, insert: ' editing' } })
     expect(view.state.doc.toString()).toBe('kept editing')
+  })
+
+  it('waits for every pre-barrier image paste and inserts each mapped reference', async () => {
+    let finishFirst!: (value: { relativePath: string; width: number; height: number }) => void
+    let finishSecond!: (value: { relativePath: string; width: number; height: number }) => void
+    const assets = {
+      saveImage: vi.fn()
+        .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve }))
+        .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve })),
+    }
+    const ref = createRef<MarkdownSourceHandle>()
+    render(<MarkdownSource ref={ref} markdown="AB" noteId={noteId} assets={assets} onChange={vi.fn()} />)
+    const view = editorView()
+    view.dispatch({ selection: EditorSelection.cursor(1) })
+    fireEvent.paste(view.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    view.dispatch({ selection: EditorSelection.cursor(0) })
+    fireEvent.paste(view.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    await vi.waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
+
+    const barrier = ref.current!.beginEditBarrier()
+    view.dispatch({ changes: { from: 0, insert: 'blocked' } })
+    expect(view.state.doc.toString()).toBe('AB')
+    await act(async () => finishSecond({ relativePath: 'assets/second.png', width: 1, height: 1 }))
+    await act(async () => finishFirst({ relativePath: 'assets/first.png', width: 1, height: 1 }))
+    await barrier
+
+    expect(view.state.doc.toString()).toContain('![截图](assets/first.png)')
+    expect(view.state.doc.toString()).toContain('![截图](assets/second.png)')
+    ref.current!.endEditBarrier()
+    view.dispatch({ changes: { from: view.state.doc.length, insert: ' editable' } })
+    expect(view.state.doc.toString()).toMatch(/ editable$/)
   })
 })
