@@ -211,21 +211,13 @@ fn replace_file_with_backup_using<O: ReplaceOperations>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct FileIdentity {
+pub(crate) struct FileIdentity {
     volume: u64,
     index: u64,
 }
 
 impl FileIdentity {
-    fn from_path(path: &Path) -> Result<Self, CommandError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-            .map_err(|source| {
-                CommandError::io(format!("could not open recovery file: {source}"))
-            })?;
+    fn from_file(file: &File) -> Result<Self, CommandError> {
         let metadata = file.metadata().map_err(|source| {
             CommandError::io(format!("could not inspect recovery file: {source}"))
         })?;
@@ -244,7 +236,21 @@ impl FileIdentity {
             index: (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low),
         })
     }
+
+    fn from_path(path: &Path) -> Result<Self, CommandError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!("could not open recovery file: {source}"))
+            })?;
+        Self::from_file(&file)
+    }
 }
+
+type ContainedFileIdentity = FileIdentity;
 
 #[derive(Serialize, Deserialize)]
 struct RecoveryDescriptor {
@@ -527,6 +533,10 @@ impl SafeDirectory {
             })
     }
 
+    pub(crate) fn file_identity(&self, file: &File) -> Result<ContainedFileIdentity, CommandError> {
+        ContainedFileIdentity::from_file(file)
+    }
+
     pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
         let path = self.child_path(name)?;
         validate_regular_or_missing(&path)?;
@@ -644,6 +654,30 @@ impl SafeDirectory {
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(source) => Err(CommandError::io(format!(
                 "could not inspect contained file for removal: {source}"
+            ))),
+        }
+    }
+
+    pub(crate) fn remove_if_identity(
+        &self,
+        name: &str,
+        expected: ContainedFileIdentity,
+    ) -> Result<bool, CommandError> {
+        let path = self.child_path(name)?;
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+                if ContainedFileIdentity::from_path(&path)? != expected {
+                    return Ok(false);
+                }
+                fs::remove_file(path).map_err(|source| {
+                    CommandError::io(format!("could not remove owned contained file: {source}"))
+                })?;
+                Ok(true)
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(CommandError::io(format!(
+                "could not inspect owned contained file for removal: {source}"
             ))),
         }
     }

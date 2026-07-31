@@ -5,7 +5,7 @@ use crate::{
 use rustix::{
     fd::OwnedFd,
     fs::{
-        fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
+        fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
         OFlags, CWD,
     },
 };
@@ -69,6 +69,12 @@ pub fn recover_file(_destination: &Path) -> Result<(), CommandError> {
 pub struct SafeDirectory {
     fd: OwnedFd,
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ContainedFileIdentity {
+    device: u64,
+    inode: u64,
 }
 
 impl SafeDirectory {
@@ -141,6 +147,26 @@ impl SafeDirectory {
         )
         .map_err(|source| CommandError::io(format!("could not create contained file: {source}")))?;
         Ok(fd.into())
+    }
+
+    pub(crate) fn file_identity(
+        &self,
+        file: &fs::File,
+    ) -> Result<ContainedFileIdentity, CommandError> {
+        let stat = fstat(file).map_err(|source| {
+            CommandError::io(format!(
+                "could not identify created contained file: {source}"
+            ))
+        })?;
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+            return Err(CommandError::validation(
+                "created contained entry is not a regular file",
+            ));
+        }
+        Ok(ContainedFileIdentity {
+            device: stat.st_dev,
+            inode: stat.st_ino,
+        })
     }
 
     pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
@@ -260,6 +286,35 @@ impl SafeDirectory {
         }
         unlinkat(&self.fd, name, AtFlags::empty()).map_err(|source| {
             CommandError::io(format!("could not remove contained file: {source}"))
+        })?;
+        Ok(true)
+    }
+
+    pub(crate) fn remove_if_identity(
+        &self,
+        name: &str,
+        expected: ContainedFileIdentity,
+    ) -> Result<bool, CommandError> {
+        validate_child_name(name)?;
+        let stat = match statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(source) if source == rustix::io::Errno::NOENT => return Ok(false),
+            Err(source) => {
+                return Err(CommandError::io(format!(
+                    "could not identify owned contained file: {source}"
+                )))
+            }
+        };
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+            return Err(CommandError::validation(
+                "owned contained entry is not a regular file",
+            ));
+        }
+        if (stat.st_dev, stat.st_ino) != (expected.device, expected.inode) {
+            return Ok(false);
+        }
+        unlinkat(&self.fd, name, AtFlags::empty()).map_err(|source| {
+            CommandError::io(format!("could not remove owned contained file: {source}"))
         })?;
         Ok(true)
     }

@@ -2,12 +2,12 @@ mod support;
 
 use image::{DynamicImage, ImageFormat};
 use simple_notes_lib::{
-    commands::assets::{save_image_to, validate_image},
+    commands::assets::{save_image_to, save_image_to_with, validate_image},
     domain::{NoteDocument, NoteId, NoteKind, SaveImageInput},
     error::CommandErrorCode,
     storage::{database::Database, repository::NoteRepository},
 };
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use support::TestStore;
 
 const FORMAL_ID: &str = "019c0000-0000-7000-8000-000000000071";
@@ -106,6 +106,151 @@ fn rejects_unknown_note_ids_without_leaking_the_storage_root() {
     assert!(error.diagnostic().is_some());
 }
 
+#[test]
+fn write_and_directory_sync_failures_clean_only_the_created_partial_asset() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let asset_dir = store
+        .paths
+        .assets_dir(id(FORMAL_ID), NoteKind::Formal)
+        .unwrap();
+    let write_uuid = uuid("019c0000-0000-7000-8000-000000000081");
+    let mut names = || write_uuid;
+    let mut fail_write = |file: &mut std::fs::File, _bytes: &[u8]| {
+        file.write_all(b"partial").unwrap();
+        Err(simple_notes_lib::error::CommandError::io(
+            "injected write failure",
+        ))
+    };
+    let mut sync =
+        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+
+    save_image_to_with(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut fail_write,
+        &mut sync,
+    )
+    .unwrap_err();
+    assert!(!asset_dir
+        .join(format!("screenshot-{write_uuid}.png"))
+        .exists());
+
+    let sync_uuid = uuid("019c0000-0000-7000-8000-000000000082");
+    let mut names = || sync_uuid;
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut fail_sync = |_directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| {
+        Err(simple_notes_lib::error::CommandError::io(
+            "injected sync failure",
+        ))
+    };
+    save_image_to_with(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut fail_sync,
+    )
+    .unwrap_err();
+    assert!(!asset_dir
+        .join(format!("screenshot-{sync_uuid}.png"))
+        .exists());
+}
+
+#[test]
+fn cleanup_never_deletes_a_replacement_that_arrives_before_sync_failure() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let uuid = uuid("019c0000-0000-7000-8000-000000000083");
+    let filename = format!("screenshot-{uuid}.png");
+    let mut names = || uuid;
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut replace_then_fail = |directory: &simple_notes_lib::platform::SafeDirectory,
+                                 name: &str| {
+        assert_eq!(name, filename);
+        directory.remove_checked(name).unwrap();
+        let mut replacement = directory.create_new(name).unwrap();
+        replacement
+            .write_all(b"replacement-owned-elsewhere")
+            .unwrap();
+        replacement.sync_all().unwrap();
+        Err(simple_notes_lib::error::CommandError::io(
+            "injected sync failure",
+        ))
+    };
+
+    save_image_to_with(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut replace_then_fail,
+    )
+    .unwrap_err();
+
+    let asset = store
+        .paths
+        .assets_dir(id(FORMAL_ID), NoteKind::Formal)
+        .unwrap()
+        .join(filename);
+    assert_eq!(
+        std::fs::read(asset).unwrap(),
+        b"replacement-owned-elsewhere"
+    );
+}
+
+#[test]
+fn deterministic_name_collision_preserves_existing_bytes_and_retries_a_new_name() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let first = uuid("019c0000-0000-7000-8000-000000000084");
+    let second = uuid("019c0000-0000-7000-8000-000000000085");
+    let existing_name = format!("screenshot-{first}.png");
+    let directory = simple_notes_lib::platform::SafeDirectory::open(
+        store.paths.root(),
+        &["notes", FORMAL_ID, "assets"],
+        true,
+    )
+    .unwrap();
+    let mut existing = directory.create_new(&existing_name).unwrap();
+    existing.write_all(b"existing").unwrap();
+    existing.sync_all().unwrap();
+    drop(existing);
+    let mut candidates = [first, second].into_iter();
+    let mut names = || candidates.next().unwrap();
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut sync =
+        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+
+    let saved = save_image_to_with(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut sync,
+    )
+    .unwrap();
+
+    assert_eq!(directory.read(&existing_name, 100).unwrap(), b"existing");
+    assert_eq!(
+        saved.relative_path,
+        format!("assets/screenshot-{second}.png")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn rejects_a_symlinked_assets_directory_escape() {
@@ -185,6 +330,10 @@ fn create_note(store: &TestStore, note_id: &str, kind: NoteKind) {
 
 fn id(value: &str) -> NoteId {
     NoteId::parse_str(value).unwrap()
+}
+
+fn uuid(value: &str) -> uuid::Uuid {
+    uuid::Uuid::parse_str(value).unwrap()
 }
 
 fn encoded(format: ImageFormat, width: u32, height: u32) -> Vec<u8> {

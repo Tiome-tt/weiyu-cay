@@ -6,7 +6,10 @@ use crate::{
     storage::{database::Database, paths::StoragePaths, repository::NoteRepository},
 };
 use image::{GenericImageView, ImageFormat, ImageReader, Limits};
-use std::io::{Cursor, Write};
+use std::{
+    fs::File,
+    io::{Cursor, Write},
+};
 use tauri::State;
 use uuid::Uuid;
 
@@ -102,6 +105,29 @@ pub fn save_image_to(
     paths: &StoragePaths,
     input: SaveImageInput,
 ) -> Result<SavedImage, CommandError> {
+    let mut next_uuid = Uuid::now_v7;
+    let mut write = |file: &mut File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| CommandError::io(format!("could not persist image asset: {source}")))
+    };
+    let mut sync = |directory: &SafeDirectory, _filename: &str| directory.sync();
+    save_image_to_with(paths, input, &mut next_uuid, &mut write, &mut sync)
+}
+
+#[doc(hidden)]
+pub fn save_image_to_with<N, W, S>(
+    paths: &StoragePaths,
+    input: SaveImageInput,
+    next_uuid: &mut N,
+    write: &mut W,
+    sync: &mut S,
+) -> Result<SavedImage, CommandError>
+where
+    N: FnMut() -> Uuid,
+    W: FnMut(&mut File, &[u8]) -> Result<(), CommandError>,
+    S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
+{
     let validated = validate_image(&input.media_type, &input.bytes)?;
     let database = Database::open(paths.database())?;
     database.migrate()?;
@@ -116,24 +142,26 @@ pub fn save_image_to(
     for _ in 0..32 {
         let filename = format!(
             "screenshot-{}.{}",
-            Uuid::now_v7().hyphenated(),
+            next_uuid().hyphenated(),
             validated.extension()
         );
         let mut file = match directory.create_new(&filename) {
             Ok(file) => file,
-            Err(_error) if directory.regular_file_exists(&filename).unwrap_or(false) => continue,
-            Err(error) => return Err(error),
+            Err(error) => match directory.regular_file_exists(&filename) {
+                Ok(true) => continue,
+                Ok(false) => return Err(error),
+                Err(inspect_error) => return Err(inspect_error),
+            },
         };
-        if let Err(source) = file.write_all(&input.bytes).and_then(|()| file.sync_all()) {
+        let identity = directory.file_identity(&file)?;
+        if let Err(error) = write(&mut file, &input.bytes) {
             drop(file);
-            let _ = directory.remove_checked(&filename);
-            return Err(CommandError::io(format!(
-                "could not persist image asset: {source}"
-            )));
+            let _ = directory.remove_if_identity(&filename, identity);
+            return Err(error);
         }
         drop(file);
-        if let Err(error) = directory.sync() {
-            let _ = directory.remove_checked(&filename);
+        if let Err(error) = sync(&directory, &filename) {
+            let _ = directory.remove_if_identity(&filename, identity);
             return Err(error);
         }
         return Ok(SavedImage {
