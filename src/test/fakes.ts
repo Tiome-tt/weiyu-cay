@@ -22,29 +22,31 @@ export const folders = (): Folder[] => [
 ]
 
 export const fakeNotePort = (overrides: Partial<NotePort> = {}): NotePort => ({
-  createNote: vi.fn(),
-  loadNote: vi.fn(),
-  saveNote: vi.fn(),
-  listNotes: vi.fn(),
-  moveNote: vi.fn(),
+  createNote: vi.fn().mockResolvedValue(note()),
+  loadNote: vi.fn().mockResolvedValue(note()),
+  saveNote: vi.fn().mockResolvedValue(note()),
+  listNotes: vi.fn().mockResolvedValue([]),
+  moveNote: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 })
 
-export const fakeFolderPort = (): FolderPort => ({
+export const fakeFolderPort = (overrides: Partial<FolderPort> = {}): FolderPort => ({
   listFolders: vi.fn().mockResolvedValue(folders()),
-  createFolder: vi.fn(),
-  renameFolder: vi.fn(),
-  moveFolder: vi.fn(),
-  deleteEmptyFolder: vi.fn(),
+  createFolder: vi.fn().mockResolvedValue(folders()[0]),
+  renameFolder: vi.fn().mockResolvedValue(folders()[0]),
+  moveFolder: vi.fn().mockResolvedValue(folders()[0]),
+  deleteEmptyFolder: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
 })
 
 export const fakeAssetPort = (
   saved: Awaited<ReturnType<AssetPort['saveImage']>>,
 ): AssetPort => ({ saveImage: vi.fn().mockResolvedValue(saved) })
 
-export const fakeSystemPort = (): SystemPort => ({
-  setWindowPreference: vi.fn(),
-  hideTemporaryWindow: vi.fn(),
+export const fakeSystemPort = (overrides: Partial<SystemPort> = {}): SystemPort => ({
+  setWindowPreference: vi.fn().mockResolvedValue(undefined),
+  hideTemporaryWindow: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
 })
 
 export const fakeTemporaryPort = (items: NoteDocument[]): TemporaryPort => ({

@@ -52,8 +52,11 @@ pub fn save_note(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn list_notes(state: State<'_, NoteCommandState>) -> Result<Vec<NoteSummary>, CommandError> {
-    repository(&state)?.list()
+pub fn list_notes(
+    state: State<'_, NoteCommandState>,
+    folder_id: Option<FolderId>,
+) -> Result<Vec<NoteSummary>, CommandError> {
+    repository(&state)?.list_in_folder(folder_id)
 }
 
 #[tauri::command(rename_all = "camelCase")]

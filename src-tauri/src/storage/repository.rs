@@ -210,6 +210,44 @@ impl NoteRepository {
         Ok(summaries)
     }
 
+    pub fn list_in_folder(
+        &self,
+        folder_id: Option<FolderId>,
+    ) -> Result<Vec<NoteSummary>, CommandError> {
+        self.validate_folder_exists(folder_id)?;
+        let folder = folder_id.map(folder_id_blob);
+        let mut statement = self
+            .database
+            .connection()
+            .prepare(
+                "SELECT id FROM notes WHERE folder_id IS ?1 AND kind = 'formal' AND deleted_at IS NULL \
+                 ORDER BY updated_at DESC, id",
+            )
+            .map_err(database_error("could not prepare folder note list"))?;
+        let ids = statement
+            .query_map(params![folder], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(database_error("could not query folder note list"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error("could not read folder note list"))?;
+        let mut summaries = Vec::with_capacity(ids.len());
+        for bytes in ids {
+            let id = note_id_from_blob(&bytes)?;
+            let document = self.load(id)?;
+            summaries.push(NoteSummary {
+                id: document.id,
+                kind: document.kind,
+                title: document.title,
+                folder_id: document.folder_id,
+                tags: document.tags,
+                revision: document.revision,
+                created_at: document.created_at,
+                updated_at: document.updated_at,
+                excerpt: document.markdown.chars().take(160).collect(),
+            });
+        }
+        Ok(summaries)
+    }
+
     pub fn move_note(
         &self,
         id: NoteId,

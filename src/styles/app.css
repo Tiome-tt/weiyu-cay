@@ -6,18 +6,344 @@ html,
 body,
 #root,
 .app-shell {
-  min-height: 100%;
+  height: 100%;
 }
 
 body {
   margin: 0;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--color-text);
   background: var(--color-canvas);
+  overflow: hidden;
 }
 
 .app-shell {
-  min-height: 100vh;
+  min-height: 100%;
   background: var(--color-surface);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.split-pane {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+
+.split-pane__segment {
+  display: contents;
+}
+
+.split-pane__pane {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-pane__divider {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 8px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.split-pane__divider::after {
+  position: absolute;
+  inset: 0 3px;
+  content: "";
+  background: transparent;
+  border-radius: 999px;
+  transition: background-color var(--motion-fast) ease;
+}
+
+.split-pane__divider:hover::after,
+.split-pane__divider:focus-visible::after {
+  background: var(--color-accent-strong);
+}
+
+.split-pane__divider:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-focus);
+  border-radius: 6px;
+}
+
+.library-pane {
+  height: 100%;
+  border: 1px solid var(--color-border-soft);
+}
+
+.library-pane--folders {
+  background: linear-gradient(180deg, var(--color-panel-warm), var(--color-panel));
+  border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+}
+
+.library-pane--notes {
+  background: var(--color-panel);
+  border-radius: var(--radius-panel);
+}
+
+.folder-tree,
+.note-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 20px 14px;
+}
+
+.library-pane__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 8px 18px;
+}
+
+.library-pane__header--compact {
+  padding-bottom: 12px;
+}
+
+.library-pane__header h1,
+.library-pane__header h2,
+.document-placeholder h2 {
+  margin: 2px 0 0;
+  color: var(--color-heading);
+  letter-spacing: -0.025em;
+}
+
+.library-pane__header h1 {
+  font-size: 1.18rem;
+}
+
+.library-pane__header h2 {
+  font-size: 1.05rem;
+}
+
+.library-pane__eyebrow {
+  color: var(--color-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--color-heading);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-border);
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: var(--color-accent);
+}
+
+.folder-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 10px;
+}
+
+.folder-actions button {
+  padding: 5px 9px;
+  color: var(--color-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.folder-actions button:hover:not(:disabled) {
+  color: var(--color-heading);
+  background: var(--color-surface);
+  border-color: var(--color-border-soft);
+}
+
+.folder-actions button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.folder-tree__list,
+.folder-tree__list ul,
+.note-list__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-tree__list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.folder-tree__list ul {
+  padding-left: 16px;
+}
+
+.folder-tree__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 9px;
+  margin: 2px 0;
+  padding: 9px 10px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.folder-tree__item:hover {
+  background: rgb(255 255 255 / 55%);
+}
+
+.folder-tree__item[aria-selected="true"] {
+  color: var(--color-heading);
+  font-weight: 650;
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+}
+
+.folder-form {
+  padding: 4px 8px;
+}
+
+.folder-form input {
+  width: 100%;
+  padding: 8px 9px;
+  color: var(--color-heading);
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent-strong);
+  border-radius: 9px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-soft);
+}
+
+.note-list__items {
+  min-height: 0;
+  overflow: auto;
+}
+
+.note-card {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  margin: 3px 0;
+  padding: 13px 14px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  cursor: pointer;
+}
+
+.note-card:hover {
+  background: var(--color-surface);
+}
+
+.note-card[aria-current="true"] {
+  background: var(--color-surface);
+  border-color: var(--color-border-soft);
+  box-shadow: var(--shadow-soft);
+}
+
+.note-card strong {
+  overflow: hidden;
+  color: var(--color-heading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card span {
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card time {
+  color: var(--color-muted-light);
+  font-size: 0.73rem;
+}
+
+.library-status {
+  margin: 10px 8px;
+  color: var(--color-muted);
+  font-size: 0.86rem;
+}
+
+.library-status--error,
+.content-placeholder--error {
+  color: var(--color-error);
+}
+
+.library-content {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  background:
+    radial-gradient(circle at 85% 12%, var(--color-accent-haze), transparent 28%),
+    var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-panel) 0 0 var(--radius-panel);
+}
+
+.content-placeholder {
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.content-placeholder__leaf {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  color: var(--color-accent-strong);
+  font-size: 1.5rem;
+  background: var(--color-accent-soft);
+  border-radius: 15px;
+  place-items: center;
+}
+
+.document-placeholder {
+  width: min(620px, calc(100% - 64px));
+  align-self: start;
+  justify-self: center;
+  margin-top: 10vh;
+  padding: 32px;
+  background: rgb(255 253 248 / 78%);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.document-placeholder p {
+  color: var(--color-muted);
+}
+
+button:focus-visible,
+input:focus-visible,
+[role="treeitem"]:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
