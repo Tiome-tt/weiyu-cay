@@ -25,8 +25,23 @@ export interface AssetPort {
 }
 
 export interface SystemPort {
-  setWindowPreference(key: string, value: unknown): Promise<void>
+  getWindowPreference<Key extends keyof WindowPreferenceMap>(
+    key: Key,
+  ): Promise<WindowPreferenceMap[Key] | undefined>
+  setWindowPreference<Key extends keyof WindowPreferenceMap>(
+    key: Key,
+    value: WindowPreferenceMap[Key],
+  ): Promise<void>
   hideTemporaryWindow(noteId: NoteId): Promise<void>
+}
+
+export interface LibraryColumnPreference {
+  folder: number
+  noteList: number
+}
+
+export interface WindowPreferenceMap {
+  'library-columns': LibraryColumnPreference
 }
 
 export interface TemporaryPort {

@@ -44,6 +44,7 @@ export const fakeAssetPort = (
 ): AssetPort => ({ saveImage: vi.fn().mockResolvedValue(saved) })
 
 export const fakeSystemPort = (overrides: Partial<SystemPort> = {}): SystemPort => ({
+  getWindowPreference: vi.fn().mockResolvedValue(undefined),
   setWindowPreference: vi.fn().mockResolvedValue(undefined),
   hideTemporaryWindow: vi.fn().mockResolvedValue(undefined),
   ...overrides,

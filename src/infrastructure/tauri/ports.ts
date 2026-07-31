@@ -1,6 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { FolderPort, SystemPort } from '../../domain/ports'
+import type { FolderPort, SystemPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -45,7 +45,14 @@ class TauriSystemPort implements SystemPort {
 
   constructor(private readonly client: TauriClient) {}
 
-  async setWindowPreference(key: string, value: unknown) {
+  async getWindowPreference<Key extends keyof WindowPreferenceMap>(key: Key) {
+    return this.preferences.get<WindowPreferenceMap[Key]>(key)
+  }
+
+  async setWindowPreference<Key extends keyof WindowPreferenceMap>(
+    key: Key,
+    value: WindowPreferenceMap[Key],
+  ) {
     await this.preferences.set(key, value)
   }
 

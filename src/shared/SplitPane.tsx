@@ -23,6 +23,7 @@ interface SplitPaneProps {
   defaultSizes: SplitPaneSizes
   minimumSizes: readonly [first: number, second: number, third: number]
   dividerLabels: readonly [first: string, second: string]
+  proportions?: SplitPaneSizes
   onCommit?: (sizes: SplitPaneSizes, containerWidth: number) => void
 }
 
@@ -38,6 +39,7 @@ export function SplitPane({
   defaultSizes,
   minimumSizes,
   dividerLabels,
+  proportions,
   onCommit,
 }: SplitPaneProps) {
   const panes = Children.toArray(children)
@@ -54,6 +56,17 @@ export function SplitPane({
   useEffect(() => {
     sizesRef.current = sizes
   }, [sizes])
+
+  useEffect(() => {
+    if (!proportions || containerWidth <= 0) return
+    const restored: SplitPaneSizes = [
+      proportions[0] * containerWidth,
+      proportions[1] * containerWidth,
+    ]
+    const next = fitIntoContainer(restored, minimumSizes, containerWidth)
+    sizesRef.current = next
+    setSizes(next)
+  }, [containerWidth, minimumSizes, proportions])
 
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -77,20 +90,29 @@ export function SplitPane({
 
   const measuredWidth = () => containerRef.current?.getBoundingClientRect().width ?? 0
 
-  const clampSizes = (candidate: SplitPaneSizes): SplitPaneSizes => {
+  const clampSizes = (candidate: SplitPaneSizes, divider: 0 | 1): SplitPaneSizes => {
     const width = measuredWidth()
     let first = Math.max(minimumSizes[0], candidate[0])
     let second = Math.max(minimumSizes[1], candidate[1])
     if (width > 0) {
       const available = Math.max(0, width - DIVIDER_WIDTH * 2)
-      first = Math.min(first, Math.max(minimumSizes[0], available - second - minimumSizes[2]))
-      second = Math.min(second, Math.max(minimumSizes[1], available - first - minimumSizes[2]))
+      if (divider === 0) {
+        first = Math.min(
+          first,
+          Math.max(minimumSizes[0], available - second - minimumSizes[2]),
+        )
+      } else {
+        second = Math.min(
+          second,
+          Math.max(minimumSizes[1], available - first - minimumSizes[2]),
+        )
+      }
     }
     return [first, second]
   }
 
-  const updateSizes = (candidate: SplitPaneSizes) => {
-    const next = clampSizes(candidate)
+  const updateSizes = (candidate: SplitPaneSizes, divider: 0 | 1) => {
+    const next = clampSizes(candidate, divider)
     sizesRef.current = next
     setSizes(next)
   }
@@ -107,12 +129,12 @@ export function SplitPane({
     if (!drag || drag.pointerId !== event.pointerId) return
     const left = containerRef.current?.getBoundingClientRect().left ?? 0
     if (drag.divider === 0) {
-      updateSizes([event.clientX - left, sizesRef.current[1]])
+      updateSizes([event.clientX - left, sizesRef.current[1]], drag.divider)
     } else {
-      updateSizes([
-        sizesRef.current[0],
-        event.clientX - left - sizesRef.current[0] - DIVIDER_WIDTH,
-      ])
+      updateSizes(
+        [sizesRef.current[0], event.clientX - left - sizesRef.current[0] - DIVIDER_WIDTH],
+        drag.divider,
+      )
     }
   }
 
@@ -129,7 +151,12 @@ export function SplitPane({
     event.preventDefault()
     const direction = event.key === 'ArrowRight' ? KEYBOARD_STEP : -KEYBOARD_STEP
     const current = sizesRef.current
-    updateSizes(divider === 0 ? [current[0] + direction, current[1]] : [current[0], current[1] + direction])
+    updateSizes(
+      divider === 0
+        ? [current[0] + direction, current[1]]
+        : [current[0], current[1] + direction],
+      divider,
+    )
   }
 
   const finishKeyboardResize = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -138,7 +165,10 @@ export function SplitPane({
 
   const reset = (divider: 0 | 1) => {
     const current = sizesRef.current
-    updateSizes(divider === 0 ? [defaultSizes[0], current[1]] : [current[0], defaultSizes[1]])
+    updateSizes(
+      divider === 0 ? [defaultSizes[0], current[1]] : [current[0], defaultSizes[1]],
+      divider,
+    )
     queueMicrotask(commit)
   }
 

@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
 
 interface FolderTreeProps {
@@ -15,8 +15,12 @@ interface FolderTreeProps {
 export function FolderTree(props: FolderTreeProps) {
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState<FolderId | null>(null)
+  const [moving, setMoving] = useState<FolderId | null>(null)
+  const [moveTarget, setMoveTarget] = useState<FolderId | null>(null)
+  const [focusedKey, setFocusedKey] = useState<'root' | FolderId>('root')
   const [name, setName] = useState('')
   const [error, setError] = useState(false)
+  const itemRefs = useRef(new Map<'root' | FolderId, HTMLButtonElement>())
 
   const finishCreate = async (event: FormEvent) => {
     event.preventDefault()
@@ -53,6 +57,19 @@ export function FolderTree(props: FolderTreeProps) {
     }
   }
 
+  const finishMove = async (event: FormEvent) => {
+    event.preventDefault()
+    if (moving === null) return
+    try {
+      await props.onMove(moving, moveTarget)
+      setMoving(null)
+      setMoveTarget(null)
+      setError(false)
+    } catch {
+      setError(true)
+    }
+  }
+
   const dropFolder = async (event: DragEvent, parentId: FolderId | null) => {
     event.preventDefault()
     const id = event.dataTransfer.getData('text/plain') as FolderId
@@ -66,6 +83,114 @@ export function FolderTree(props: FolderTreeProps) {
   }
 
   const selected = props.folders.find((folder) => folder.id === props.activeId)
+  const visibleKeys = useMemo<Array<'root' | FolderId>>(
+    () => ['root', ...flattenFolders(props.folders)],
+    [props.folders],
+  )
+
+  useEffect(() => {
+    if (!visibleKeys.includes(focusedKey)) {
+      setFocusedKey(props.activeId !== null && visibleKeys.includes(props.activeId) ? props.activeId : 'root')
+    }
+  }, [focusedKey, props.activeId, visibleKeys])
+
+  const focusItem = (key: 'root' | FolderId) => {
+    setFocusedKey(key)
+    queueMicrotask(() => itemRefs.current.get(key)?.focus())
+  }
+
+  const handleTreeKey = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    key: 'root' | FolderId,
+  ) => {
+    if (event.ctrlKey && event.key.toLowerCase() === 'm' && key !== 'root') {
+      event.preventDefault()
+      setMoving(key)
+      setMoveTarget(null)
+      return
+    }
+    const index = visibleKeys.indexOf(key)
+    let target: 'root' | FolderId | undefined
+    switch (event.key) {
+      case 'ArrowDown':
+        target = visibleKeys[Math.min(index + 1, visibleKeys.length - 1)]
+        break
+      case 'ArrowUp':
+        target = visibleKeys[Math.max(index - 1, 0)]
+        break
+      case 'Home':
+        target = visibleKeys[0]
+        break
+      case 'End':
+        target = visibleKeys[visibleKeys.length - 1]
+        break
+      case 'ArrowRight':
+        target = key === 'root'
+          ? props.folders.find((folder) => folder.parentId === null)?.id
+          : props.folders.find((folder) => folder.parentId === key)?.id
+        break
+      case 'ArrowLeft':
+        if (key !== 'root') {
+          target = props.folders.find((folder) => folder.id === key)?.parentId ?? 'root'
+        }
+        break
+      default:
+        return
+    }
+    if (target === undefined) return
+    event.preventDefault()
+    focusItem(target)
+  }
+
+  const registerItem = (key: 'root' | FolderId, node: HTMLButtonElement | null) => {
+    if (node) itemRefs.current.set(key, node)
+    else itemRefs.current.delete(key)
+  }
+
+  const renderBranch = (parentId: FolderId | null): React.ReactNode =>
+    props.folders
+      .filter((folder) => folder.parentId === parentId)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
+      .map((folder) => {
+        const hasChildren = props.folders.some((candidate) => candidate.parentId === folder.id)
+        return (
+          <li role="none" key={folder.id}>
+            {renaming === folder.id ? (
+              <form className="folder-form" onSubmit={(event) => void finishRename(event)}>
+                <input
+                  autoFocus
+                  aria-label="重命名文件夹"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </form>
+            ) : (
+              <button
+                ref={(node) => registerItem(folder.id, node)}
+                role="treeitem"
+                aria-selected={props.activeId === folder.id}
+                aria-expanded={hasChildren ? true : undefined}
+                aria-keyshortcuts="Control+M"
+                tabIndex={focusedKey === folder.id ? 0 : -1}
+                draggable
+                className="folder-tree__item"
+                type="button"
+                onFocus={() => setFocusedKey(folder.id)}
+                onKeyDown={(event) => handleTreeKey(event, folder.id)}
+                onClick={() => props.onSelect(folder.id)}
+                onDragStart={(event) => event.dataTransfer.setData('text/plain', folder.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => void dropFolder(event, folder.id)}
+              >
+                <span aria-hidden="true">▱</span> {folder.name}
+              </button>
+            )}
+            {hasChildren && <ul role="group">{renderBranch(folder.id)}</ul>}
+          </li>
+        )
+      })
+
+  const excludedMoveTargets = moving === null ? new Set<FolderId>() : descendantIds(moving, props.folders)
 
   return (
     <nav aria-label="文件夹" className="folder-tree">
@@ -91,6 +216,18 @@ export function FolderTree(props: FolderTreeProps) {
         >
           重命名
         </button>
+        <button
+          type="button"
+          aria-label="移动文件夹"
+          disabled={!selected}
+          onClick={() => {
+            if (!selected) return
+            setMoving(selected.id)
+            setMoveTarget(selected.parentId)
+          }}
+        >
+          移动
+        </button>
         <button type="button" aria-label="删除空文件夹" disabled={!selected} onClick={() => void runDelete()}>
           删除
         </button>
@@ -100,15 +237,40 @@ export function FolderTree(props: FolderTreeProps) {
           <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} />
         </form>
       )}
+      {moving && (
+        <form className="folder-move" onSubmit={(event) => void finishMove(event)}>
+          <select
+            autoFocus
+            aria-label="移动到"
+            value={moveTarget ?? ''}
+            onChange={(event) => setMoveTarget((event.target.value || null) as FolderId | null)}
+          >
+            <option value="">顶层</option>
+            {props.folders
+              .filter((folder) => !excludedMoveTargets.has(folder.id))
+              .map((folder) => (
+                <option value={folder.id} key={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+          </select>
+          <button type="submit">确认移动</button>
+          <button type="button" onClick={() => setMoving(null)}>取消</button>
+        </form>
+      )}
       {props.state === 'loading' && <p className="library-status">正在加载文件夹…</p>}
       {props.state === 'error' && <p className="library-status library-status--error">无法加载文件夹。</p>}
       <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list">
         <li role="none">
           <button
+            ref={(node) => registerItem('root', node)}
             role="treeitem"
             aria-selected={props.activeId === null}
+            tabIndex={focusedKey === 'root' ? 0 : -1}
             className="folder-tree__item"
             type="button"
+            onFocus={() => setFocusedKey('root')}
+            onKeyDown={(event) => handleTreeKey(event, 'root')}
             onClick={() => props.onSelect(null)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => void dropFolder(event, null)}
@@ -116,62 +278,28 @@ export function FolderTree(props: FolderTreeProps) {
             <span aria-hidden="true">⌂</span> 所有笔记
           </button>
         </li>
-        {renderBranch(null, props.folders, props.activeId, renaming, name, setName, finishRename, props.onSelect, dropFolder)}
+        {renderBranch(null)}
       </ul>
       {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
     </nav>
   )
 }
 
-function renderBranch(
-  parentId: FolderId | null,
-  folders: Folder[],
-  activeId: FolderId | null,
-  renaming: FolderId | null,
-  name: string,
-  setName: (value: string) => void,
-  finishRename: (event: FormEvent) => Promise<void>,
-  onSelect: (id: FolderId | null) => void,
-  dropFolder: (event: DragEvent, parentId: FolderId | null) => Promise<void>,
-) {
+function flattenFolders(folders: Folder[], parentId: FolderId | null = null): FolderId[] {
   return folders
     .filter((folder) => folder.parentId === parentId)
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
-    .map((folder) => {
-      const hasChildren = folders.some((candidate) => candidate.parentId === folder.id)
-      return (
-        <li role="none" key={folder.id}>
-          {renaming === folder.id ? (
-            <form className="folder-form" onSubmit={(event) => void finishRename(event)}>
-              <input
-                autoFocus
-                aria-label="重命名文件夹"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </form>
-          ) : (
-            <button
-              role="treeitem"
-              aria-selected={activeId === folder.id}
-              aria-expanded={hasChildren ? true : undefined}
-              draggable
-              className="folder-tree__item"
-              type="button"
-              onClick={() => onSelect(folder.id)}
-              onDragStart={(event) => event.dataTransfer.setData('text/plain', folder.id)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => void dropFolder(event, folder.id)}
-            >
-              <span aria-hidden="true">▱</span> {folder.name}
-            </button>
-          )}
-          {hasChildren && (
-            <ul role="group">
-              {renderBranch(folder.id, folders, activeId, renaming, name, setName, finishRename, onSelect, dropFolder)}
-            </ul>
-          )}
-        </li>
-      )
-    })
+    .flatMap((folder) => [folder.id, ...flattenFolders(folders, folder.id)])
+}
+
+function descendantIds(id: FolderId, folders: Folder[]): Set<FolderId> {
+  const result = new Set<FolderId>([id])
+  const visit = (parentId: FolderId) => {
+    for (const folder of folders.filter((candidate) => candidate.parentId === parentId)) {
+      result.add(folder.id)
+      visit(folder.id)
+    }
+  }
+  visit(id)
+  return result
 }

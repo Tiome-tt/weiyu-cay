@@ -226,6 +226,23 @@ button {
   padding: 4px 8px;
 }
 
+.folder-move {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  padding: 4px 8px 10px;
+}
+
+.folder-move select,
+.folder-move button {
+  min-width: 0;
+  padding: 7px 8px;
+  color: var(--color-heading);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 8px;
+}
+
 .folder-form input {
   width: 100%;
   padding: 8px 9px;

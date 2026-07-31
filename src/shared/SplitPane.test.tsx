@@ -150,6 +150,30 @@ describe('SplitPane', () => {
     expect(screen.getByTestId('third-pane')).toHaveStyle({ width: '420px' })
   })
 
+  it('preserves the folder width when the note-list divider reaches its maximum', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const { dividers } = renderPane()
+
+    fireEvent.pointerDown(dividers[1], { clientX: 548, pointerId: 9 })
+    fireEvent.pointerMove(dividers[1], { clientX: 1000, pointerId: 9 })
+    fireEvent.pointerUp(dividers[1], { pointerId: 9 })
+
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '324px' })
+    expect(dividers[0]).toHaveAttribute('aria-valuemax', '240')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '324')
+  })
+
   it('restores the applicable default on double click and has no visible instructions', () => {
     const { dividers } = renderPane()
 

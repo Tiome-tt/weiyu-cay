@@ -15,16 +15,20 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   const [activeFolderId, setActiveFolderId] = useState<FolderId | null>(null)
   const [activeNoteId, setActiveNoteId] = useState<NoteId | null>(null)
   const [document, setDocument] = useState<NoteDocument | null>(null)
-  const folderRequest = useRef(0)
+  const folderListRequest = useRef(0)
+  const noteListRequest = useRef(0)
   const noteRequest = useRef(0)
 
   const refreshFolders = useCallback(async () => {
+    const request = ++folderListRequest.current
     setFolderState('loading')
     try {
       const result = await foldersPort.listFolders()
+      if (folderListRequest.current !== request) return
       setFolders(result)
       setFolderState('ready')
     } catch {
+      if (folderListRequest.current !== request) return
       setFolderState('error')
     }
   }, [foldersPort])
@@ -34,18 +38,18 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   }, [refreshFolders])
 
   useEffect(() => {
-    const request = ++folderRequest.current
+    const request = ++noteListRequest.current
     setNoteListState('loading')
     setNotes([])
     void notesPort
       .listNotes(activeFolderId)
       .then((result) => {
-        if (folderRequest.current !== request) return
+        if (noteListRequest.current !== request) return
         setNotes(result)
         setNoteListState('ready')
       })
       .catch(() => {
-        if (folderRequest.current !== request) return
+        if (noteListRequest.current !== request) return
         setNoteListState('error')
       })
   }, [activeFolderId, notesPort])
@@ -81,35 +85,35 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
 
   const createFolder = useCallback(
     async (parentId: FolderId | null, name: string) => {
-      const created = await foldersPort.createFolder({ parentId, name })
-      setFolders((current) => [...current, created])
+      await foldersPort.createFolder({ parentId, name })
+      await refreshFolders()
     },
-    [foldersPort],
+    [foldersPort, refreshFolders],
   )
 
   const renameFolder = useCallback(
     async (id: FolderId, name: string) => {
-      const renamed = await foldersPort.renameFolder(id, name)
-      setFolders((current) => current.map((folder) => (folder.id === id ? renamed : folder)))
+      await foldersPort.renameFolder(id, name)
+      await refreshFolders()
     },
-    [foldersPort],
+    [foldersPort, refreshFolders],
   )
 
   const moveFolder = useCallback(
     async (id: FolderId, parentId: FolderId | null) => {
-      const moved = await foldersPort.moveFolder(id, parentId)
-      setFolders((current) => current.map((folder) => (folder.id === id ? moved : folder)))
+      await foldersPort.moveFolder(id, parentId)
+      await refreshFolders()
     },
-    [foldersPort],
+    [foldersPort, refreshFolders],
   )
 
   const deleteFolder = useCallback(
     async (id: FolderId) => {
       await foldersPort.deleteEmptyFolder(id)
-      setFolders((current) => current.filter((folder) => folder.id !== id))
       if (activeFolderId === id) selectFolder(null)
+      await refreshFolders()
     },
-    [activeFolderId, foldersPort, selectFolder],
+    [activeFolderId, foldersPort, refreshFolders, selectFolder],
   )
 
   return {

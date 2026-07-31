@@ -52,6 +52,66 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('restores valid saved column proportions against the measured container width', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1200,
+      top: 0,
+      width: 1200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const system = fakeSystemPort({
+      getWindowPreference: vi.fn().mockResolvedValue({ folder: 0.25, noteList: 0.3 }),
+    })
+
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await waitFor(() => expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '300px' }))
+    expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '360px' })
+    expect(system.getWindowPreference).toHaveBeenCalledWith('library-columns')
+  })
+
+  it.each([
+    ['non-object', 'bad'],
+    ['out-of-range', { folder: 1.2, noteList: 0.2 }],
+    ['over-full', { folder: 0.7, noteList: 0.5 }],
+  ])('falls back to defaults for a malformed %s preference', async (_case, value) => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1200,
+      top: 0,
+      width: 1200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const system = fakeSystemPort({ getWindowPreference: vi.fn().mockResolvedValue(value) })
+
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await waitFor(() => expect(system.getWindowPreference).toHaveBeenCalled())
+    expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
+  })
+
+  it('keeps usable defaults when loading the saved preference fails', async () => {
+    const system = fakeSystemPort({
+      getWindowPreference: vi.fn().mockRejectedValue(new Error('store unavailable')),
+    })
+
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await waitFor(() => expect(system.getWindowPreference).toHaveBeenCalled())
+    expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
+  })
+
   it('resizes columns by dragging an unlabeled visual divider and resets on double click', () => {
     vi.spyOn(HTMLElement.prototype, 'setPointerCapture').mockImplementation(() => undefined)
     vi.spyOn(HTMLElement.prototype, 'releasePointerCapture').mockImplementation(() => undefined)
@@ -161,6 +221,90 @@ describe('LibraryLayout', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: '第一篇' })).not.toBeInTheDocument())
   })
 
+  it('does not let a slow initial folder list overwrite a completed create refresh', async () => {
+    const initial = deferred<Folder[]>()
+    const created: Folder = {
+      id: '019c0000-0000-7000-8000-000000000024' as FolderId,
+      parentId: null,
+      name: '新项目',
+      sortOrder: 0,
+    }
+    const listFolders = vi
+      .fn()
+      .mockReturnValueOnce(initial.promise)
+      .mockResolvedValueOnce([created])
+    const folders = fakeFolderPort({
+      listFolders,
+      createFolder: vi.fn().mockResolvedValue(created),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={folders} system={fakeSystemPort()} />)
+
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }))
+    await user.type(screen.getByRole('textbox', { name: '文件夹名称' }), '新项目{Enter}')
+    expect(await screen.findByRole('treeitem', { name: '新项目' })).toBeVisible()
+    initial.resolve(folderRows)
+
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '新项目' })).toBeVisible())
+    expect(screen.queryByRole('treeitem', { name: '项目 A' })).not.toBeInTheDocument()
+  })
+
+  it('applies authoritative sibling order after moving a folder', async () => {
+    const folderC = '019c0000-0000-7000-8000-000000000025' as FolderId
+    const initial: Folder[] = [
+      ...folderRows,
+      { id: folderC, parentId: null, name: '项目 C', sortOrder: 2 },
+    ]
+    const authoritative: Folder[] = [
+      { id: folderC, parentId: null, name: '项目 C', sortOrder: 0 },
+      { ...folderRows[1], sortOrder: 1 },
+      { ...folderRows[0], parentId: folderB, sortOrder: 0 },
+    ]
+    const folders = fakeFolderPort({
+      listFolders: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(authoritative),
+      moveFolder: vi.fn().mockResolvedValue(authoritative[2]),
+    })
+    render(<LibraryLayout notes={fakeNotePort()} folders={folders} system={fakeSystemPort()} />)
+    const source = await screen.findByRole('treeitem', { name: '项目 A' })
+    const target = screen.getByRole('treeitem', { name: '项目 B' })
+
+    fireEvent.dragStart(source, { dataTransfer: { setData: vi.fn() } })
+    fireEvent.drop(target, { dataTransfer: { getData: () => folderA } })
+
+    await waitFor(() => {
+      const labels = screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())
+      expect(labels).toEqual(['⌂ 所有笔记', '▱ 项目 C', '▱ 项目 B', '▱ 项目 A'])
+    })
+  })
+
+  it('applies authoritative sibling order after deleting a folder', async () => {
+    const folderC = '019c0000-0000-7000-8000-000000000026' as FolderId
+    const initial: Folder[] = [
+      ...folderRows,
+      { id: folderC, parentId: null, name: '项目 C', sortOrder: 2 },
+    ]
+    const authoritative: Folder[] = [
+      { id: folderC, parentId: null, name: '项目 C', sortOrder: 0 },
+      { ...folderRows[0], sortOrder: 1 },
+    ]
+    const folders = fakeFolderPort({
+      listFolders: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(authoritative),
+      deleteEmptyFolder: vi.fn().mockResolvedValue(undefined),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={folders} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('treeitem', { name: '项目 B' }))
+
+    await user.click(screen.getByRole('button', { name: '删除空文件夹' }))
+
+    await waitFor(() => {
+      const items = screen.getAllByRole('treeitem')
+      const labels = items.map((item) => item.textContent?.trim())
+      expect(labels).toEqual(['⌂ 所有笔记', '▱ 项目 C', '▱ 项目 A'])
+      expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
+    })
+  })
+
   it('distinguishes loading, empty, and safe errors without exposing diagnostics', async () => {
     const pending = deferred<NoteSummary[]>()
     const notes = fakeNotePort({ listNotes: vi.fn().mockReturnValueOnce(pending.promise) })
@@ -190,17 +334,32 @@ describe('LibraryLayout', () => {
 
   it('creates, renames, moves, and deletes folders through the folder port', async () => {
     const user = userEvent.setup()
+    const createdFolder: Folder = {
+      id: '019c0000-0000-7000-8000-000000000023' as FolderId,
+      parentId: null,
+      name: '新文件夹',
+      sortOrder: 2,
+    }
+    let currentFolders = [...folderRows]
     const folders = fakeFolderPort({
-      listFolders: vi.fn().mockResolvedValue(folderRows),
-      createFolder: vi.fn().mockResolvedValue({
-        id: '019c0000-0000-7000-8000-000000000023' as FolderId,
-        parentId: null,
-        name: '新文件夹',
-        sortOrder: 2,
+      listFolders: vi.fn(async () => currentFolders),
+      createFolder: vi.fn(async () => {
+        currentFolders = [...currentFolders, createdFolder]
+        return createdFolder
       }),
-      renameFolder: vi.fn().mockResolvedValue({ ...folderRows[0], name: '已重命名' }),
-      moveFolder: vi.fn().mockResolvedValue({ ...folderRows[0], parentId: folderB }),
-      deleteEmptyFolder: vi.fn().mockResolvedValue(undefined),
+      renameFolder: vi.fn(async () => {
+        const renamed = { ...folderRows[0], name: '已重命名' }
+        currentFolders = currentFolders.map((folder) => (folder.id === folderA ? renamed : folder))
+        return renamed
+      }),
+      moveFolder: vi.fn(async () => {
+        const moved = { ...currentFolders.find((folder) => folder.id === folderA)!, parentId: folderB }
+        currentFolders = currentFolders.map((folder) => (folder.id === folderA ? moved : folder))
+        return moved
+      }),
+      deleteEmptyFolder: vi.fn(async () => {
+        currentFolders = currentFolders.filter((folder) => folder.id !== folderA)
+      }),
     })
     render(<LibraryLayout notes={fakeNotePort()} folders={folders} system={fakeSystemPort()} />)
     await screen.findByRole('treeitem', { name: '项目 A' })
@@ -223,7 +382,7 @@ describe('LibraryLayout', () => {
     fireEvent.drop(target, { dataTransfer: { getData: () => folderA } })
     await waitFor(() => expect(folders.moveFolder).toHaveBeenCalledWith(folderA, folderB))
 
-    await user.click(source)
+    await user.click(screen.getByRole('treeitem', { name: '已重命名' }))
     await user.click(screen.getByRole('button', { name: '删除空文件夹' }))
     expect(folders.deleteEmptyFolder).toHaveBeenCalledWith(folderA)
   })
