@@ -253,6 +253,92 @@ fn relationships_have_explicit_restrict_or_cascade_behavior() {
 }
 
 #[test]
+fn note_links_accept_a_missing_target_and_keep_its_uuid() {
+    let store = TestStore::new();
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.execute("PRAGMA foreign_keys = ON", []).unwrap();
+    insert_note(&connection, NOTE_UUID, "Source", "notes/source");
+
+    connection
+        .execute(
+            "INSERT INTO note_links (source_note_id, target_note_id, visible_label, source_start, source_end)\
+             VALUES (?1, ?2, 'Missing', 0, 9)",
+            params![NOTE_UUID.as_slice(), OTHER_NOTE_UUID.as_slice()],
+        )
+        .unwrap();
+
+    let stored_target: Vec<u8> = connection
+        .query_row("SELECT target_note_id FROM note_links", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(stored_target, OTHER_NOTE_UUID);
+}
+
+#[test]
+fn deleting_a_link_target_preserves_the_referring_row_and_target_uuid() {
+    let store = TestStore::new();
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.execute("PRAGMA foreign_keys = ON", []).unwrap();
+    insert_note(&connection, NOTE_UUID, "Source", "notes/source");
+    insert_note(&connection, OTHER_NOTE_UUID, "Target", "notes/target");
+    connection
+        .execute(
+            "INSERT INTO note_links (source_note_id, target_note_id, visible_label, source_start, source_end)\
+             VALUES (?1, ?2, 'Target', 0, 8)",
+            params![NOTE_UUID.as_slice(), OTHER_NOTE_UUID.as_slice()],
+        )
+        .unwrap();
+
+    connection
+        .execute(
+            "DELETE FROM notes WHERE id = ?1",
+            params![OTHER_NOTE_UUID.as_slice()],
+        )
+        .unwrap();
+
+    let (count, stored_target): (i64, Vec<u8>) = connection
+        .query_row(
+            "SELECT count(*), target_note_id FROM note_links",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(stored_target, OTHER_NOTE_UUID);
+}
+
+#[test]
+fn every_uuid_column_rejects_sixteen_character_text_values() {
+    let store = TestStore::new();
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+
+    let invalid_inserts = [
+        "INSERT INTO folders (id, name, sort_order, created_at, updated_at) VALUES ('1234567890abcdef', 'Bad id', 0, 'now', 'now')",
+        "INSERT INTO folders (id, parent_id, name, sort_order, created_at, updated_at) VALUES (X'00000000000000000000000000000001', '1234567890abcdef', 'Bad parent', 0, 'now', 'now')",
+        "INSERT INTO notes (id, kind, title, relative_path, created_at, updated_at, revision) VALUES ('1234567890abcdef', 'formal', 'Bad id', 'notes/bad-id', 'now', 'now', 0)",
+        "INSERT INTO notes (id, kind, title, folder_id, relative_path, created_at, updated_at, revision) VALUES (X'00000000000000000000000000000002', 'formal', 'Bad folder', '1234567890abcdef', 'notes/bad-folder', 'now', 'now', 0)",
+        "INSERT INTO tags (id, display_name, normalized_name) VALUES ('1234567890abcdef', 'Bad tag', 'bad-tag')",
+        "INSERT INTO note_tags (note_id, tag_id) VALUES ('1234567890abcdef', X'00000000000000000000000000000003')",
+        "INSERT INTO note_tags (note_id, tag_id) VALUES (X'00000000000000000000000000000004', '1234567890abcdef')",
+        "INSERT INTO note_links (source_note_id, target_note_id, visible_label, source_start, source_end) VALUES ('1234567890abcdef', X'00000000000000000000000000000005', 'Bad source', 0, 1)",
+        "INSERT INTO note_links (source_note_id, target_note_id, visible_label, source_start, source_end) VALUES (X'00000000000000000000000000000006', '1234567890abcdef', 'Bad target', 0, 1)",
+        "INSERT INTO temporary_windows (note_id, visible, x, y, width, height, always_on_top) VALUES ('1234567890abcdef', 1, 0, 0, 300, 400, 1)",
+        "INSERT INTO search_documents (note_id, title, plain_text) VALUES ('1234567890abcdef', 'Bad id', '')",
+    ];
+
+    for statement in invalid_inserts {
+        let error = connection.execute(statement, []).unwrap_err();
+        assert_eq!(
+            error.sqlite_error_code(),
+            Some(ErrorCode::ConstraintViolation),
+            "statement unexpectedly accepted TEXT UUID: {statement}"
+        );
+    }
+}
+
+#[test]
 fn schema_rejects_invalid_uuid_lengths_note_kinds_and_window_dimensions() {
     let store = TestStore::new();
     let connection = Connection::open(store.paths.database()).unwrap();
@@ -332,6 +418,16 @@ fn seed_two_notes_and_tag(connection: &Connection) {
             "INSERT INTO note_links (source_note_id, target_note_id, visible_label, source_start, source_end)\
              VALUES (?1, ?2, 'Second', 0, 8)",
             params![NOTE_UUID.as_slice(), OTHER_NOTE_UUID.as_slice()],
+        )
+        .unwrap();
+}
+
+fn insert_note(connection: &Connection, id: &[u8; 16], title: &str, path: &str) {
+    connection
+        .execute(
+            "INSERT INTO notes (id, kind, title, relative_path, created_at, updated_at, revision)\
+             VALUES (?1, 'formal', ?2, ?3, '2026-07-30T00:00:00Z', '2026-07-30T00:00:00Z', 0)",
+            params![id.as_slice(), title, path],
         )
         .unwrap();
 }
