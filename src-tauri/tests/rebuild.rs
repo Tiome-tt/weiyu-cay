@@ -4,9 +4,14 @@ use rusqlite::Connection;
 use serde_json::json;
 use simple_notes_lib::{
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
-    storage::{database::Database, rebuild::rebuild_index, repository::NoteRepository},
+    error::CommandError,
+    storage::{
+        database::Database,
+        rebuild::{rebuild_index, rebuild_index_with_hook},
+        repository::NoteRepository,
+    },
 };
-use std::fs;
+use std::{fs, path::Path};
 use support::TestStore;
 
 const NOTE_ID: &str = "019c0000-0000-7000-8000-000000000211";
@@ -226,6 +231,10 @@ fn revision_too_large_for_sqlite_isolated_while_valid_sibling_recovers() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires Windows Developer Mode file-symlink privilege; deterministic reparse rejection is covered by platform unit tests"
+)]
 fn rebuild_rejects_note_file_symlinks_without_reading_outside_content() {
     let store = TestStore::new();
     let repository = NoteRepository::new(store.paths.clone(), store.db);
@@ -235,10 +244,7 @@ fn rebuild_rejects_note_file_symlinks_without_reading_outside_content() {
     fs::write(outside.path(), b"outside sentinel").unwrap();
     let note_path = store.paths.notes().join(NOTE_ID).join("note.md");
     fs::remove_file(&note_path).unwrap();
-    if create_file_symlink(outside.path(), &note_path).is_err() {
-        eprintln!("skipping symlink assertion: platform denied symlink creation");
-        return;
-    }
+    create_file_symlink(outside.path(), &note_path).expect("file-symlink test prerequisite");
 
     let report = rebuild_index(&store.paths).unwrap();
 
@@ -248,14 +254,16 @@ fn rebuild_rejects_note_file_symlinks_without_reading_outside_content() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires Windows Developer Mode file-symlink privilege; deterministic reparse rejection is covered by platform unit tests"
+)]
 fn rebuild_rejects_a_folders_manifest_symlink() {
     let store = TestStore::new();
     let outside = tempfile::NamedTempFile::new().unwrap();
     fs::write(outside.path(), b"[]").unwrap();
-    if create_file_symlink(outside.path(), store.paths.folders_manifest()).is_err() {
-        eprintln!("skipping symlink assertion: platform denied symlink creation");
-        return;
-    }
+    create_file_symlink(outside.path(), store.paths.folders_manifest())
+        .expect("file-symlink test prerequisite");
 
     let error = rebuild_index(&store.paths).unwrap_err();
 
@@ -264,6 +272,119 @@ fn rebuild_rejects_a_folders_manifest_symlink() {
         simple_notes_lib::error::CommandErrorCode::Validation
     );
     assert_eq!(fs::read(outside.path()).unwrap(), b"[]");
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires Windows Developer Mode file-symlink privilege; deterministic reparse rejection is covered by platform unit tests"
+)]
+fn rebuild_rejects_a_live_database_symlink_without_reading_outside() {
+    let mut store = TestStore::new();
+    store.close_database();
+    fs::remove_file(store.paths.database()).unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    fs::write(outside.path(), b"outside database sentinel").unwrap();
+    create_file_symlink(outside.path(), store.paths.database())
+        .expect("file-symlink test prerequisite");
+
+    let error = rebuild_index(&store.paths).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        simple_notes_lib::error::CommandErrorCode::Validation
+    );
+    assert_eq!(
+        fs::read(outside.path()).unwrap(),
+        b"outside database sentinel"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires Windows Developer Mode file-symlink privilege; deterministic reparse rejection is covered by platform unit tests"
+)]
+fn rebuild_rejects_a_sidecar_symlink_without_reading_outside() {
+    let mut store = TestStore::new();
+    store.close_database();
+    let sidecar = store.paths.root().join("index.sqlite-wal");
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    fs::write(outside.path(), b"outside sidecar sentinel").unwrap();
+    create_file_symlink(outside.path(), &sidecar).expect("file-symlink test prerequisite");
+
+    let error = rebuild_index(&store.paths).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        simple_notes_lib::error::CommandErrorCode::Validation
+    );
+    assert_eq!(
+        fs::read(outside.path()).unwrap(),
+        b"outside sidecar sentinel"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn rebuild_rejects_a_live_database_junction_without_touching_outside() {
+    let mut store = TestStore::new();
+    store.close_database();
+    fs::remove_file(store.paths.database()).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    create_directory_link(outside.path(), store.paths.database())
+        .expect("junction fixture does not require Developer Mode");
+
+    let error = rebuild_index(&store.paths).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        simple_notes_lib::error::CommandErrorCode::Validation
+    );
+    assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+}
+
+#[cfg(windows)]
+#[test]
+fn rebuild_rejects_a_sidecar_junction_without_touching_outside() {
+    let mut store = TestStore::new();
+    store.close_database();
+    let outside = tempfile::tempdir().unwrap();
+    create_directory_link(outside.path(), &store.paths.root().join("index.sqlite-wal"))
+        .expect("junction fixture does not require Developer Mode");
+
+    let error = rebuild_index(&store.paths).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        simple_notes_lib::error::CommandErrorCode::Validation
+    );
+    assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn rebuild_publication_root_exchange_never_writes_to_the_replacement_path() {
+    let mut store = TestStore::new();
+    store.close_database();
+    let outside = tempfile::tempdir().unwrap();
+    let original_root = store.paths.root().to_path_buf();
+    let moved_root = original_root.with_file_name(format!(
+        "{}.moved",
+        original_root.file_name().unwrap().to_string_lossy()
+    ));
+
+    let result = rebuild_index_with_hook(&store.paths, |root| {
+        if fs::rename(root, &moved_root).is_err() {
+            return Ok(());
+        }
+        create_directory_link(outside.path(), root).map_err(|source| {
+            CommandError::io(format!("could not install root exchange fixture: {source}"))
+        })
+    });
+
+    assert!(result.is_ok());
+    assert!(!outside.path().join("index.sqlite").exists());
+    assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
 }
 
 fn rebuild_backups(store: &TestStore) -> Vec<std::path::PathBuf> {
@@ -320,6 +441,25 @@ fn remove_sqlite_files(store: &TestStore) {
 #[cfg(unix)]
 fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(unix)]
+fn create_directory_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_directory_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("mklink /J failed"))
+    }
 }
 
 #[cfg(windows)]

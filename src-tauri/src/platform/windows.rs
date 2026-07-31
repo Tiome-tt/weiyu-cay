@@ -2,13 +2,15 @@ use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
 };
+use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io::Read,
+    io::{Read, Write},
     os::windows::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawHandle,
     },
     path::{Path, PathBuf},
     ptr,
@@ -37,6 +39,79 @@ extern "system" {
         reserved: *mut core::ffi::c_void,
     ) -> i32;
     fn MoveFileExW(existing: *const u16, new_name: *const u16, flags: u32) -> i32;
+    fn GetFileInformationByHandle(
+        file: *mut core::ffi::c_void,
+        information: *mut ByHandleFileInformation,
+    ) -> i32;
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct ByHandleFileInformation {
+    file_attributes: u32,
+    creation_time_low: u32,
+    creation_time_high: u32,
+    last_access_time_low: u32,
+    last_access_time_high: u32,
+    last_write_time_low: u32,
+    last_write_time_high: u32,
+    volume_serial_number: u32,
+    file_size_high: u32,
+    file_size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+trait ReplaceOperations {
+    fn replace(&mut self, source: &Path, destination: &Path, backup: &Path) -> Result<(), i32>;
+    fn move_replace(&mut self, source: &Path, destination: &Path) -> Result<(), i32>;
+}
+
+struct SystemReplaceOperations;
+
+impl ReplaceOperations for SystemReplaceOperations {
+    fn replace(&mut self, source: &Path, destination: &Path, backup: &Path) -> Result<(), i32> {
+        let source = wide(source.as_os_str());
+        let destination = wide(destination.as_os_str());
+        let backup = wide(backup.as_os_str());
+        let succeeded = unsafe {
+            ReplaceFileW(
+                destination.as_ptr(),
+                source.as_ptr(),
+                backup.as_ptr(),
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        if succeeded == 0 {
+            Err(std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or_default())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn move_replace(&mut self, source: &Path, destination: &Path) -> Result<(), i32> {
+        let source = wide(source.as_os_str());
+        let destination = wide(destination.as_os_str());
+        let succeeded = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if succeeded == 0 {
+            Err(std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or_default())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 pub fn replace_file(source: &Path, destination: &Path) -> PublishResult {
@@ -60,53 +135,291 @@ pub fn replace_file_with_backup(
     destination: &Path,
     backup_storage: &Path,
 ) -> PublishResult {
-    let destination_exists = destination.exists();
-    let source = wide(source.as_os_str());
-    let destination = wide(destination.as_os_str());
-    let backup = wide(backup_storage.as_os_str());
-    let succeeded = unsafe {
-        if destination_exists {
-            ReplaceFileW(
-                destination.as_ptr(),
-                source.as_ptr(),
-                backup.as_ptr(),
-                0,
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        } else {
-            MoveFileExW(
-                source.as_ptr(),
-                destination.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
+    validate_regular_or_missing(destination).map_err(PublishFailure::not_published)?;
+    let mut operations = SystemReplaceOperations;
+    recover_file_using(destination, &mut operations).map_err(PublishFailure::recovery_required)?;
+    let destination_exists = fs::symlink_metadata(destination).is_ok();
+    replace_file_with_backup_using(
+        source,
+        destination,
+        backup_storage,
+        destination_exists,
+        &mut operations,
+    )
+}
+
+fn replace_file_with_backup_using<O: ReplaceOperations>(
+    source: &Path,
+    destination: &Path,
+    backup_storage: &Path,
+    destination_exists: bool,
+    operations: &mut O,
+) -> PublishResult {
+    let operation = if destination_exists {
+        operations.replace(source, destination, backup_storage)
+    } else {
+        operations.move_replace(source, destination)
+    };
+    let raw = match operation {
+        Ok(()) => return Ok(PublishState::Published),
+        Err(raw) => raw,
+    };
+    let error = CommandError::io(format!(
+        "could not atomically replace document: Windows error {raw}"
+    ));
+    if classify_replace_error(raw) == ReplaceFailureAction::RestoreBackup && destination_exists {
+        return match operations.move_replace(backup_storage, destination) {
+            Ok(()) => Err(PublishFailure::not_published(error)),
+            Err(restore_error) => {
+                let descriptor_result =
+                    persist_recovery_descriptor(source, destination, backup_storage);
+                let diagnostic = match descriptor_result {
+                    Ok(()) => format!("{error}; restoring backup failed with Windows error {restore_error}; recovery descriptor persisted"),
+                    Err(marker) => format!("{error}; restoring backup failed with Windows error {restore_error}; recovery descriptor failed: {marker}"),
+                };
+                Err(PublishFailure::recovery_required(CommandError::io(
+                    diagnostic,
+                )))
+            }
+        };
+    }
+    Err(PublishFailure::not_published(error))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct FileIdentity {
+    volume: u64,
+    index: u64,
+}
+
+impl FileIdentity {
+    fn from_path(path: &Path) -> Result<Self, CommandError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!("could not open recovery file: {source}"))
+            })?;
+        let metadata = file.metadata().map_err(|source| {
+            CommandError::io(format!("could not inspect recovery file: {source}"))
+        })?;
+        validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+        let mut info = ByHandleFileInformation::default();
+        let succeeded =
+            unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut info) };
+        if succeeded == 0 {
+            return Err(CommandError::io(format!(
+                "could not identify recovery file: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        Ok(Self {
+            volume: u64::from(info.volume_serial_number),
+            index: (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct RecoveryDescriptor {
+    version: u8,
+    destination: String,
+    source: String,
+    backup: String,
+    source_identity: FileIdentity,
+    backup_identity: FileIdentity,
+}
+
+fn recovery_descriptor_path(destination: &Path) -> PathBuf {
+    destination.with_file_name(format!(
+        ".{}.replace-recovery.json",
+        destination
+            .file_name()
+            .unwrap_or_else(|| OsStr::new("file"))
+            .to_string_lossy()
+    ))
+}
+
+fn persist_recovery_descriptor(
+    source: &Path,
+    destination: &Path,
+    backup: &Path,
+) -> Result<(), CommandError> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CommandError::validation("replacement destination has no parent"))?;
+    if source.parent() != Some(parent) || backup.parent() != Some(parent) {
+        return Err(CommandError::validation(
+            "recovery files must share one parent",
+        ));
+    }
+    let descriptor = RecoveryDescriptor {
+        version: 1,
+        destination: child_file_name(destination)?,
+        source: child_file_name(source)?,
+        backup: child_file_name(backup)?,
+        source_identity: FileIdentity::from_path(source)?,
+        backup_identity: FileIdentity::from_path(backup)?,
+    };
+    let marker = recovery_descriptor_path(destination);
+    let temporary = marker.with_file_name(format!(".replace-recovery.{}.tmp", Uuid::now_v7()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(&temporary)
+        .map_err(|source| {
+            CommandError::io(format!("could not create recovery descriptor: {source}"))
+        })?;
+    serde_json::to_writer(&mut file, &descriptor).map_err(|source| {
+        CommandError::io(format!("could not serialize recovery descriptor: {source}"))
+    })?;
+    file.write_all(b"\n")
+        .and_then(|()| file.sync_all())
+        .map_err(|source| {
+            CommandError::io(format!("could not sync recovery descriptor: {source}"))
+        })?;
+    drop(file);
+    if marker.exists() {
+        fs::remove_file(&marker).map_err(|source| {
+            CommandError::io(format!("could not replace recovery descriptor: {source}"))
+        })?;
+    }
+    fs::rename(&temporary, &marker).map_err(|source| {
+        CommandError::io(format!("could not publish recovery descriptor: {source}"))
+    })
+}
+
+pub fn recover_file(destination: &Path) -> Result<(), CommandError> {
+    let mut operations = SystemReplaceOperations;
+    recover_file_using(destination, &mut operations)
+}
+
+fn recover_file_using<O: ReplaceOperations>(
+    destination: &Path,
+    operations: &mut O,
+) -> Result<(), CommandError> {
+    let marker = recovery_descriptor_path(destination);
+    validate_regular_or_missing(&marker)?;
+    let bytes = match fs::read(&marker) {
+        Ok(bytes) => bytes,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(CommandError::io(format!(
+                "could not read recovery descriptor: {source}"
+            )))
         }
     };
-    if succeeded == 0 {
-        let os_error = std::io::Error::last_os_error();
-        let raw = os_error.raw_os_error().unwrap_or_default();
-        let error = CommandError::io(format!("could not atomically replace document: {os_error}"));
-        if classify_replace_error(raw) == ReplaceFailureAction::RestoreBackup && destination_exists
-        {
-            let restored = unsafe {
-                MoveFileExW(
-                    backup.as_ptr(),
-                    destination.as_ptr(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                )
-            };
-            return if restored != 0 {
-                Err(PublishFailure::not_published(error))
-            } else {
-                Err(PublishFailure::not_published_preserve_source(error))
-            };
-        }
-        if classify_replace_error(raw) == ReplaceFailureAction::OriginalNamesIntact {
-            return Err(PublishFailure::not_published(error));
-        }
-        return Err(PublishFailure::not_published(error));
+    let descriptor: RecoveryDescriptor = serde_json::from_slice(&bytes).map_err(|source| {
+        CommandError::validation(format!("invalid recovery descriptor: {source}"))
+    })?;
+    if descriptor.version != 1 || descriptor.destination != child_file_name(destination)? {
+        return Err(CommandError::validation(
+            "recovery descriptor destination mismatch",
+        ));
     }
-    Ok(PublishState::Published)
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CommandError::validation("replacement destination has no parent"))?;
+    validate_child_name(&descriptor.source)?;
+    validate_child_name(&descriptor.backup)?;
+    let source = parent.join(&descriptor.source);
+    let backup = parent.join(&descriptor.backup);
+    if FileIdentity::from_path(&source)? != descriptor.source_identity {
+        return Err(CommandError::validation(
+            "recovery source identity mismatch",
+        ));
+    }
+    validate_regular_or_missing(destination)?;
+    if fs::symlink_metadata(destination).is_ok() {
+        if FileIdentity::from_path(destination)? != descriptor.backup_identity {
+            return Err(CommandError::validation(
+                "canonical destination identity does not match pending recovery",
+            ));
+        }
+    } else {
+        if FileIdentity::from_path(&backup)? != descriptor.backup_identity {
+            return Err(CommandError::validation(
+                "recovery backup identity mismatch",
+            ));
+        }
+        operations
+            .move_replace(&backup, destination)
+            .map_err(|code| {
+                CommandError::io(format!(
+                    "could not restore canonical destination: Windows error {code}"
+                ))
+            })?;
+        if FileIdentity::from_path(destination)? != descriptor.backup_identity {
+            return Err(CommandError::io(
+                "restored canonical destination identity mismatch",
+            ));
+        }
+    }
+    for suffix in ["-wal", "-shm"] {
+        let backup_sidecar = parent.join(format!("{}{suffix}", descriptor.backup));
+        let destination_sidecar = parent.join(format!("{}{suffix}", descriptor.destination));
+        validate_regular_or_missing(&backup_sidecar)?;
+        validate_regular_or_missing(&destination_sidecar)?;
+        if fs::symlink_metadata(&backup_sidecar).is_ok() {
+            if fs::symlink_metadata(&destination_sidecar).is_ok() {
+                return Err(CommandError::validation(
+                    "canonical recovery sidecar already exists",
+                ));
+            }
+            let identity = FileIdentity::from_path(&backup_sidecar)?;
+            operations
+                .move_replace(&backup_sidecar, &destination_sidecar)
+                .map_err(|code| {
+                    CommandError::io(format!(
+                        "could not restore canonical sidecar: Windows error {code}"
+                    ))
+                })?;
+            if FileIdentity::from_path(&destination_sidecar)? != identity {
+                return Err(CommandError::io(
+                    "restored canonical sidecar identity mismatch",
+                ));
+            }
+        }
+    }
+    fs::remove_file(&marker).map_err(|source| {
+        CommandError::io(format!("could not remove recovery descriptor: {source}"))
+    })?;
+    if FileIdentity::from_path(&source).ok() == Some(descriptor.source_identity) {
+        let _ = fs::remove_file(source);
+    }
+    Ok(())
+}
+
+fn child_file_name(path: &Path) -> Result<String, CommandError> {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CommandError::validation("recovery path has no UTF-8 file name"))
+}
+
+fn validate_regular_or_missing(path: &Path) -> Result<(), CommandError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(CommandError::io(format!(
+            "could not inspect replacement destination: {source}"
+        ))),
+    }
+}
+
+fn validate_regular_file_metadata(attributes: u32, is_file: bool) -> Result<(), CommandError> {
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !is_file {
+        Err(CommandError::validation(
+            "contained file is a reparse point or not a regular file",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +475,11 @@ impl SafeDirectory {
         Ok(self.path.join(name))
     }
 
+    pub fn recover(&self, name: &str) -> Result<(), CommandError> {
+        let path = self.child_path(name)?;
+        recover_file(&path)
+    }
+
     pub fn create_new(&self, name: &str) -> Result<File, CommandError> {
         let path = self.child_path(name)?;
         OpenOptions::new()
@@ -174,8 +492,130 @@ impl SafeDirectory {
             })
     }
 
+    pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
+        let path = self.child_path(name)?;
+        validate_regular_or_missing(&path)?;
+        let file = self.create_new(name)?;
+        file.sync_all().map_err(|source| {
+            CommandError::io(format!("could not sync new contained file: {source}"))
+        })?;
+        Ok(path)
+    }
+
+    pub fn sync_file(&self, name: &str) -> Result<(), CommandError> {
+        let path = self.child_path(name)?;
+        validate_regular_or_missing(&path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!("could not open contained file for sync: {source}"))
+            })?;
+        file.sync_all()
+            .map_err(|source| CommandError::io(format!("could not sync contained file: {source}")))
+    }
+
+    pub fn regular_file_exists(&self, name: &str) -> Result<bool, CommandError> {
+        let path = self.child_path(name)?;
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+                Ok(true)
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(CommandError::io(format!(
+                "could not inspect contained file: {source}"
+            ))),
+        }
+    }
+
+    pub fn move_file(&self, source: &str, destination: &str) -> Result<(), CommandError> {
+        let source_path = self.child_path(source)?;
+        let destination_path = self.child_path(destination)?;
+        validate_regular_or_missing(&source_path)?;
+        validate_regular_or_missing(&destination_path)?;
+        if fs::symlink_metadata(&destination_path).is_ok() {
+            return Err(CommandError::validation(
+                "contained move destination already exists",
+            ));
+        }
+        let expected = FileIdentity::from_path(&source_path)?;
+        SystemReplaceOperations
+            .move_replace(&source_path, &destination_path)
+            .map_err(|code| {
+                CommandError::io(format!(
+                    "could not move contained file: Windows error {code}"
+                ))
+            })?;
+        if FileIdentity::from_path(&destination_path)? != expected {
+            return Err(CommandError::io(
+                "contained file identity changed during move",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn publish_with_backup(
+        &self,
+        source: &str,
+        destination: &str,
+        backup: &str,
+    ) -> PublishResult {
+        let source_path = self
+            .child_path(source)
+            .map_err(PublishFailure::not_published)?;
+        let destination_path = self
+            .child_path(destination)
+            .map_err(PublishFailure::not_published)?;
+        let backup_path = self
+            .child_path(backup)
+            .map_err(PublishFailure::not_published)?;
+        validate_regular_or_missing(&source_path).map_err(PublishFailure::not_published)?;
+        validate_regular_or_missing(&destination_path).map_err(PublishFailure::not_published)?;
+        validate_regular_or_missing(&backup_path).map_err(PublishFailure::not_published)?;
+        if fs::symlink_metadata(&backup_path).is_ok() {
+            return Err(PublishFailure::not_published(CommandError::validation(
+                "replacement backup already exists",
+            )));
+        }
+        let expected =
+            FileIdentity::from_path(&source_path).map_err(PublishFailure::not_published)?;
+        let result = replace_file_with_backup(&source_path, &destination_path, &backup_path);
+        if matches!(result, Ok(PublishState::Published)) {
+            let actual = FileIdentity::from_path(&destination_path)
+                .map_err(PublishFailure::recovery_required)?;
+            if actual != expected {
+                return Err(PublishFailure::recovery_required(CommandError::io(
+                    "published file identity does not match replacement",
+                )));
+            }
+        }
+        result
+    }
+
+    pub fn remove_checked(&self, name: &str) -> Result<bool, CommandError> {
+        let path = self.child_path(name)?;
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+                fs::remove_file(path).map_err(|source| {
+                    CommandError::io(format!("could not remove contained file: {source}"))
+                })?;
+                Ok(true)
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(CommandError::io(format!(
+                "could not inspect contained file for removal: {source}"
+            ))),
+        }
+    }
+
     pub fn read(&self, name: &str, max_bytes: u64) -> Result<Vec<u8>, CommandError> {
         let path = self.child_path(name)?;
+        recover_file(&path)?;
         let mut file = OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
@@ -187,11 +627,7 @@ impl SafeDirectory {
         let metadata = file.metadata().map_err(|source| {
             CommandError::io(format!("could not inspect contained file: {source}"))
         })?;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !metadata.is_file() {
-            return Err(CommandError::validation(
-                "contained file is a reparse point or not a file",
-            ));
-        }
+        validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
         if metadata.len() > max_bytes {
             return Err(CommandError::validation(
                 "contained file exceeds the supported size",
@@ -260,7 +696,36 @@ fn wide(value: &OsStr) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_replace_error, ReplaceFailureAction};
+    use super::{
+        classify_replace_error, replace_file_with_backup_using, FileIdentity, ReplaceFailureAction,
+        ReplaceOperations,
+    };
+    use crate::storage::atomic_file::PublishState;
+    use std::{collections::VecDeque, fs, path::Path};
+
+    struct FakeReplaceOperations {
+        replace_results: VecDeque<Result<(), i32>>,
+        move_results: VecDeque<Result<(), i32>>,
+    }
+
+    impl ReplaceOperations for FakeReplaceOperations {
+        fn replace(
+            &mut self,
+            _source: &Path,
+            _destination: &Path,
+            _backup: &Path,
+        ) -> Result<(), i32> {
+            self.replace_results.pop_front().expect("replace result")
+        }
+
+        fn move_replace(&mut self, source: &Path, destination: &Path) -> Result<(), i32> {
+            match self.move_results.pop_front().expect("move result") {
+                Ok(()) => fs::rename(source, destination)
+                    .map_err(|error| error.raw_os_error().unwrap_or(1)),
+                Err(code) => Err(code),
+            }
+        }
+    }
 
     #[test]
     fn official_partial_replace_states_choose_recovery_before_cleanup() {
@@ -280,5 +745,141 @@ mod tests {
             classify_replace_error(87),
             ReplaceFailureAction::OriginalNamesIntact
         );
+    }
+
+    #[test]
+    fn error_1177_with_successful_restore_is_not_published() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("index.sqlite");
+        let backup = root.path().join("backup");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&backup, b"old").unwrap();
+        let mut operations = FakeReplaceOperations {
+            replace_results: VecDeque::from([Err(1177)]),
+            move_results: VecDeque::from([Ok(())]),
+        };
+
+        let failure =
+            replace_file_with_backup_using(&source, &destination, &backup, true, &mut operations)
+                .unwrap_err();
+
+        assert_eq!(failure.state(), PublishState::NotPublished);
+        assert_eq!(fs::read(destination).unwrap(), b"old");
+    }
+
+    #[test]
+    fn error_1177_with_failed_restore_requires_persisted_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("index.sqlite");
+        let backup = root.path().join("backup");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&backup, b"old").unwrap();
+        let source_identity = FileIdentity::from_path(&source).unwrap();
+        let backup_identity = FileIdentity::from_path(&backup).unwrap();
+        let mut operations = FakeReplaceOperations {
+            replace_results: VecDeque::from([Err(1177)]),
+            move_results: VecDeque::from([Err(32)]),
+        };
+
+        let failure =
+            replace_file_with_backup_using(&source, &destination, &backup, true, &mut operations)
+                .unwrap_err();
+
+        assert_eq!(failure.state(), PublishState::RecoveryRequired);
+        assert_eq!(FileIdentity::from_path(&source).unwrap(), source_identity);
+        assert_eq!(FileIdentity::from_path(&backup).unwrap(), backup_identity);
+        assert!(super::recovery_descriptor_path(&destination).is_file());
+    }
+
+    #[test]
+    fn storage_startup_consumes_recovery_descriptor_and_restores_canonical_file() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("index.sqlite");
+        let backup = root.path().join("backup");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&backup, b"old").unwrap();
+        fs::write(root.path().join("backup-wal"), b"old wal").unwrap();
+        let mut failed = FakeReplaceOperations {
+            replace_results: VecDeque::from([Err(1177)]),
+            move_results: VecDeque::from([Err(32)]),
+        };
+        let failure =
+            replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
+                .unwrap_err();
+        assert_eq!(failure.state(), PublishState::RecoveryRequired);
+
+        crate::storage::paths::StoragePaths::open(root.path()).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert_eq!(
+            fs::read(root.path().join("index.sqlite-wal")).unwrap(),
+            b"old wal"
+        );
+        assert!(!super::recovery_descriptor_path(&destination).exists());
+        assert!(!source.exists());
+    }
+
+    #[test]
+    fn rebuild_consumes_a_note_recovery_descriptor_before_scanning() {
+        use crate::{
+            domain::{NoteDocument, NoteId, NoteKind},
+            storage::{
+                database::Database, paths::StoragePaths, rebuild::rebuild_index,
+                repository::NoteRepository,
+            },
+        };
+        let root = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(root.path()).unwrap();
+        let database = Database::open(paths.database()).unwrap();
+        database.migrate().unwrap();
+        let id = NoteId::parse_str("019c0000-0000-7000-8000-000000000401").unwrap();
+        let repository = NoteRepository::new(paths.clone(), database);
+        repository
+            .create(NoteDocument {
+                id,
+                kind: NoteKind::Formal,
+                title: "Recovery".to_owned(),
+                folder_id: None,
+                tags: Vec::new(),
+                markdown: "# Recovery".to_owned(),
+                revision: 0,
+                created_at: "2026-07-31T00:00:00Z".to_owned(),
+                updated_at: "2026-07-31T00:00:00Z".to_owned(),
+            })
+            .unwrap();
+        drop(repository);
+        let note_dir = paths.note_dir(id, NoteKind::Formal).unwrap();
+        let destination = note_dir.join("note.md");
+        let source = note_dir.join("source.tmp");
+        let backup = note_dir.join("backup.tmp");
+        fs::copy(&destination, &source).unwrap();
+        fs::rename(&destination, &backup).unwrap();
+        let mut failed = FakeReplaceOperations {
+            replace_results: VecDeque::from([Err(1177)]),
+            move_results: VecDeque::from([Err(32)]),
+        };
+        assert_eq!(
+            replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
+                .unwrap_err()
+                .state(),
+            PublishState::RecoveryRequired
+        );
+
+        let report = rebuild_index(&paths).unwrap();
+
+        assert_eq!(report.notes_recovered, 1);
+        assert!(destination.is_file());
+    }
+
+    #[test]
+    fn safe_directory_metadata_rejects_reparse_points_without_os_symlink_privilege() {
+        let error =
+            super::validate_regular_file_metadata(super::FILE_ATTRIBUTE_REPARSE_POINT, true)
+                .unwrap_err();
+        assert_eq!(error.code(), crate::error::CommandErrorCode::Validation);
+        assert!(super::validate_regular_file_metadata(0, true).is_ok());
     }
 }

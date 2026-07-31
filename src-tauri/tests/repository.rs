@@ -67,15 +67,12 @@ fn child_paths_reject_traversal_separators_and_rooted_segments() {
 }
 
 #[test]
-fn storage_open_rejects_an_existing_layout_symlink_escape_when_supported() {
+fn storage_open_rejects_an_existing_layout_directory_link_escape() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let notes = root.path().join("notes");
 
-    if create_directory_symlink(outside.path(), &notes).is_err() {
-        eprintln!("skipping symlink assertion: platform denied symlink creation");
-        return;
-    }
+    create_directory_symlink(outside.path(), &notes).expect("directory-link test prerequisite");
 
     let error = StoragePaths::open(root.path()).unwrap_err();
     assert_eq!(error.code(), CommandErrorCode::Validation);
@@ -88,17 +85,14 @@ fn storage_open_rejects_an_existing_layout_symlink_escape_when_supported() {
 }
 
 #[test]
-fn note_dir_rejects_an_existing_uuid_symlink_escape_when_supported() {
+fn note_dir_rejects_an_existing_uuid_directory_link_escape() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let paths = StoragePaths::open(root.path()).unwrap();
     let note_id = NoteId::parse_str(NOTE_ID).unwrap();
     let note_path = paths.notes().join(NOTE_ID);
 
-    if create_directory_symlink(outside.path(), &note_path).is_err() {
-        eprintln!("skipping symlink assertion: platform denied symlink creation");
-        return;
-    }
+    create_directory_symlink(outside.path(), &note_path).expect("directory-link test prerequisite");
 
     let error = paths.note_dir(note_id, NoteKind::Formal).unwrap_err();
     assert_eq!(error.code(), CommandErrorCode::Validation);
@@ -453,5 +447,14 @@ fn create_directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
 
 #[cfg(windows)]
 fn create_directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    std::os::windows::fs::symlink_dir(target, link)
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("mklink /J failed"))
+    }
 }

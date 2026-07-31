@@ -1,6 +1,7 @@
 use crate::{
     domain::{NoteId, NoteKind},
     error::CommandError,
+    platform,
 };
 use std::{
     fs,
@@ -40,6 +41,7 @@ impl StoragePaths {
         let trash = ensure_directory(&root, "trash")?;
         let folders_manifest = child_under(&root, &["folders.json"])?;
         let database = child_under(&root, &["index.sqlite"])?;
+        platform::SafeDirectory::open(&root, &[], false)?.recover("index.sqlite")?;
 
         Ok(Self {
             root,

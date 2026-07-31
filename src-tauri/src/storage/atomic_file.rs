@@ -11,6 +11,7 @@ pub enum PublishState {
     NotPublished,
     Published,
     PublishedButSyncFailed,
+    RecoveryRequired,
 }
 
 #[derive(Debug)]
@@ -40,6 +41,14 @@ impl PublishFailure {
     pub fn published_but_sync_failed(error: CommandError) -> Self {
         Self {
             state: PublishState::PublishedButSyncFailed,
+            error,
+            cleanup_source: false,
+        }
+    }
+
+    pub fn recovery_required(error: CommandError) -> Self {
+        Self {
+            state: PublishState::RecoveryRequired,
             error,
             cleanup_source: false,
         }
