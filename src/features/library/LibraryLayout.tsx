@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FolderPort, LibraryColumnPreference, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
-import { EditorPane } from '../editor/EditorPane'
+import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
@@ -16,6 +16,8 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
+  const editorRef = useRef<EditorPaneHandle>(null)
+  const navigationRequest = useRef(0)
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -44,6 +46,12 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
     void system.setWindowPreference('library-columns', value).catch(() => undefined)
   }
 
+  const navigateAfterSave = async (navigate: () => void) => {
+    const request = ++navigationRequest.current
+    const canNavigate = (await editorRef.current?.flush()) ?? true
+    if (canNavigate && request === navigationRequest.current) navigate()
+  }
+
   return (
     <SplitPane
       defaultSizes={[240, 300]}
@@ -57,7 +65,7 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
           folders={library.folders}
           activeId={library.activeFolderId}
           state={library.folderState}
-          onSelect={library.selectFolder}
+          onSelect={(folderId) => void navigateAfterSave(() => library.selectFolder(folderId))}
           onCreate={library.createFolder}
           onRename={library.renameFolder}
           onMove={library.moveFolder}
@@ -69,7 +77,7 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
           notes={library.notes}
           activeId={library.activeNoteId}
           state={library.noteListState}
-          onSelect={library.selectNote}
+          onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
         />
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
@@ -82,7 +90,7 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
           </div>
         )}
         {library.document && (
-          <EditorPane document={library.document} notes={notes} />
+          <EditorPane ref={editorRef} document={library.document} notes={notes} />
         )}
       </section>
     </SplitPane>

@@ -1,4 +1,11 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react'
 import type { EditorMode, NoteDocument } from '../../domain/model'
 import type { NotePort } from '../../domain/ports'
 import { MarkdownPreview } from './MarkdownPreview'
@@ -11,6 +18,10 @@ interface EditorPaneProps {
   autosaveDelayMs?: number
 }
 
+export interface EditorPaneHandle {
+  flush: () => Promise<boolean>
+}
+
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: string }> = [
   { mode: 'source', label: '源码视图', icon: '<>' },
   { mode: 'split', label: '分栏视图', icon: '◫' },
@@ -21,13 +32,18 @@ const minimumSplitPercent = 25
 const maximumSplitPercent = 75
 const defaultSplitPercent = 50
 
-export function EditorPane({ document, notes, autosaveDelayMs }: EditorPaneProps) {
+export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
+  { document, notes, autosaveDelayMs },
+  ref,
+) {
   const [mode, setMode] = useState<EditorMode>('source')
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
   const previewRef = useRef<HTMLElement>(null)
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const splitPointerRef = useRef<number | null>(null)
   const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
+
+  useImperativeHandle(ref, () => ({ flush: autosave.flush }), [autosave.flush])
 
   const syncSourceToPreview = (scrollTop: number) => {
     if (mode !== 'split' || previewRef.current === null || sourceScrollRef.current === null) return
@@ -138,7 +154,7 @@ export function EditorPane({ document, notes, autosaveDelayMs }: EditorPaneProps
       </div>
     </div>
   )
-}
+})
 
 function SaveStatus({ state }: { state: SaveState }) {
   if (state.status === 'idle') return null

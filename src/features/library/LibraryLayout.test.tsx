@@ -237,6 +237,156 @@ describe('LibraryLayout', () => {
     )
   })
 
+  it('keeps the current dirty note visible while navigation waits for its save', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const loadNote = vi.fn(async (id: NoteId) =>
+      id === noteA
+        ? { ...note('A body'), id: noteA, title: 'Note A' }
+        : { ...note('B body'), id: noteB, title: 'Note B' },
+    )
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote,
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    const textbox = await screen.findByRole('textbox', { name: 'Markdown source' })
+    const editor = EditorView.findFromDOM(textbox)
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'A draft' } }))
+
+    await user.click(screen.getByRole('button', { name: /Note B/ }))
+
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+    expect(EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))?.state.doc.toString()).toBe('A draft')
+    expect(loadNote).not.toHaveBeenCalledWith(noteB)
+    await act(async () => pendingSave.resolve({ ...note('A draft'), id: noteA, title: 'Note A', revision: 2 }))
+    await screen.findByRole('heading', { name: 'Note B' })
+  })
+
+  it('keeps the current dirty note visible while folder navigation waits for its save', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const listNotes = vi.fn(async (folderId: FolderId | null) =>
+      folderId === null ? [summary(noteA, 'Note A')] : [],
+    )
+    const notes = fakeNotePort({
+      listNotes,
+      loadNote: vi.fn().mockResolvedValue({ ...note('A body'), id: noteA, title: 'Note A' }),
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+      />,
+    )
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'A draft' } }))
+
+    await user.click(screen.getByRole('treeitem', { name: folderRows[0].name }))
+
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+    expect(listNotes).not.toHaveBeenCalledWith(folderA)
+    await act(async () => pendingSave.resolve({ ...note('A draft'), id: noteA, title: 'Note A', revision: 2 }))
+    await waitFor(() => expect(listNotes).toHaveBeenCalledWith(folderA))
+  })
+
+  it('keeps the dirty editor and retry UI when navigation save fails', async () => {
+    const loadNote = vi.fn(async (id: NoteId) =>
+      id === noteA
+        ? { ...note('A body'), id: noteA, title: 'Note A' }
+        : { ...note('B body'), id: noteB, title: 'Note B' },
+    )
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote,
+      saveNote: vi.fn().mockRejectedValue(commandError('io')),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'kept A' } }))
+
+    await user.click(screen.getByRole('button', { name: /Note B/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be saved/i)
+    expect(screen.getByRole('button', { name: '重试保存' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+    expect(editor.state.doc.toString()).toBe('kept A')
+    expect(loadNote).not.toHaveBeenCalledWith(noteB)
+  })
+
+  it('keeps the current editor and conflict guidance when navigation finds a revision conflict', async () => {
+    const loadNote = vi.fn(async (id: NoteId) =>
+      id === noteA
+        ? { ...note('A body'), id: noteA, title: 'Note A' }
+        : { ...note('B body'), id: noteB, title: 'Note B' },
+    )
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote,
+      saveNote: vi.fn().mockRejectedValue(commandError('conflict')),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'conflicted A' } }))
+
+    await user.click(screen.getByRole('button', { name: /Note B/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/changed elsewhere|reload/i)
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+    expect(editor.state.doc.toString()).toBe('conflicted A')
+    expect(loadNote).not.toHaveBeenCalledWith(noteB)
+  })
+
+  it('flushes successfully before navigation and never crosses note content or IDs', async () => {
+    const loadNote = vi.fn(async (id: NoteId) =>
+      id === noteA
+        ? { ...note('A body'), id: noteA, title: 'Note A' }
+        : { ...note('B body'), id: noteB, title: 'Note B', revision: 4 },
+    )
+    const saveNote = vi.fn(async (document: NoteDocument) => ({
+      ...document,
+      revision: document.revision + 1,
+    }))
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote,
+      saveNote,
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    const first = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (first === null) throw new Error('CodeMirror view not found')
+    act(() => first.dispatch({ changes: { from: 0, to: first.state.doc.length, insert: 'A saved' } }))
+
+    await user.click(screen.getByRole('button', { name: /Note B/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Note B' })).toBeVisible()
+    expect(saveNote.mock.calls[0][0]).toMatchObject({ id: noteA, markdown: 'A saved' })
+    const second = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
+    if (second === null) throw new Error('CodeMirror view not found')
+    act(() => {
+      second.dispatch({ changes: { from: 0, to: second.state.doc.length, insert: 'B saved' } })
+      window.dispatchEvent(new Event('blur'))
+    })
+    await waitFor(() => expect(saveNote).toHaveBeenCalledTimes(2))
+    expect(saveNote.mock.calls[1][0]).toMatchObject({ id: noteB, markdown: 'B saved' })
+    expect(saveNote).not.toHaveBeenCalledWith(expect.objectContaining({ id: noteB, markdown: 'A saved' }))
+  })
+
   it('does not let an earlier folder response overwrite the latest selection', async () => {
     const first = deferred<NoteSummary[]>()
     const second = deferred<NoteSummary[]>()

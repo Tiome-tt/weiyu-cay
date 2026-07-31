@@ -200,4 +200,42 @@ describe('useAutosave', () => {
     )
   })
 
+  it('keeps dirty, saving, and saved state observable after Strict Mode effect replay', async () => {
+    const request = deferred<NoteDocument>()
+    const saveNote = vi.fn(() => request.promise)
+    const autosave = renderHook(
+      () => useAutosave(note('old'), fakeNotePort({ saveNote }), { delayMs: 400 }),
+      { reactStrictMode: true },
+    )
+
+    act(() => autosave.result.current.updateMarkdown('strict draft'))
+    expect(autosave.result.current.state.status).toBe('dirty')
+    act(() => void autosave.result.current.flush())
+    expect(autosave.result.current.state.status).toBe('saving')
+    await act(async () => request.resolve(saved(note('strict draft'), 2)))
+
+    expect(autosave.result.current.state.status).toBe('saved')
+  })
+
+  it('keeps Strict Mode save errors and retry observable', async () => {
+    const saveNote = vi
+      .fn<(document: NoteDocument) => Promise<NoteDocument>>()
+      .mockRejectedValueOnce(commandError('io'))
+      .mockImplementationOnce(async (document) => saved(document, 2))
+    const autosave = renderHook(
+      () => useAutosave(note('old'), fakeNotePort({ saveNote }), { delayMs: 400 }),
+      { reactStrictMode: true },
+    )
+    act(() => autosave.result.current.updateMarkdown('strict retry'))
+
+    await act(async () => autosave.result.current.flush())
+
+    const errorState = autosave.result.current.state
+    expect(errorState.status).toBe('error')
+    if (errorState.status !== 'error') throw new Error('expected error state')
+    act(() => errorState.retry())
+    await waitFor(() => expect(autosave.result.current.state.status).toBe('saved'))
+    expect(saveNote).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'strict retry' }))
+  })
+
 })

@@ -13,7 +13,7 @@ interface AutosaveOptions {
 interface SaveRequest {
   generation: number
   noteId: NoteId
-  promise: Promise<void>
+  promise: Promise<boolean>
 }
 
 export const DEFAULT_AUTOSAVE_DELAY_MS = 600
@@ -37,7 +37,7 @@ export function useAutosave(
   const queuedRef = useRef(false)
   const notesRef = useRef(notes)
   const delayRef = useRef(delayMs)
-  const flushRef = useRef<() => Promise<void>>(async () => undefined)
+  const flushRef = useRef<() => Promise<boolean>>(async () => true)
   const retryRef = useRef<() => void>(() => undefined)
 
   notesRef.current = notes
@@ -54,17 +54,19 @@ export function useAutosave(
   }, [])
 
   const runSave = useCallback(
-    async (generation = generationRef.current): Promise<void> => {
+    async (generation = generationRef.current): Promise<boolean> => {
       clearTimer()
-      if (generation !== generationRef.current) return
+      if (generation !== generationRef.current) return false
 
       const currentRequest = inFlightRef.current
       if (currentRequest?.generation === generation) {
         queuedRef.current = true
-        await currentRequest.promise
-        return
+        const succeeded = await currentRequest.promise
+        if (!succeeded || generation !== generationRef.current) return false
+        if (markdownRef.current !== persistedMarkdownRef.current) return runSave(generation)
+        return true
       }
-      if (markdownRef.current === persistedMarkdownRef.current) return
+      if (markdownRef.current === persistedMarkdownRef.current) return true
 
       const noteId = activeIdRef.current
       const durable = durableRef.current
@@ -73,11 +75,10 @@ export function useAutosave(
       queuedRef.current = false
       publish({ status: 'saving' }, generation)
 
-      let succeeded = false
       const request: SaveRequest = {
         generation,
         noteId,
-        promise: Promise.resolve(),
+        promise: Promise.resolve(false),
       }
       const promise = notesRef.current
         .saveNote({ ...durable, markdown: content })
@@ -87,16 +88,16 @@ export function useAutosave(
             noteId !== activeIdRef.current ||
             authoritative.id !== noteId
           ) {
-            return
+            return false
           }
-          succeeded = true
           durableRef.current = authoritative
           persistedMarkdownRef.current = content
           const hasNewerText = editVersionRef.current !== editVersion || markdownRef.current !== content
           publish({ status: hasNewerText ? 'dirty' : 'saved' }, generation)
+          return true
         })
         .catch((error: unknown) => {
-          if (generation !== generationRef.current || noteId !== activeIdRef.current) return
+          if (generation !== generationRef.current || noteId !== activeIdRef.current) return false
           publish(
             {
               status: 'error',
@@ -105,6 +106,7 @@ export function useAutosave(
             },
             generation,
           )
+          return false
         })
         .finally(() => {
           if (inFlightRef.current === request) inFlightRef.current = null
@@ -112,7 +114,7 @@ export function useAutosave(
 
       request.promise = promise
       inFlightRef.current = request
-      await promise
+      const succeeded = await promise
 
       if (
         succeeded &&
@@ -121,15 +123,14 @@ export function useAutosave(
         (queuedRef.current || markdownRef.current !== persistedMarkdownRef.current)
       ) {
         queuedRef.current = false
-        await runSave(generation)
+        return runSave(generation)
       }
+      return succeeded
     },
     [clearTimer, publish],
   )
 
-  const flush = useCallback(async () => {
-    await runSave(generationRef.current)
-  }, [runSave])
+  const flush = useCallback(() => runSave(generationRef.current), [runSave])
 
   const retry = useCallback(() => {
     const generation = generationRef.current
@@ -187,6 +188,7 @@ export function useAutosave(
   }, [clearTimer, document])
 
   useEffect(() => {
+    mountedRef.current = true
     const handleBlur = () => void flushRef.current()
     window.addEventListener('blur', handleBlur)
     return () => {
