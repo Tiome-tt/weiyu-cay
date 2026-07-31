@@ -2,13 +2,18 @@ import '@testing-library/jest-dom/vitest'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { App } from './App'
-import { fakeFolderPort, fakeNotePort, fakeSystemPort } from '../test/fakes'
+import { fakeAssetPort, fakeFolderPort, fakeNotePort, fakeSystemPort } from '../test/fakes'
 
 describe('App', () => {
   it('renders the local library shell without authentication', () => {
     render(
       <App
-        services={{ notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort() }}
+        services={{
+          notes: fakeNotePort(),
+          folders: fakeFolderPort(),
+          system: fakeSystemPort(),
+          assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+        }}
       />,
     )
     expect(screen.getByRole('application', { name: 'Simple Notes' })).toBeVisible()

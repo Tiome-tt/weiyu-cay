@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FolderPort, LibraryColumnPreference, SystemPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, LibraryColumnPreference, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { FolderTree } from './FolderTree'
@@ -10,9 +10,10 @@ interface LibraryLayoutProps {
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
+  assets?: AssetPort
 }
 
-export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
+export function LibraryLayout({ notes, folders, system, assets }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
@@ -90,7 +91,7 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
           </div>
         )}
         {library.document && (
-          <EditorPane ref={editorRef} document={library.document} notes={notes} />
+          <EditorPane ref={editorRef} document={library.document} notes={notes} assets={assets} />
         )}
       </section>
     </SplitPane>

@@ -24,6 +24,7 @@ pub fn run() {
             commands::notes::save_note,
             commands::notes::list_notes,
             commands::notes::move_note,
+            commands::assets::save_image,
             commands::folders::list_folders,
             commands::folders::create_folder,
             commands::folders::rename_folder,

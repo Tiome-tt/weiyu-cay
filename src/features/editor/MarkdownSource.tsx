@@ -2,10 +2,16 @@ import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import type { NoteId } from '../../domain/model'
+import type { AssetPort } from '../../domain/ports'
+import { handleImagePaste } from './imagePaste'
 
 interface MarkdownSourceProps {
   markdown: string
   onChange(markdown: string): void
+  noteId?: NoteId
+  assets?: AssetPort
+  onImageError?(message: string | null): void
   onScroll?(scrollTop: number): void
   onScrollElement?(element: HTMLElement | null): void
 }
@@ -13,6 +19,9 @@ interface MarkdownSourceProps {
 export function MarkdownSource({
   markdown,
   onChange,
+  noteId,
+  assets,
+  onImageError,
   onScroll,
   onScrollElement,
 }: MarkdownSourceProps) {
@@ -22,6 +31,17 @@ export function MarkdownSource({
   const onScrollRef = useRef(onScroll)
   const onScrollElementRef = useRef(onScrollElement)
   const reconcilingRef = useRef(false)
+  const noteIdRef = useRef(noteId)
+  const assetsRef = useRef(assets)
+  const onImageErrorRef = useRef(onImageError)
+  const editorGenerationRef = useRef(0)
+
+  if (noteIdRef.current !== noteId) {
+    noteIdRef.current = noteId
+    editorGenerationRef.current += 1
+  }
+  assetsRef.current = assets
+  onImageErrorRef.current = onImageError
 
   onChangeRef.current = onChange
   onScrollRef.current = onScroll
@@ -44,6 +64,39 @@ export function MarkdownSource({
           if (update.docChanged && !reconcilingRef.current) {
             onChangeRef.current(update.state.doc.toString())
           }
+        }),
+        EditorView.domEventHandlers({
+          paste: (event, pasteView) => {
+            const originatingNoteId = noteIdRef.current
+            const originatingGeneration = editorGenerationRef.current
+            const assetPort = assetsRef.current
+            if (originatingNoteId === undefined || assetPort === undefined) return false
+            const selection = pasteView.state.selection.main
+            const originatingMarkdown = pasteView.state.doc.toString()
+            void handleImagePaste(event, { noteId: originatingNoteId, assets: assetPort }).then(
+              (result) => {
+                if (
+                  noteIdRef.current !== originatingNoteId ||
+                  editorGenerationRef.current !== originatingGeneration ||
+                  viewRef.current !== pasteView ||
+                  pasteView.state.doc.toString() !== originatingMarkdown
+                ) {
+                  return
+                }
+                if (result.kind === 'failure') {
+                  onImageErrorRef.current?.(result.message)
+                  return
+                }
+                if (result.kind !== 'success') return
+                onImageErrorRef.current?.(null)
+                pasteView.dispatch({
+                  changes: { from: selection.from, to: selection.to, insert: result.markdown },
+                  selection: { anchor: selection.from + result.markdown.length },
+                })
+              },
+            )
+            return event.defaultPrevented
+          },
         }),
         EditorView.theme({
           '&': { height: '100%' },

@@ -1,6 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { FolderPort, SystemPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AssetPort, FolderPort, SystemPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -46,6 +46,16 @@ class TauriFolderPort implements FolderPort {
   }
 }
 
+class TauriAssetPort implements AssetPort {
+  constructor(private readonly client: TauriClient) {}
+
+  saveImage(input: Parameters<AssetPort['saveImage']>[0]) {
+    return this.client.invoke<Awaited<ReturnType<AssetPort['saveImage']>>>('save_image', {
+      input: { ...input, bytes: Array.from(input.bytes) },
+    })
+  }
+}
+
 class TauriSystemPort implements SystemPort {
   private readonly preferences = new LazyStore('settings.json', { autoSave: true })
 
@@ -71,11 +81,13 @@ export function createTauriPorts(): {
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
+  assets: AssetPort
 } {
   const client = new TauriClient()
   return {
     notes: new TauriNotePort(client),
     folders: new TauriFolderPort(client),
     system: new TauriSystemPort(client),
+    assets: new TauriAssetPort(client),
   }
 }

@@ -10,6 +10,12 @@ pub struct NoteCommandState {
     paths: StoragePaths,
 }
 
+impl NoteCommandState {
+    pub(crate) fn paths(&self) -> &StoragePaths {
+        &self.paths
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveNoteInput {

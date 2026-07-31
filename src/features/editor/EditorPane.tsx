@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -7,7 +8,7 @@ import {
   type PointerEvent,
 } from 'react'
 import type { EditorMode, NoteDocument } from '../../domain/model'
-import type { NotePort } from '../../domain/ports'
+import type { AssetPort, NotePort } from '../../domain/ports'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
@@ -15,6 +16,7 @@ import { useAutosave, type SaveState } from './useAutosave'
 interface EditorPaneProps {
   document: NoteDocument
   notes: Pick<NotePort, 'saveNote'>
+  assets?: AssetPort
   autosaveDelayMs?: number
 }
 
@@ -33,15 +35,18 @@ const maximumSplitPercent = 75
 const defaultSplitPercent = 50
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { document, notes, autosaveDelayMs },
+  { document, notes, assets, autosaveDelayMs },
   ref,
 ) {
   const [mode, setMode] = useState<EditorMode>('source')
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
+  const [imageError, setImageError] = useState<string | null>(null)
   const previewRef = useRef<HTMLElement>(null)
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const splitPointerRef = useRef<number | null>(null)
   const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
+
+  useEffect(() => setImageError(null), [document.id])
 
   useImperativeHandle(ref, () => ({ flush: autosave.flush }), [autosave.flush])
 
@@ -88,6 +93,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         </div>
         <div className="editor-toolbar__actions">
           <SaveStatus state={autosave.state} />
+          {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
           {modes.map((item) => (
             <button
               key={item.mode}
@@ -114,6 +120,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         <div className="editor-document__source" hidden={mode === 'preview'}>
           <MarkdownSource
             markdown={autosave.markdown}
+            noteId={document.id}
+            assets={assets}
+            onImageError={setImageError}
             onChange={autosave.updateMarkdown}
             onScroll={syncSourceToPreview}
             onScrollElement={(element) => {

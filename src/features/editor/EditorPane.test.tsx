@@ -4,7 +4,7 @@ import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fakeNotePort, note } from '../../test/fakes'
+import { fakeAssetPort, fakeNotePort, note, pngBytes } from '../../test/fakes'
 import { EditorPane } from './EditorPane'
 
 afterEach(cleanup)
@@ -20,7 +20,7 @@ function view() {
 
 describe('EditorPane', () => {
   it('places the note title and exactly three primary view controls in the editor toolbar', () => {
-    render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} />)
+    render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} assets={fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 })} />)
 
     const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
     expect(within(toolbar).getByRole('heading', { name: 'Goal' })).toBeVisible()
@@ -162,5 +162,25 @@ describe('EditorPane', () => {
 
     await waitFor(() => expect(saveNote).toHaveBeenCalledTimes(2))
     expect(saveNote).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'kept draft' }))
+  })
+
+  it('exposes a safe image-save failure without changing the note', async () => {
+    const assets = {
+      saveImage: vi.fn(async () => {
+        throw new Error('C:\\private\\asset.png')
+      }),
+    }
+    render(<EditorPane document={note('kept')} notes={fakeNotePort()} assets={assets} />)
+
+    fireEvent.paste(view().contentDOM, {
+      clipboardData: {
+        files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }],
+        getData: () => '',
+      },
+    })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法保存截图。')
+    expect(view().state.doc.toString()).toBe('kept')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('private')
   })
 })

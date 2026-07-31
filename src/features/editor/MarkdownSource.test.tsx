@@ -4,6 +4,7 @@ import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownSource } from './MarkdownSource'
+import { fakeAssetPort, noteId, pngBytes } from '../../test/fakes'
 
 afterEach(cleanup)
 
@@ -58,5 +59,70 @@ describe('MarkdownSource', () => {
     fireEvent.scroll(view.scrollDOM)
 
     expect(onScroll).toHaveBeenLastCalledWith(24)
+  })
+
+  it('replaces the exact selection with a pasted image and places the caret after it', async () => {
+    const onChange = vi.fn()
+    const assets = fakeAssetPort({ relativePath: 'assets/screenshot-019c.png', width: 2, height: 3 })
+    render(<MarkdownSource markdown="before selected after" noteId={noteId} assets={assets} onChange={onChange} />)
+    const view = editorView()
+    view.dispatch({ selection: EditorSelection.range(7, 15) })
+
+    fireEvent.paste(view.contentDOM, {
+      clipboardData: {
+        files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }],
+        getData: () => '',
+      },
+    })
+
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe('before ![截图](assets/screenshot-019c.png) after'))
+    expect(view.state.selection.main.head).toBe('before ![截图](assets/screenshot-019c.png)'.length)
+    expect(onChange).toHaveBeenLastCalledWith('before ![截图](assets/screenshot-019c.png) after')
+  })
+
+  it('does not change the document when saving a pasted image fails', async () => {
+    const onImageError = vi.fn()
+    const assets = {
+      saveImage: vi.fn(async () => {
+        throw new Error('private path')
+      }),
+    }
+    render(<MarkdownSource markdown="kept" noteId={noteId} assets={assets} onChange={vi.fn()} onImageError={onImageError} />)
+
+    fireEvent.paste(editorView().contentDOM, {
+      clipboardData: {
+        files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }],
+        getData: () => '',
+      },
+    })
+
+    await vi.waitFor(() => expect(onImageError).toHaveBeenCalledWith('无法保存截图。'))
+    expect(editorView().state.doc.toString()).toBe('kept')
+  })
+
+  it('does not insert an image resolved after the editor switches notes', async () => {
+    let finish!: (value: { relativePath: string; width: number; height: number }) => void
+    const assets = {
+      saveImage: vi.fn(
+        () =>
+          new Promise<{ relativePath: string; width: number; height: number }>((resolve) => {
+            finish = resolve
+          }),
+      ),
+    }
+    const { rerender } = render(<MarkdownSource markdown="note A" noteId={noteId} assets={assets} onChange={vi.fn()} />)
+
+    fireEvent.paste(editorView().contentDOM, {
+      clipboardData: {
+        files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }],
+        getData: () => '',
+      },
+    })
+    await vi.waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
+    const otherId = '019c0000-0000-7000-8000-000000000099' as typeof noteId
+    rerender(<MarkdownSource markdown="note B" noteId={otherId} assets={assets} onChange={vi.fn()} />)
+    finish({ relativePath: 'assets/orphan.png', width: 2, height: 3 })
+
+    await vi.waitFor(() => expect(editorView().state.doc.toString()).toBe('note B'))
   })
 })
