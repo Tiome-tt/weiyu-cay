@@ -125,4 +125,32 @@ describe('MarkdownSource', () => {
 
     await vi.waitFor(() => expect(editorView().state.doc.toString()).toBe('note B'))
   })
+
+  it('blocks CodeMirror transactions and image paste while read only, then resumes editing', () => {
+    const onChange = vi.fn()
+    const assets = fakeAssetPort({ relativePath: 'assets/blocked.png', width: 1, height: 1 })
+    const { rerender } = render(
+      <MarkdownSource markdown="kept" noteId={noteId} assets={assets} onChange={onChange} readOnly />,
+    )
+    const view = editorView()
+
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'lost' } })
+    fireEvent.paste(view.contentDOM, {
+      clipboardData: {
+        files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }],
+        getData: () => '',
+      },
+    })
+
+    expect(view.state.doc.toString()).toBe('kept')
+    expect(view.contentDOM).toHaveAttribute('contenteditable', 'false')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(assets.saveImage).not.toHaveBeenCalled()
+
+    rerender(
+      <MarkdownSource markdown="kept" noteId={noteId} assets={assets} onChange={onChange} readOnly={false} />,
+    )
+    view.dispatch({ changes: { from: 4, insert: ' editing' } })
+    expect(view.state.doc.toString()).toBe('kept editing')
+  })
 })

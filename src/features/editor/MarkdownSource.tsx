@@ -1,5 +1,5 @@
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { NoteId } from '../../domain/model'
@@ -14,6 +14,7 @@ interface MarkdownSourceProps {
   onImageError?(message: string | null): void
   onScroll?(scrollTop: number): void
   onScrollElement?(element: HTMLElement | null): void
+  readOnly?: boolean
 }
 
 export function MarkdownSource({
@@ -24,6 +25,7 @@ export function MarkdownSource({
   onImageError,
   onScroll,
   onScrollElement,
+  readOnly = false,
 }: MarkdownSourceProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -35,6 +37,8 @@ export function MarkdownSource({
   const assetsRef = useRef(assets)
   const onImageErrorRef = useRef(onImageError)
   const editorGenerationRef = useRef(0)
+  const readOnlyRef = useRef(readOnly)
+  const editableCompartmentRef = useRef(new Compartment())
 
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
@@ -42,6 +46,7 @@ export function MarkdownSource({
   }
   assetsRef.current = assets
   onImageErrorRef.current = onImageError
+  readOnlyRef.current = readOnly
 
   onChangeRef.current = onChange
   onScrollRef.current = onScroll
@@ -60,6 +65,14 @@ export function MarkdownSource({
           'aria-multiline': 'true',
           spellcheck: 'true',
         }),
+        editableCompartmentRef.current.of([
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly),
+          EditorView.contentAttributes.of({ 'aria-readonly': String(readOnly) }),
+        ]),
+        EditorState.transactionFilter.of((transaction) =>
+          readOnlyRef.current && transaction.docChanged && !reconcilingRef.current ? [] : transaction,
+        ),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !reconcilingRef.current) {
             onChangeRef.current(update.state.doc.toString())
@@ -67,6 +80,10 @@ export function MarkdownSource({
         }),
         EditorView.domEventHandlers({
           paste: (event, pasteView) => {
+            if (readOnlyRef.current) {
+              event.preventDefault()
+              return true
+            }
             const originatingNoteId = noteIdRef.current
             const originatingGeneration = editorGenerationRef.current
             const assetPort = assetsRef.current
@@ -125,6 +142,18 @@ export function MarkdownSource({
       viewRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (view === null) return
+    view.dispatch({
+      effects: editableCompartmentRef.current.reconfigure([
+        EditorState.readOnly.of(readOnly),
+        EditorView.editable.of(!readOnly),
+        EditorView.contentAttributes.of({ 'aria-readonly': String(readOnly) }),
+      ]),
+    })
+  }, [readOnly])
 
   useEffect(() => {
     const view = viewRef.current

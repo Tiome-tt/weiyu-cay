@@ -44,6 +44,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const [mode, setMode] = useState<EditorMode>('source')
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
   const [imageError, setImageError] = useState<string | null>(null)
+  const [tagTransactionActive, setTagTransactionActive] = useState(false)
   const previewRef = useRef<HTMLElement>(null)
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const splitPointerRef = useRef<number | null>(null)
@@ -64,13 +65,18 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     if (search === undefined) return
     const noteId = document.id
     const request = ++tagRequestRef.current
-    if (!(await autosave.flush())) throw new Error('markdown flush failed')
-    if (tagRequestRef.current !== request) return
-    await search.updateTags(noteId, tags)
-    if (tagRequestRef.current !== request) return
-    const authoritative = await notes.loadNote(noteId)
-    if (tagRequestRef.current !== request || authoritative.id !== noteId) return
-    onDocumentAdopt?.(authoritative)
+    setTagTransactionActive(true)
+    try {
+      if (!(await autosave.flush())) throw new Error('markdown flush failed')
+      if (tagRequestRef.current !== request) return
+      await search.updateTags(noteId, tags)
+      if (tagRequestRef.current !== request) return
+      const authoritative = await notes.loadNote(noteId)
+      if (tagRequestRef.current !== request || authoritative.id !== noteId) return
+      onDocumentAdopt?.(authoritative)
+    } finally {
+      setTagTransactionActive(false)
+    }
   }
 
   const syncSourceToPreview = (scrollTop: number) => {
@@ -152,6 +158,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             onScrollElement={(element) => {
               sourceScrollRef.current = element
             }}
+            readOnly={tagTransactionActive}
           />
         </div>
         <div

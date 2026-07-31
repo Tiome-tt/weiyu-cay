@@ -13,13 +13,10 @@ export class TagValidationError extends Error {
 }
 
 export function normalizeTag(input: string): { display: string; normalized: string } {
-  const display = input.normalize('NFKC').trim().replace(/\s+/gu, ' ')
+  const display = normalizeDisplay(input)
   if (display.length === 0) throw new TagValidationError('empty')
-  if (Array.from(display).some((character) => isControl(character))) {
-    throw new TagValidationError('control-character')
-  }
   if (Array.from(display).length > MAX_TAG_LENGTH) throw new TagValidationError('too-long')
-  return { display, normalized: display.toLowerCase() }
+  return { display, normalized: applicationCaseFold(display) }
 }
 
 export function mergeTags(current: string[], additions: string[]): string[] {
@@ -35,8 +32,11 @@ export function mergeTags(current: string[], additions: string[]): string[] {
 }
 
 export function parseSearchQuery(input: string): SearchQuery {
-  const value = input.normalize('NFKC').trim()
-  if (Array.from(value).some((character) => isControl(character))) {
+  let value: string
+  try {
+    value = normalizeDisplay(input)
+  } catch (error: unknown) {
+    if (!(error instanceof TagValidationError)) throw error
     return { kind: 'invalid', reason: 'control-character' }
   }
   if (!value.startsWith('#')) {
@@ -44,10 +44,53 @@ export function parseSearchQuery(input: string): SearchQuery {
       ? { kind: 'invalid', reason: 'too-long' }
       : { kind: 'text', value }
   }
-  const keyword = value.slice(1).trim().replace(/\s+/gu, ' ')
+  const keyword = normalizeDisplay(value.slice(1))
   if (keyword.trim().length === 0) return { kind: 'invalid', reason: 'empty-tag' }
   if (Array.from(keyword).length > MAX_SEARCH_QUERY_LENGTH) return { kind: 'invalid', reason: 'too-long' }
-  return { kind: 'tag', value: keyword.toLowerCase() }
+  return { kind: 'tag', value: applicationCaseFold(keyword) }
+}
+
+function normalizeDisplay(input: string) {
+  const result: string[] = []
+  let pendingSpace = false
+  for (const character of input.normalize('NFKC')) {
+    if (isApplicationWhitespace(character)) {
+      pendingSpace = result.length > 0
+      continue
+    }
+    if (isControl(character)) throw new TagValidationError('control-character')
+    if (pendingSpace) result.push(' ')
+    pendingSpace = false
+    result.push(character)
+  }
+  return result.join('')
+}
+
+function applicationCaseFold(input: string) {
+  return input
+    .replace(/[ßẞ]/gu, 'SS')
+    .toUpperCase()
+    .toLowerCase()
+    .replace(/ς/gu, 'σ')
+    .normalize('NFKC')
+}
+
+function isApplicationWhitespace(character: string) {
+  const codePoint = character.codePointAt(0)
+  return codePoint !== undefined && (
+    (codePoint >= 0x09 && codePoint <= 0x0d) ||
+    codePoint === 0x20 ||
+    codePoint === 0x85 ||
+    codePoint === 0xa0 ||
+    codePoint === 0x1680 ||
+    (codePoint >= 0x2000 && codePoint <= 0x200a) ||
+    codePoint === 0x2028 ||
+    codePoint === 0x2029 ||
+    codePoint === 0x202f ||
+    codePoint === 0x205f ||
+    codePoint === 0x3000 ||
+    codePoint === 0xfeff
+  )
 }
 
 function isControl(character: string) {

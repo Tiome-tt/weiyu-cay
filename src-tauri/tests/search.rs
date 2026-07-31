@@ -271,6 +271,59 @@ fn tag_updates_apply_nfkc_whitespace_and_case_rules_and_reject_invalid_values() 
     );
 }
 
+#[test]
+fn normalization_vectors_match_the_renderer_case_fold_and_explicit_whitespace() {
+    let store = seeded_store();
+    create_note(
+        &store,
+        NOTE_A,
+        "Parity",
+        NoteKind::Formal,
+        vec![],
+        "2026-07-31T08:00:00Z",
+    );
+    let search = SearchRepository::new(store.paths.clone());
+    let updated = search
+        .update_tags(
+            note_id(NOTE_A),
+            vec![
+                "Straße".into(),
+                "ΟΣ".into(),
+                "Ａ\u{85} B\u{feff}中 文".into(),
+            ],
+        )
+        .unwrap();
+    assert_eq!(updated.tags, vec!["Straße", "ΟΣ", "A B 中 文"]);
+    assert_eq!(search.search_tag("STRASSE", 20).unwrap().len(), 1);
+    assert_eq!(search.search_tag("ος", 20).unwrap().len(), 1);
+    assert_eq!(search.search_tag("a b 中", 20).unwrap().len(), 1);
+    assert_eq!(
+        search
+            .update_tags(note_id(NOTE_A), vec!["bad\u{9f}".into()])
+            .unwrap_err()
+            .code(),
+        CommandErrorCode::Validation,
+    );
+}
+
+#[test]
+fn one_note_matching_two_tags_is_returned_once() {
+    let store = seeded_store();
+    create_note(
+        &store,
+        NOTE_A,
+        "Deduplicated",
+        NoteKind::Formal,
+        vec!["Rust book", "Trust"],
+        "2026-07-31T08:00:00Z",
+    );
+    let results = SearchRepository::new(store.paths.clone())
+        .search_tag("rust", 20)
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].title, "Deduplicated");
+}
+
 fn seeded_store() -> TestStore {
     let store = TestStore::new();
     let _isolated_root = store.root.path();

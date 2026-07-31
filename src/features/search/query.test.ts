@@ -50,4 +50,23 @@ describe('search query parsing', () => {
     const value = 'a'.repeat(256)
     expect(parseSearchQuery(`#${value}`)).toEqual({ kind: 'tag', value })
   })
+
+  it.each([
+    ['Straße', 'Straße', 'strasse'],
+    ['STRASSE', 'STRASSE', 'strasse'],
+    ['ΟΣ', 'ΟΣ', 'οσ'],
+    ['ος', 'ος', 'οσ'],
+    ['Ａ\u0085 B\uFEFF中 文', 'A B 中 文', 'a b 中 文'],
+  ])('uses the shared application case fold for %s', (input, display, normalized) => {
+    expect(normalizeTag(input)).toEqual({ display, normalized })
+  })
+
+  it('merges sharp-s and Greek final-sigma case variants by the shared fold', () => {
+    expect(mergeTags(['Straße', 'ΟΣ'], ['STRASSE', 'ος'])).toEqual(['Straße', 'ΟΣ'])
+  })
+
+  it('rejects an actual C1 control character that is not explicit whitespace', () => {
+    expect(() => normalizeTag(`bad${String.fromCharCode(0x9f)}tag`)).toThrow(TagValidationError)
+    expect(parseSearchQuery(`#bad${String.fromCharCode(0x9f)}`)).toEqual({ kind: 'invalid', reason: 'control-character' })
+  })
 })

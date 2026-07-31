@@ -33,6 +33,7 @@ export function SearchBar({ search, onSelect }: SearchBarProps) {
       setGuidance('当前支持 #标签 搜索；正文搜索将在后续版本提供')
       return
     }
+    setResults([])
     setState('loading')
     setGuidance('')
     try {

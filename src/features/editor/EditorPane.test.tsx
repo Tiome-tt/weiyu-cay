@@ -233,4 +233,40 @@ describe('EditorPane', () => {
     expect(notes.loadNote).not.toHaveBeenCalled()
     expect(onDocumentAdopt).not.toHaveBeenCalled()
   })
+
+  it('locks source edits after flush until the authoritative tag revision is adopted', async () => {
+    let resolveTags!: (tags: string[]) => void
+    const pendingTags = new Promise<string[]>((resolve) => { resolveTags = resolve })
+    const authoritative = { ...note('saved draft'), tags: ['Backend'], revision: 3 }
+    const notes = fakeNotePort({
+      saveNote: vi.fn(async (document) => ({ ...document, revision: 2 })),
+      loadNote: vi.fn().mockResolvedValue(authoritative),
+    })
+    const search = fakeSearchPort({ updateTags: vi.fn(() => pendingTags) })
+    const onDocumentAdopt = vi.fn()
+    const user = userEvent.setup()
+    render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
+    act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'saved draft' } }))
+    await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
+    await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
+
+    act(() => view().dispatch({ changes: { from: view().state.doc.length, insert: ' lost text' } }))
+    expect(view().state.doc.toString()).toBe('saved draft')
+    expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveAttribute('contenteditable', 'false')
+    await act(async () => resolveTags(['Backend']))
+    await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
+    expect(notes.saveNote).toHaveBeenCalledTimes(1)
+  })
+
+  it('unlocks the unchanged Markdown after a tag transaction fails', async () => {
+    const search = fakeSearchPort({ updateTags: vi.fn().mockRejectedValue(new Error('failed')) })
+    const user = userEvent.setup()
+    render(<EditorPane document={note('kept')} notes={fakeNotePort()} search={search} />)
+
+    await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
+    await screen.findByRole('alert')
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveAttribute('contenteditable', 'true'))
+    act(() => view().dispatch({ changes: { from: 4, insert: ' draft' } }))
+    expect(view().state.doc.toString()).toBe('kept draft')
+  })
 })

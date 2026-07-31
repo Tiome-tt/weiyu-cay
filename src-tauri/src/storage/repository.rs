@@ -664,29 +664,76 @@ pub(crate) fn normalized_tags(tags: &[String]) -> Result<Vec<(String, String)>, 
     let mut seen = HashSet::new();
     let mut result = Vec::with_capacity(tags.len());
     for tag in tags {
-        let canonical: String = tag.nfkc().collect();
-        if canonical
-            .chars()
-            .any(|character| character.is_control() && !character.is_whitespace())
-        {
-            return Err(CommandError::validation(
-                "tag name contains a control character",
-            ));
-        }
-        let display = canonical.split_whitespace().collect::<Vec<_>>().join(" ");
-        if display.is_empty() {
-            return Err(CommandError::validation("tag name is empty"));
-        }
-        if display.chars().count() > 80 {
-            return Err(CommandError::validation("tag name is too long"));
-        }
-        let normalized = display.to_lowercase();
+        let (display, normalized) = normalized_tag_value(tag, 80)?;
         if !seen.insert(normalized.clone()) {
             return Err(CommandError::validation("duplicate normalized tag"));
         }
         result.push((display, normalized));
     }
     Ok(result)
+}
+
+pub(crate) fn normalized_tag_value(
+    input: &str,
+    maximum_length: usize,
+) -> Result<(String, String), CommandError> {
+    let canonical: String = input.nfkc().collect();
+    let mut display = String::with_capacity(canonical.len());
+    let mut pending_space = false;
+    for character in canonical.chars() {
+        if is_application_whitespace(character) {
+            pending_space = !display.is_empty();
+            continue;
+        }
+        if character.is_control() {
+            return Err(CommandError::validation(
+                "tag name contains a control character",
+            ));
+        }
+        if pending_space {
+            display.push(' ');
+            pending_space = false;
+        }
+        display.push(character);
+    }
+    if display.is_empty() {
+        return Err(CommandError::validation("tag name is empty"));
+    }
+    if display.chars().count() > maximum_length {
+        return Err(CommandError::validation("tag name is too long"));
+    }
+    let mut upper = String::with_capacity(display.len());
+    for character in display.chars() {
+        if matches!(character, 'ß' | 'ẞ') {
+            upper.push_str("SS");
+        } else {
+            upper.extend(character.to_uppercase());
+        }
+    }
+    let mut folded = String::with_capacity(upper.len());
+    for character in upper.chars().flat_map(char::to_lowercase) {
+        folded.push(if character == 'ς' { 'σ' } else { character });
+    }
+    let normalized = folded.nfkc().collect();
+    Ok((display, normalized))
+}
+
+fn is_application_whitespace(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x09..=0x0d
+            | 0x20
+            | 0x85
+            | 0xa0
+            | 0x1680
+            | 0x2000..=0x200a
+            | 0x2028
+            | 0x2029
+            | 0x202f
+            | 0x205f
+            | 0x3000
+            | 0xfeff
+    )
 }
 
 pub(crate) fn kind_directory(kind: NoteKind) -> &'static str {

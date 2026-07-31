@@ -63,4 +63,28 @@ describe('SearchBar', () => {
     await user.click(screen.getByRole('button', { name: /New result/ }))
     expect(onSelect).toHaveBeenCalledWith(secondId)
   })
+
+  it('does not show prior-query results while a new query loads or after it fails', async () => {
+    let rejectNext!: (error: Error) => void
+    const next = new Promise<SearchResult[]>((_resolve, reject) => { rejectNext = reject })
+    const search = fakeSearchPort({
+      search: vi.fn()
+        .mockResolvedValueOnce([result(firstId, 'Old result')])
+        .mockReturnValueOnce(next),
+    })
+    const user = userEvent.setup()
+    render(<SearchBar search={search} onSelect={vi.fn()} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+    await user.type(field, '#old')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    expect(await screen.findByText('Old result')).toBeVisible()
+
+    await user.clear(field)
+    await user.type(field, '#new')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    expect(screen.queryByText('Old result')).not.toBeInTheDocument()
+    await act(async () => rejectNext(new Error('offline')))
+    expect(await screen.findByRole('alert')).toHaveTextContent('搜索失败')
+    expect(screen.queryByText('Old result')).not.toBeInTheDocument()
+  })
 })

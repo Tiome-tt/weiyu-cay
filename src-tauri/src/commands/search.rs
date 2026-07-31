@@ -5,14 +5,16 @@ use crate::{
     storage::{
         database::Database,
         paths::StoragePaths,
-        repository::{normalized_tags, note_id_from_blob, DocumentWriter, NoteRepository},
+        repository::{
+            normalized_tag_value, normalized_tags, note_id_from_blob, DocumentWriter,
+            NoteRepository,
+        },
     },
 };
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use std::collections::HashSet;
 use tauri::State;
-use unicode_normalization::UnicodeNormalization;
 
 const MAX_QUERY_LENGTH: usize = 256;
 const MAX_RESULTS: usize = 100;
@@ -170,23 +172,7 @@ pub fn update_note_tags(
 }
 
 fn normalize_query(input: &str) -> Result<String, CommandError> {
-    let canonical: String = input.nfkc().collect();
-    if canonical
-        .chars()
-        .any(|character| character.is_control() && !character.is_whitespace())
-    {
-        return Err(CommandError::validation(
-            "tag query contains a control character",
-        ));
-    }
-    let display = canonical.split_whitespace().collect::<Vec<_>>().join(" ");
-    if display.is_empty() {
-        return Err(CommandError::validation("tag query is empty"));
-    }
-    if display.chars().count() > MAX_QUERY_LENGTH {
-        return Err(CommandError::validation("tag query is too long"));
-    }
-    Ok(display.to_lowercase())
+    normalized_tag_value(input, MAX_QUERY_LENGTH).map(|(_, normalized)| normalized)
 }
 
 fn escape_like(value: &str) -> String {
