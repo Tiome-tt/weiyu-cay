@@ -2,7 +2,7 @@ use crate::{
     commands::notes::NoteCommandState,
     domain::{NoteKind, SaveImageInput, SavedImage},
     error::CommandError,
-    platform::SafeDirectory,
+    platform::{NewFilePublishState, SafeDirectory},
     storage::{database::Database, paths::StoragePaths, repository::NoteRepository},
 };
 use image::{GenericImageView, ImageFormat, ImageReader, Limits};
@@ -145,25 +145,25 @@ where
             next_uuid().hyphenated(),
             validated.extension()
         );
-        let mut file = match directory.create_new(&filename) {
+        let staging = format!(".{filename}.partial");
+        let mut file = match directory.create_new(&staging) {
             Ok(file) => file,
-            Err(error) => match directory.regular_file_exists(&filename) {
+            Err(error) => match directory.regular_file_exists(&staging) {
                 Ok(true) => continue,
                 Ok(false) => return Err(error),
                 Err(inspect_error) => return Err(inspect_error),
             },
         };
-        let identity = directory.file_identity(&file)?;
         if let Err(error) = write(&mut file, &input.bytes) {
             drop(file);
-            let _ = directory.remove_if_identity(&filename, identity);
             return Err(error);
         }
         drop(file);
-        if let Err(error) = sync(&directory, &filename) {
-            let _ = directory.remove_if_identity(&filename, identity);
-            return Err(error);
+        match directory.publish_new(&staging, &filename)? {
+            NewFilePublishState::Published => {}
+            NewFilePublishState::DestinationExists => continue,
         }
+        sync(&directory, &filename)?;
         return Ok(SavedImage {
             relative_path: format!("assets/{filename}"),
             width: validated.width,

@@ -1,3 +1,4 @@
+use super::NewFilePublishState;
 use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -22,6 +23,8 @@ const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
 const ERROR_UNABLE_TO_REMOVE_REPLACED: i32 = 1175;
 const ERROR_UNABLE_TO_MOVE_REPLACEMENT: i32 = 1176;
 const ERROR_UNABLE_TO_MOVE_REPLACEMENT_2: i32 = 1177;
+const ERROR_FILE_EXISTS: i32 = 80;
+const ERROR_ALREADY_EXISTS: i32 = 183;
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 const FILE_SHARE_WRITE: u32 = 0x0000_0002;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
@@ -249,8 +252,6 @@ impl FileIdentity {
         Self::from_file(&file)
     }
 }
-
-type ContainedFileIdentity = FileIdentity;
 
 #[derive(Serialize, Deserialize)]
 struct RecoveryDescriptor {
@@ -533,10 +534,6 @@ impl SafeDirectory {
             })
     }
 
-    pub(crate) fn file_identity(&self, file: &File) -> Result<ContainedFileIdentity, CommandError> {
-        ContainedFileIdentity::from_file(file)
-    }
-
     pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
         let path = self.child_path(name)?;
         validate_regular_or_missing(&path)?;
@@ -658,26 +655,22 @@ impl SafeDirectory {
         }
     }
 
-    pub(crate) fn remove_if_identity(
+    pub(crate) fn publish_new(
         &self,
-        name: &str,
-        expected: ContainedFileIdentity,
-    ) -> Result<bool, CommandError> {
-        let path = self.child_path(name)?;
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) => {
-                validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
-                if ContainedFileIdentity::from_path(&path)? != expected {
-                    return Ok(false);
-                }
-                fs::remove_file(path).map_err(|source| {
-                    CommandError::io(format!("could not remove owned contained file: {source}"))
-                })?;
-                Ok(true)
+        source: &str,
+        destination: &str,
+    ) -> Result<NewFilePublishState, CommandError> {
+        let source_path = self.child_path(source)?;
+        let destination_path = self.child_path(destination)?;
+        validate_regular_or_missing(&source_path)?;
+        validate_regular_or_missing(&destination_path)?;
+        match SystemReplaceOperations.move_new(&source_path, &destination_path) {
+            Ok(()) => Ok(NewFilePublishState::Published),
+            Err(ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS) => {
+                Ok(NewFilePublishState::DestinationExists)
             }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(source) => Err(CommandError::io(format!(
-                "could not inspect owned contained file for removal: {source}"
+            Err(code) => Err(CommandError::io(format!(
+                "could not publish new contained file: Windows error {code}"
             ))),
         }
     }

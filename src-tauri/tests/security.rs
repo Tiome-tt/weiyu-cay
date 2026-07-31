@@ -107,7 +107,7 @@ fn rejects_unknown_note_ids_without_leaking_the_storage_root() {
 }
 
 #[test]
-fn write_and_directory_sync_failures_clean_only_the_created_partial_asset() {
+fn write_failure_leaves_only_a_private_staging_orphan() {
     let store = TestStore::new();
     create_note(&store, FORMAL_ID, NoteKind::Formal);
     let asset_dir = store
@@ -133,12 +133,31 @@ fn write_and_directory_sync_failures_clean_only_the_created_partial_asset() {
         &mut sync,
     )
     .unwrap_err();
-    assert!(!asset_dir
-        .join(format!("screenshot-{write_uuid}.png"))
-        .exists());
+    let entries = std::fs::read_dir(&asset_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        vec![format!(".screenshot-{write_uuid}.png.partial")]
+    );
+    assert_eq!(
+        std::fs::read(asset_dir.join(&entries[0])).unwrap(),
+        b"partial"
+    );
+}
 
+#[test]
+fn directory_sync_failure_keeps_the_published_asset_as_a_recoverable_orphan() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let asset_dir = store
+        .paths
+        .assets_dir(id(FORMAL_ID), NoteKind::Formal)
+        .unwrap();
     let sync_uuid = uuid("019c0000-0000-7000-8000-000000000082");
     let mut names = || sync_uuid;
+    let expected = encoded(ImageFormat::Png, 2, 3);
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
@@ -151,15 +170,16 @@ fn write_and_directory_sync_failures_clean_only_the_created_partial_asset() {
     };
     save_image_to_with(
         &store.paths,
-        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        input(FORMAL_ID, "image/png", expected.clone()),
         &mut names,
         &mut write,
         &mut fail_sync,
     )
     .unwrap_err();
-    assert!(!asset_dir
-        .join(format!("screenshot-{sync_uuid}.png"))
-        .exists());
+    assert_eq!(
+        std::fs::read(asset_dir.join(format!("screenshot-{sync_uuid}.png"))).unwrap(),
+        expected
+    );
 }
 
 #[test]

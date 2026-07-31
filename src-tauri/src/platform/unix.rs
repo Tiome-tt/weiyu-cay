@@ -1,3 +1,4 @@
+use super::NewFilePublishState;
 use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -5,10 +6,12 @@ use crate::{
 use rustix::{
     fd::OwnedFd,
     fs::{
-        fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
+        fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
         OFlags, CWD,
     },
 };
+#[cfg(target_os = "macos")]
+use std::{ffi::CString, os::fd::AsRawFd};
 use std::{
     fs,
     io::Read,
@@ -71,10 +74,18 @@ pub struct SafeDirectory {
     path: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ContainedFileIdentity {
-    device: u64,
-    inode: u64,
+#[cfg(target_os = "macos")]
+const RENAME_EXCL: u32 = 0x0000_0004;
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn renameatx_np(
+        from_fd: i32,
+        from: *const core::ffi::c_char,
+        to_fd: i32,
+        to: *const core::ffi::c_char,
+        flags: u32,
+    ) -> i32;
 }
 
 impl SafeDirectory {
@@ -147,26 +158,6 @@ impl SafeDirectory {
         )
         .map_err(|source| CommandError::io(format!("could not create contained file: {source}")))?;
         Ok(fd.into())
-    }
-
-    pub(crate) fn file_identity(
-        &self,
-        file: &fs::File,
-    ) -> Result<ContainedFileIdentity, CommandError> {
-        let stat = fstat(file).map_err(|source| {
-            CommandError::io(format!(
-                "could not identify created contained file: {source}"
-            ))
-        })?;
-        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
-            return Err(CommandError::validation(
-                "created contained entry is not a regular file",
-            ));
-        }
-        Ok(ContainedFileIdentity {
-            device: stat.st_dev,
-            inode: stat.st_ino,
-        })
     }
 
     pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
@@ -290,33 +281,63 @@ impl SafeDirectory {
         Ok(true)
     }
 
-    pub(crate) fn remove_if_identity(
+    pub(crate) fn publish_new(
         &self,
-        name: &str,
-        expected: ContainedFileIdentity,
-    ) -> Result<bool, CommandError> {
-        validate_child_name(name)?;
-        let stat = match statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(stat) => stat,
-            Err(source) if source == rustix::io::Errno::NOENT => return Ok(false),
-            Err(source) => {
-                return Err(CommandError::io(format!(
-                    "could not identify owned contained file: {source}"
-                )))
-            }
+        source: &str,
+        destination: &str,
+    ) -> Result<NewFilePublishState, CommandError> {
+        validate_child_name(source)?;
+        validate_child_name(destination)?;
+        self.publish_new_platform(source, destination)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn publish_new_platform(
+        &self,
+        source: &str,
+        destination: &str,
+    ) -> Result<NewFilePublishState, CommandError> {
+        let source = CString::new(source)
+            .map_err(|_| CommandError::validation("invalid contained source name"))?;
+        let destination = CString::new(destination)
+            .map_err(|_| CommandError::validation("invalid contained destination name"))?;
+        let result = unsafe {
+            renameatx_np(
+                self.fd.as_raw_fd(),
+                source.as_ptr(),
+                self.fd.as_raw_fd(),
+                destination.as_ptr(),
+                RENAME_EXCL,
+            )
         };
-        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
-            return Err(CommandError::validation(
-                "owned contained entry is not a regular file",
-            ));
+        if result == 0 {
+            return Ok(NewFilePublishState::Published);
         }
-        if (stat.st_dev, stat.st_ino) != (expected.device, expected.inode) {
-            return Ok(false);
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            Ok(NewFilePublishState::DestinationExists)
+        } else {
+            Err(CommandError::io(format!(
+                "could not publish new contained file: {error}"
+            )))
         }
-        unlinkat(&self.fd, name, AtFlags::empty()).map_err(|source| {
-            CommandError::io(format!("could not remove owned contained file: {source}"))
-        })?;
-        Ok(true)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn publish_new_platform(
+        &self,
+        source: &str,
+        destination: &str,
+    ) -> Result<NewFilePublishState, CommandError> {
+        match linkat(&self.fd, source, &self.fd, destination, AtFlags::empty()) {
+            Ok(()) => Ok(NewFilePublishState::Published),
+            Err(source) if source == rustix::io::Errno::EXIST => {
+                Ok(NewFilePublishState::DestinationExists)
+            }
+            Err(source) => Err(CommandError::io(format!(
+                "could not publish new contained file: {source}"
+            ))),
+        }
     }
 
     fn regular_identity(&self, name: &str) -> Result<(u64, u64), CommandError> {
