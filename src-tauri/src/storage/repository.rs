@@ -11,6 +11,7 @@ use chrono::DateTime;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 const REBUILD_MARKER: &str = "rebuild-needed.json";
@@ -546,7 +547,7 @@ pub(crate) fn persist_document_in_transaction(
         transaction
             .execute(
                 "INSERT INTO tags (id, display_name, normalized_name) VALUES (?1, ?2, ?3) \
-                 ON CONFLICT(normalized_name) DO UPDATE SET display_name=excluded.display_name",
+                 ON CONFLICT(normalized_name) DO NOTHING",
                 params![tag_id, display, normalized],
             )
             .map_err(database_error("could not update note tag"))?;
@@ -638,7 +639,7 @@ pub(crate) fn folder_id_blob(id: FolderId) -> Vec<u8> {
         .to_vec()
 }
 
-fn note_id_from_blob(bytes: &[u8]) -> Result<NoteId, CommandError> {
+pub(crate) fn note_id_from_blob(bytes: &[u8]) -> Result<NoteId, CommandError> {
     let uuid = Uuid::from_slice(bytes)
         .map_err(|source| CommandError::database(format!("stored note ID is invalid: {source}")))?;
     NoteId::parse_str(&uuid.hyphenated().to_string())
@@ -659,19 +660,31 @@ fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
     Ok(())
 }
 
-fn normalized_tags(tags: &[String]) -> Result<Vec<(String, String)>, CommandError> {
+pub(crate) fn normalized_tags(tags: &[String]) -> Result<Vec<(String, String)>, CommandError> {
     let mut seen = HashSet::new();
     let mut result = Vec::with_capacity(tags.len());
     for tag in tags {
-        let display = tag.trim();
+        let canonical: String = tag.nfkc().collect();
+        if canonical
+            .chars()
+            .any(|character| character.is_control() && !character.is_whitespace())
+        {
+            return Err(CommandError::validation(
+                "tag name contains a control character",
+            ));
+        }
+        let display = canonical.split_whitespace().collect::<Vec<_>>().join(" ");
         if display.is_empty() {
             return Err(CommandError::validation("tag name is empty"));
+        }
+        if display.chars().count() > 80 {
+            return Err(CommandError::validation("tag name is too long"));
         }
         let normalized = display.to_lowercase();
         if !seen.insert(normalized.clone()) {
             return Err(CommandError::validation("duplicate normalized tag"));
         }
-        result.push((display.to_owned(), normalized));
+        result.push((display, normalized));
     }
     Ok(result)
 }

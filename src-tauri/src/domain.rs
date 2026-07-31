@@ -176,3 +176,14 @@ pub struct BatchConversionResult {
 pub struct TrashResult {
     pub operation_id: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub note_id: NoteId,
+    pub title: String,
+    pub folder_breadcrumb: Vec<String>,
+    pub tags: Vec<String>,
+    pub excerpt: String,
+    pub score: f64,
+}

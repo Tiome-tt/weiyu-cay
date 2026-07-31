@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../domain/model'
-import type { AssetPort, FolderPort, NotePort, SystemPort, TemporaryPort } from '../domain/ports'
+import type { AssetPort, FolderPort, NotePort, SearchPort, SystemPort, TemporaryPort } from '../domain/ports'
 
 export const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
 export const projectB = '019c0000-0000-7000-8000-000000000001' as FolderId
@@ -47,6 +47,12 @@ export const fakeSystemPort = (overrides: Partial<SystemPort> = {}): SystemPort 
   getWindowPreference: vi.fn().mockResolvedValue(undefined),
   setWindowPreference: vi.fn().mockResolvedValue(undefined),
   hideTemporaryWindow: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
+})
+
+export const fakeSearchPort = (overrides: Partial<SearchPort> = {}): SearchPort => ({
+  search: vi.fn().mockResolvedValue([]),
+  updateTags: vi.fn().mockResolvedValue([]),
   ...overrides,
 })
 

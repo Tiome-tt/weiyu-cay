@@ -116,6 +116,12 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     [activeFolderId, foldersPort, refreshFolders, selectFolder],
   )
 
+  const adoptDocument = useCallback((authoritative: NoteDocument) => {
+    if (authoritative.id !== activeNoteId) return
+    setDocument(authoritative)
+    setDocumentState('ready')
+  }, [activeNoteId])
+
   return {
     folders,
     folderState,
@@ -131,5 +137,6 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     renameFolder,
     moveFolder,
     deleteFolder,
+    adoptDocument,
   }
 }

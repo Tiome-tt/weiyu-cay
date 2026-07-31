@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AssetPort, FolderPort, LibraryColumnPreference, SystemPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, LibraryColumnPreference, SearchPort, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
+import { SearchBar } from '../search/SearchBar'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
@@ -11,9 +12,10 @@ interface LibraryLayoutProps {
   folders: FolderPort
   system: SystemPort
   assets?: AssetPort
+  search?: SearchPort
 }
 
-export function LibraryLayout({ notes, folders, system, assets }: LibraryLayoutProps) {
+export function LibraryLayout({ notes, folders, system, assets, search }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
@@ -54,7 +56,9 @@ export function LibraryLayout({ notes, folders, system, assets }: LibraryLayoutP
   }
 
   return (
-    <SplitPane
+    <div className="library-shell">
+      {search && <SearchBar search={search} onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))} />}
+      <SplitPane
       defaultSizes={[240, 300]}
       minimumSizes={[180, 220, 420]}
       dividerLabels={['调整文件夹栏宽度', '调整笔记列表栏宽度']}
@@ -91,10 +95,19 @@ export function LibraryLayout({ notes, folders, system, assets }: LibraryLayoutP
           </div>
         )}
         {library.document && (
-          <EditorPane ref={editorRef} document={library.document} notes={notes} assets={assets} />
+          <EditorPane
+            key={`${library.document.id}:${library.document.revision}`}
+            ref={editorRef}
+            document={library.document}
+            notes={notes}
+            assets={assets}
+            search={search}
+            onDocumentAdopt={library.adoptDocument}
+          />
         )}
       </section>
-    </SplitPane>
+      </SplitPane>
+    </div>
   )
 }
 

@@ -30,6 +30,8 @@ pub fn run() {
             commands::folders::rename_folder,
             commands::folders::move_folder,
             commands::folders::delete_empty_folder,
+            commands::search::search_notes,
+            commands::search::update_note_tags,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

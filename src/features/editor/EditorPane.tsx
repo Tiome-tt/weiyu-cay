@@ -8,15 +8,18 @@ import {
   type PointerEvent,
 } from 'react'
 import type { EditorMode, NoteDocument } from '../../domain/model'
-import type { AssetPort, NotePort } from '../../domain/ports'
+import type { AssetPort, NotePort, SearchPort } from '../../domain/ports'
+import { TagsEditor } from '../search/TagsEditor'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
 
 interface EditorPaneProps {
   document: NoteDocument
-  notes: Pick<NotePort, 'saveNote'>
+  notes: Pick<NotePort, 'saveNote' | 'loadNote'>
   assets?: AssetPort
+  search?: SearchPort
+  onDocumentAdopt?: (document: NoteDocument) => void
   autosaveDelayMs?: number
 }
 
@@ -35,7 +38,7 @@ const maximumSplitPercent = 75
 const defaultSplitPercent = 50
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { document, notes, assets, autosaveDelayMs },
+  { document, notes, assets, search, onDocumentAdopt, autosaveDelayMs },
   ref,
 ) {
   const [mode, setMode] = useState<EditorMode>('source')
@@ -45,10 +48,30 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const splitPointerRef = useRef<number | null>(null)
   const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
+  const tagRequestRef = useRef(0)
 
   useEffect(() => setImageError(null), [document.id])
+  useEffect(() => {
+    tagRequestRef.current += 1
+    return () => {
+      tagRequestRef.current += 1
+    }
+  }, [document.id])
 
   useImperativeHandle(ref, () => ({ flush: autosave.flush }), [autosave.flush])
+
+  const updateTags = async (tags: string[]) => {
+    if (search === undefined) return
+    const noteId = document.id
+    const request = ++tagRequestRef.current
+    if (!(await autosave.flush())) throw new Error('markdown flush failed')
+    if (tagRequestRef.current !== request) return
+    await search.updateTags(noteId, tags)
+    if (tagRequestRef.current !== request) return
+    const authoritative = await notes.loadNote(noteId)
+    if (tagRequestRef.current !== request || authoritative.id !== noteId) return
+    onDocumentAdopt?.(authoritative)
+  }
 
   const syncSourceToPreview = (scrollTop: number) => {
     if (mode !== 'split' || previewRef.current === null || sourceScrollRef.current === null) return
@@ -92,6 +115,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           <h2>{document.title}</h2>
         </div>
         <div className="editor-toolbar__actions">
+          {search && <TagsEditor tags={document.tags} onChange={updateTags} />}
           <SaveStatus state={autosave.state} />
           {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
           {modes.map((item) => (

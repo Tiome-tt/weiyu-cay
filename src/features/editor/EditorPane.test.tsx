@@ -4,7 +4,8 @@ import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fakeAssetPort, fakeNotePort, note, pngBytes } from '../../test/fakes'
+import type { NoteId } from '../../domain/model'
+import { fakeAssetPort, fakeNotePort, fakeSearchPort, note, pngBytes } from '../../test/fakes'
 import { EditorPane } from './EditorPane'
 
 afterEach(cleanup)
@@ -182,5 +183,54 @@ describe('EditorPane', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('无法保存截图。')
     expect(view().state.doc.toString()).toBe('kept')
     expect(screen.getByRole('alert')).not.toHaveTextContent('private')
+  })
+
+  it('flushes Markdown before tag updates and adopts the authoritative revision', async () => {
+    const calls: string[] = []
+    const authoritative = { ...note('draft'), tags: ['Backend'], revision: 3 }
+    const notes = fakeNotePort({
+      saveNote: vi.fn(async (document) => { calls.push('save'); return { ...document, revision: 2 } }),
+      loadNote: vi.fn(async () => { calls.push('load'); return authoritative }),
+    })
+    const search = fakeSearchPort({
+      updateTags: vi.fn(async () => { calls.push('tags'); return ['Backend'] }),
+    })
+    const onDocumentAdopt = vi.fn()
+    const user = userEvent.setup()
+    render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
+    act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'draft' } }))
+
+    await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
+
+    await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
+    expect(calls).toEqual(['save', 'tags', 'load'])
+    expect(search.updateTags).toHaveBeenCalledWith(note().id, ['Backend'])
+  })
+
+  it('does not load or adopt a stale tag response after switching notes', async () => {
+    let resolveUpdate!: (tags: string[]) => void
+    const update = new Promise<string[]>((resolve) => { resolveUpdate = resolve })
+    const search = fakeSearchPort({ updateTags: vi.fn(() => update) })
+    const notes = fakeNotePort()
+    const onDocumentAdopt = vi.fn()
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <EditorPane document={note('A')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} />,
+    )
+    await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
+    await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
+
+    rerender(
+      <EditorPane
+        document={{ ...note('B'), id: '019c0000-0000-7000-8000-000000000099' as NoteId }}
+        notes={notes}
+        search={search}
+        onDocumentAdopt={onDocumentAdopt}
+      />,
+    )
+    await act(async () => resolveUpdate(['Backend']))
+
+    expect(notes.loadNote).not.toHaveBeenCalled()
+    expect(onDocumentAdopt).not.toHaveBeenCalled()
   })
 })

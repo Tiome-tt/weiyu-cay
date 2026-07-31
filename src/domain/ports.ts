@@ -1,5 +1,10 @@
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from './model'
 
+export type SearchQuery =
+  | { kind: 'tag'; value: string }
+  | { kind: 'text'; value: string }
+  | { kind: 'invalid'; reason: 'empty-tag' | 'control-character' | 'too-long' }
+
 export interface NotePort {
   createNote(folderId: FolderId | null): Promise<NoteDocument>
   loadNote(id: NoteId): Promise<NoteDocument>
@@ -22,6 +27,20 @@ export interface AssetPort {
     mediaType: string
     bytes: Uint8Array
   }): Promise<{ relativePath: string; width: number; height: number }>
+}
+
+export interface SearchResult {
+  noteId: NoteId
+  title: string
+  folderBreadcrumb: string[]
+  tags: string[]
+  excerpt: string
+  score: number
+}
+
+export interface SearchPort {
+  search(query: SearchQuery, limit?: number): Promise<SearchResult[]>
+  updateTags(noteId: NoteId, tags: string[]): Promise<string[]>
 }
 
 export interface SystemPort {
