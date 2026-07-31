@@ -4,6 +4,6 @@ mod unix;
 mod windows;
 
 #[cfg(unix)]
-pub use unix::{replace_file, sync_parent};
+pub use unix::{replace_file, replace_file_with_backup, sync_parent, SafeDirectory};
 #[cfg(windows)]
-pub use windows::{replace_file, sync_parent};
+pub use windows::{replace_file, replace_file_with_backup, sync_parent, SafeDirectory};

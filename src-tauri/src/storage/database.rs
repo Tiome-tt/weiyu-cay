@@ -18,6 +18,24 @@ impl Database {
         Ok(Self { connection })
     }
 
+    pub fn open_rebuild(path: impl AsRef<Path>) -> Result<Self, CommandError> {
+        let connection = Connection::open(path).map_err(|source| {
+            CommandError::database(format!("could not create replacement index: {source}"))
+        })?;
+        configure(&connection, false)?;
+        connection
+            .pragma_update(None, "journal_mode", "DELETE")
+            .map_err(database_error(
+                "could not configure replacement index journal",
+            ))?;
+        connection
+            .pragma_update(None, "synchronous", "FULL")
+            .map_err(database_error(
+                "could not configure replacement index durability",
+            ))?;
+        Ok(Self { connection })
+    }
+
     pub fn memory() -> Result<Self, CommandError> {
         let connection = Connection::open_in_memory().map_err(|source| {
             CommandError::database(format!("could not open memory index: {source}"))

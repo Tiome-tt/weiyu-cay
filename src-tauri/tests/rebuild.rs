@@ -132,6 +132,154 @@ fn a_second_rebuild_is_idempotent_and_does_not_change_markdown_bytes() {
     assert_eq!(query_count(&connection, "note_links"), 1);
 }
 
+#[test]
+fn rebuild_replaces_a_database_with_missing_tables_and_keeps_a_recovery_copy() {
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(
+        store.paths.clone(),
+        Database::open(store.paths.database()).unwrap(),
+    );
+    persist_at_revision(&repository, note_without_folder());
+    drop(repository);
+    let damaged = Connection::open(store.paths.database()).unwrap();
+    damaged.execute_batch("DROP TABLE note_tags;").unwrap();
+    drop(damaged);
+    store.close_database();
+
+    let report = rebuild_index(&store.paths).unwrap();
+
+    assert_eq!(report.notes_recovered, 1);
+    assert!(rebuild_backups(&store).iter().any(|path| path.is_file()));
+    let connection = Connection::open(store.paths.database()).unwrap();
+    assert_eq!(query_count(&connection, "note_tags"), 2);
+}
+
+#[test]
+fn rebuild_replaces_corrupt_database_bytes_and_keeps_a_recovery_copy() {
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(
+        store.paths.clone(),
+        Database::open(store.paths.database()).unwrap(),
+    );
+    persist_at_revision(&repository, note_without_folder());
+    drop(repository);
+    store.close_database();
+    remove_sqlite_files(&store);
+    fs::write(store.paths.database(), b"not a sqlite database").unwrap();
+
+    let report = rebuild_index(&store.paths).unwrap();
+
+    assert_eq!(report.notes_recovered, 1);
+    assert!(rebuild_backups(&store)
+        .iter()
+        .any(|path| fs::read(path).unwrap() == b"not a sqlite database"));
+    let connection = Connection::open(store.paths.database()).unwrap();
+    assert_eq!(query_count(&connection, "notes"), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn rebuild_keeps_marker_when_the_old_database_cannot_be_replaced_then_recovers() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    persist_at_revision(&repository, note_without_folder());
+    drop(repository);
+    fs::write(store.paths.root().join("rebuild-needed.json"), b"{}").unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(store.paths.database())
+        .unwrap();
+
+    assert!(rebuild_index(&store.paths).is_err());
+    assert!(store.paths.root().join("rebuild-needed.json").is_file());
+    drop(lock);
+    assert_eq!(rebuild_index(&store.paths).unwrap().notes_recovered, 1);
+    assert!(!store.paths.root().join("rebuild-needed.json").exists());
+}
+
+#[test]
+fn revision_too_large_for_sqlite_isolated_while_valid_sibling_recovers() {
+    let store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    persist_at_revision(&repository, note_without_folder());
+    drop(repository);
+    let oversized_id = "019c0000-0000-7000-8000-000000000213";
+    let valid = fs::read_to_string(store.paths.notes().join(NOTE_ID).join("note.md")).unwrap();
+    let oversized = valid
+        .replace(NOTE_ID, oversized_id)
+        .replace("revision: 4", &format!("revision: {}", u64::MAX));
+    let oversized_dir = store.paths.notes().join(oversized_id);
+    fs::create_dir(&oversized_dir).unwrap();
+    fs::write(oversized_dir.join("note.md"), oversized).unwrap();
+
+    let report = rebuild_index(&store.paths).unwrap();
+
+    assert_eq!(report.notes_recovered, 1);
+    assert_eq!(report.notes_failed, 1);
+    assert!(report
+        .failures
+        .iter()
+        .any(|failure| failure.item == oversized_id));
+}
+
+#[test]
+fn rebuild_rejects_note_file_symlinks_without_reading_outside_content() {
+    let store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    persist_at_revision(&repository, note_without_folder());
+    drop(repository);
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    fs::write(outside.path(), b"outside sentinel").unwrap();
+    let note_path = store.paths.notes().join(NOTE_ID).join("note.md");
+    fs::remove_file(&note_path).unwrap();
+    if create_file_symlink(outside.path(), &note_path).is_err() {
+        eprintln!("skipping symlink assertion: platform denied symlink creation");
+        return;
+    }
+
+    let report = rebuild_index(&store.paths).unwrap();
+
+    assert_eq!(report.notes_recovered, 0);
+    assert_eq!(report.notes_failed, 1);
+    assert_eq!(fs::read(outside.path()).unwrap(), b"outside sentinel");
+}
+
+#[test]
+fn rebuild_rejects_a_folders_manifest_symlink() {
+    let store = TestStore::new();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    fs::write(outside.path(), b"[]").unwrap();
+    if create_file_symlink(outside.path(), store.paths.folders_manifest()).is_err() {
+        eprintln!("skipping symlink assertion: platform denied symlink creation");
+        return;
+    }
+
+    let error = rebuild_index(&store.paths).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        simple_notes_lib::error::CommandErrorCode::Validation
+    );
+    assert_eq!(fs::read(outside.path()).unwrap(), b"[]");
+}
+
+fn rebuild_backups(store: &TestStore) -> Vec<std::path::PathBuf> {
+    fs::read_dir(store.paths.root())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("rebuild-backup")
+        })
+        .collect()
+}
+
 fn note_without_folder() -> NoteDocument {
     let mut document = note();
     document.folder_id = None;
@@ -167,4 +315,14 @@ fn remove_sqlite_files(store: &TestStore) {
             fs::remove_file(path).unwrap();
         }
     }
+}
+
+#[cfg(unix)]
+fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
 }

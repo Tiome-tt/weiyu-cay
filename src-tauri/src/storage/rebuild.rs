@@ -1,6 +1,7 @@
 use crate::{
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandError,
+    platform,
     storage::{
         database::Database,
         paths::StoragePaths,
@@ -10,7 +11,13 @@ use crate::{
 use chrono::DateTime;
 use rusqlite::{params, Transaction};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, io::ErrorKind, path::Path};
+use std::{
+    collections::HashSet,
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,14 +48,21 @@ struct FolderRecord {
 }
 
 pub fn rebuild_index(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
-    let folders = read_folders(paths.folders_manifest())?;
+    let folders = read_folders(paths)?;
     let folder_ids = folders
         .iter()
         .map(|folder| folder.id)
         .collect::<HashSet<_>>();
     let (mut documents, mut report) = scan_documents(paths);
     documents.retain(|document| {
-        if document
+        if document.revision > i64::MAX as u64 {
+            report.notes_failed += 1;
+            report.failures.push(RebuildFailure {
+                item: document.id.to_string(),
+                message: "The note revision is too large for the local index.".to_owned(),
+            });
+            false
+        } else if document
             .folder_id
             .is_some_and(|folder_id| !folder_ids.contains(&folder_id))
         {
@@ -63,23 +77,52 @@ pub fn rebuild_index(paths: &StoragePaths) -> Result<RebuildReport, CommandError
         }
     });
 
-    let database = Database::open(paths.database())?;
-    database.migrate()?;
-    let transaction = database
-        .connection()
-        .unchecked_transaction()
-        .map_err(database_error("could not start index rebuild"))?;
-    clear_rebuildable_rows(&transaction)?;
-    insert_folders(&transaction, &folders)?;
-    for document in &documents {
-        persist_document_in_transaction(&transaction, document)?;
-    }
-    transaction
-        .commit()
-        .map_err(database_error("could not commit index rebuild"))?;
-
     report.notes_recovered = documents.len();
     report.folders_recovered = folders.len();
+    let replacement = paths
+        .root()
+        .join(format!(".index.sqlite.{}.rebuild-new", Uuid::now_v7()));
+    let build_result = build_replacement_database(&replacement, &folders, &documents);
+    if let Err(error) = build_result {
+        cleanup_replacement_files(&replacement);
+        return Err(error);
+    }
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&replacement)
+        .and_then(|file| file.sync_all())
+        .map_err(|source| {
+            CommandError::io(format!("could not sync replacement index: {source}"))
+        })?;
+
+    let backup = paths
+        .root()
+        .join(format!(".index.sqlite.{}.rebuild-backup", Uuid::now_v7()));
+    let isolated_sidecars = isolate_old_sidecars(paths.database(), &backup)?;
+    let publication = platform::replace_file_with_backup(&replacement, paths.database(), &backup);
+    match publication {
+        Ok(crate::storage::atomic_file::PublishState::Published) => {}
+        Ok(state) => {
+            restore_old_sidecars(&isolated_sidecars);
+            return Err(CommandError::io(format!(
+                "replacement index returned invalid publication state: {state:?}"
+            )));
+        }
+        Err(failure) => {
+            restore_old_sidecars(&isolated_sidecars);
+            if failure.cleanup_source() {
+                cleanup_replacement_files(&replacement);
+            }
+            return Err(failure.into_error());
+        }
+    }
+    if let Err(error) = platform::sync_parent(paths.root()) {
+        return Err(CommandError::io(format!(
+            "replacement index was published but its directory could not be synced: {}",
+            error.diagnostic().unwrap_or("directory sync failed")
+        )));
+    }
     let marker = paths.root().join("rebuild-needed.json");
     match fs::remove_file(marker) {
         Ok(()) => {}
@@ -90,20 +133,87 @@ pub fn rebuild_index(paths: &StoragePaths) -> Result<RebuildReport, CommandError
             )))
         }
     }
-    database.close()?;
     Ok(report)
 }
 
-fn read_folders(path: &Path) -> Result<Vec<FolderRecord>, CommandError> {
-    let contents = match fs::read_to_string(path) {
-        Ok(contents) => contents,
+fn build_replacement_database(
+    path: &Path,
+    folders: &[FolderRecord],
+    documents: &[NoteDocument],
+) -> Result<(), CommandError> {
+    let database = Database::open_rebuild(path)?;
+    database.migrate()?;
+    let transaction = database
+        .connection()
+        .unchecked_transaction()
+        .map_err(database_error("could not start index rebuild"))?;
+    clear_rebuildable_rows(&transaction)?;
+    insert_folders(&transaction, folders)?;
+    for document in documents {
+        persist_document_in_transaction(&transaction, document)?;
+    }
+    transaction
+        .commit()
+        .map_err(database_error("could not commit index rebuild"))?;
+    database.close()
+}
+
+fn isolate_old_sidecars(
+    database: &Path,
+    backup: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, CommandError> {
+    let mut isolated = Vec::new();
+    for suffix in ["-wal", "-shm"] {
+        let original = PathBuf::from(format!("{}{suffix}", database.display()));
+        if !original.exists() {
+            continue;
+        }
+        let destination = PathBuf::from(format!("{}{suffix}", backup.display()));
+        if let Err(source) = fs::rename(&original, &destination) {
+            restore_old_sidecars(&isolated);
+            return Err(CommandError::io(format!(
+                "could not isolate previous index sidecar: {source}"
+            )));
+        }
+        isolated.push((original, destination));
+    }
+    Ok(isolated)
+}
+
+fn restore_old_sidecars(isolated: &[(PathBuf, PathBuf)]) {
+    for (original, backup) in isolated.iter().rev() {
+        if backup.exists() && !original.exists() {
+            let _ = fs::rename(backup, original);
+        }
+    }
+}
+
+fn cleanup_replacement_files(database: &Path) {
+    for path in [
+        database.to_path_buf(),
+        PathBuf::from(format!("{}-wal", database.display())),
+        PathBuf::from(format!("{}-shm", database.display())),
+        PathBuf::from(format!("{}-journal", database.display())),
+    ] {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn read_folders(paths: &StoragePaths) -> Result<Vec<FolderRecord>, CommandError> {
+    match fs::symlink_metadata(paths.folders_manifest()) {
         Err(source) if source.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => {
             return Err(CommandError::io(format!(
-                "could not read folders manifest: {source}"
+                "could not inspect folders manifest: {source}"
             )))
         }
-    };
+        Ok(_) => {}
+    }
+    let directory = platform::SafeDirectory::open(paths.root(), &[], false)?;
+    let contents =
+        String::from_utf8(directory.read("folders.json", 8 * 1024 * 1024)?).map_err(|source| {
+            CommandError::validation(format!("folders manifest is not UTF-8: {source}"))
+        })?;
     let folders: Vec<FolderRecord> = serde_json::from_str(&contents).map_err(|source| {
         CommandError::validation(format!("folders manifest is invalid: {source}"))
     })?;
@@ -221,7 +331,21 @@ fn scan_documents(paths: &StoragePaths) -> (Vec<NoteDocument>, RebuildReport) {
                 });
                 continue;
             }
-            let contents = match fs::read_to_string(&document_path) {
+            let collection = match expected_kind {
+                NoteKind::Formal => "notes",
+                NoteKind::Temporary => "temporary",
+            };
+            let contents = match platform::SafeDirectory::open(
+                paths.root(),
+                &[collection, name.as_str()],
+                false,
+            )
+            .and_then(|directory| directory.read("note.md", 64 * 1024 * 1024))
+            .and_then(|bytes| {
+                String::from_utf8(bytes).map_err(|source| {
+                    CommandError::validation(format!("note document is not UTF-8: {source}"))
+                })
+            }) {
                 Ok(contents) => contents,
                 Err(_) => {
                     report.notes_failed += 1;
