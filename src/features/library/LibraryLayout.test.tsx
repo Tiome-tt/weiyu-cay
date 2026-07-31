@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { EditorView } from '@codemirror/view'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -211,6 +212,29 @@ describe('LibraryLayout', () => {
     expect(await screen.findByRole('heading', { name: '项目笔记' })).toBeVisible()
     expect(notes.listNotes).toHaveBeenLastCalledWith(folderA)
     expect(notes.loadNote).toHaveBeenCalledWith(noteB)
+  })
+
+  it('mounts the selected note editor and flushes its Markdown through the note port', async () => {
+    const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 2 }))
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Editable')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('old'), id: noteA, title: 'Editable' }),
+      saveNote,
+    })
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await userEvent.click(await screen.findByRole('button', { name: /Editable/ }))
+    const textbox = await screen.findByRole('textbox', { name: 'Markdown source' })
+    const editor = EditorView.findFromDOM(textbox)
+    if (editor === null) throw new Error('CodeMirror view not found')
+
+    act(() => {
+      editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'edited' } })
+      window.dispatchEvent(new Event('blur'))
+    })
+
+    await waitFor(() =>
+      expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({ id: noteA, markdown: 'edited' })),
+    )
   })
 
   it('does not let an earlier folder response overwrite the latest selection', async () => {

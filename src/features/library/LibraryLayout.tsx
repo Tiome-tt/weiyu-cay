@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FolderPort, LibraryColumnPreference, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
+import { EditorPane } from '../editor/EditorPane'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
@@ -81,11 +82,7 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
           </div>
         )}
         {library.document && (
-          <article className="document-placeholder">
-            <span className="library-pane__eyebrow">笔记</span>
-            <h2>{library.document.title}</h2>
-            <p>编辑器将在下一阶段接入。</p>
-          </article>
+          <EditorPane document={library.document} notes={notes} />
         )}
       </section>
     </SplitPane>

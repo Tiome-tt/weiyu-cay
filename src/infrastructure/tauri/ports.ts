@@ -11,6 +11,12 @@ class TauriNotePort implements LibraryNotePort {
     return this.client.invoke<NoteDocument>('load_note', { noteId })
   }
 
+  saveNote(document: NoteDocument) {
+    return this.client.invoke<NoteDocument>('save_note', {
+      input: { document, expectedRevision: document.revision },
+    })
+  }
+
   listNotes(folderId: FolderId | null) {
     return this.client.invoke<NoteSummary[]>('list_notes', { folderId })
   }

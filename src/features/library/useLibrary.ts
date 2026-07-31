@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { FolderPort, NotePort } from '../../domain/ports'
 
-export type LibraryNotePort = Pick<NotePort, 'listNotes' | 'loadNote'>
+export type LibraryNotePort = Pick<NotePort, 'listNotes' | 'loadNote' | 'saveNote'>
 
 type LoadState = 'loading' | 'ready' | 'error'
 

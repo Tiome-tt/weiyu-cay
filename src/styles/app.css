@@ -356,6 +356,200 @@ button {
   color: var(--color-muted);
 }
 
+.editor-pane {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 18px;
+  padding: 13px 18px 12px 22px;
+  background: rgb(255 253 248 / 92%);
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.editor-toolbar__title {
+  min-width: 0;
+}
+
+.editor-toolbar__title h2 {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: var(--color-heading);
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-toolbar__actions,
+.editor-save {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.editor-mode-button {
+  display: inline-grid;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  color: var(--color-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  place-items: center;
+}
+
+.editor-mode-button:hover {
+  color: var(--color-heading);
+  background: var(--color-accent-soft);
+}
+
+.editor-mode-button[aria-pressed="true"] {
+  color: var(--color-heading);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+}
+
+.editor-save {
+  color: var(--color-muted);
+  font-size: 0.76rem;
+}
+
+.editor-save--error {
+  color: var(--color-error);
+}
+
+.editor-save--error > span {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-save button {
+  padding: 4px 7px;
+  color: inherit;
+  background: var(--color-surface);
+  border: 1px solid currentcolor;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.editor-document {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-document--source,
+.editor-document--preview {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-document__source,
+.editor-document__preview,
+.markdown-source {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.editor-document__source,
+.editor-document__preview {
+  overflow: hidden;
+}
+
+.editor-split-divider {
+  position: relative;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.editor-split-divider::after {
+  position: absolute;
+  inset: 0 3px;
+  content: "";
+  background: var(--color-border-soft);
+  border-radius: 999px;
+  transition: background-color var(--motion-fast) ease;
+}
+
+.editor-split-divider:hover::after,
+.editor-split-divider:focus-visible::after {
+  background: var(--color-accent-strong);
+}
+
+.markdown-source .cm-editor.cm-focused {
+  box-shadow: inset 0 0 0 2px var(--color-focus-soft);
+}
+
+.markdown-preview {
+  height: 100%;
+  margin: 0;
+  padding: 24px 30px 80px;
+  overflow: auto;
+  color: var(--color-text);
+  line-height: 1.68;
+  text-align: left;
+}
+
+.markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3 {
+  color: var(--color-heading);
+  line-height: 1.25;
+}
+
+.markdown-preview pre,
+.markdown-preview code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.markdown-preview pre {
+  padding: 14px 16px;
+  overflow: auto;
+  background: var(--color-panel-warm);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  padding: 7px 9px;
+  border: 1px solid var(--color-border-soft);
+}
+
+.editor-mode-button:focus-visible,
+.editor-save button:focus-visible,
+.editor-split-divider:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 button:focus-visible,
 input:focus-visible,
 [role="treeitem"]:focus-visible {
