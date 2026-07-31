@@ -1,5 +1,7 @@
+pub mod commands;
 pub mod domain;
 pub mod error;
+pub mod platform;
 pub mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,6 +13,14 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .setup(commands::notes::setup)
+        .invoke_handler(tauri::generate_handler![
+            commands::notes::create_note,
+            commands::notes::load_note,
+            commands::notes::save_note,
+            commands::notes::list_notes,
+            commands::notes::move_note,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

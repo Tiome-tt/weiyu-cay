@@ -113,6 +113,16 @@ impl Database {
         u64::try_from(value)
             .map_err(|source| CommandError::database(format!("busy timeout is invalid: {source}")))
     }
+
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    pub fn close(self) -> Result<(), CommandError> {
+        self.connection.close().map_err(|(_, source)| {
+            CommandError::database(format!("could not close index: {source}"))
+        })
+    }
 }
 
 fn configure(connection: &Connection, persistent: bool) -> Result<(), CommandError> {
