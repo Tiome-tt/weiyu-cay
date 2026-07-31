@@ -315,4 +315,68 @@ describe('EditorPane', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveAttribute('contenteditable', 'true'))
     expect(view().state.doc.toString()).toBe('kept')
   })
+
+  it('drains reverse-resolving pastes on the same selection without losing either reference', async () => {
+    let resolveFirst!: (value: { relativePath: string; width: number; height: number }) => void
+    let resolveSecond!: (value: { relativePath: string; width: number; height: number }) => void
+    let resolveTags!: (tags: string[]) => void
+    const assets = {
+      saveImage: vi.fn()
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve })),
+    }
+    const tagUpdate = new Promise<string[]>((resolve) => { resolveTags = resolve })
+    const expectedMarkdown = 'prefix ![截图](assets/first.png)![截图](assets/second.png) suffix'
+    const authoritative = { ...note(expectedMarkdown), tags: ['Backend'], revision: 3 }
+    const saveNote = vi.fn(async (document) => ({ ...document, revision: 2 }))
+    const notes = fakeNotePort({ saveNote, loadNote: vi.fn().mockResolvedValue(authoritative) })
+    const search = fakeSearchPort({ updateTags: vi.fn(() => tagUpdate) })
+    const onDocumentAdopt = vi.fn()
+    const user = userEvent.setup()
+    render(<EditorPane document={note('prefix SELECT suffix')} notes={notes} assets={assets} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
+    const source = view()
+    source.dispatch({ selection: EditorSelection.range(7, 13) })
+    fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    source.dispatch({ selection: EditorSelection.range(7, 13) })
+    fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
+    await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
+
+    await act(async () => resolveSecond({ relativePath: 'assets/second.png', width: 1, height: 1 }))
+    expect(search.updateTags).not.toHaveBeenCalled()
+    await act(async () => resolveFirst({ relativePath: 'assets/first.png', width: 1, height: 1 }))
+    await waitFor(() => expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({ markdown: expectedMarkdown })))
+    await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
+    await act(async () => resolveTags(['Backend']))
+    await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
+  })
+
+  it('drains a failed overlapping range before a successful zero-width paste without deadlock', async () => {
+    let rejectRange!: (error: Error) => void
+    let resolveCursor!: (value: { relativePath: string; width: number; height: number }) => void
+    const assets = {
+      saveImage: vi.fn()
+        .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRange = reject }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveCursor = resolve })),
+    }
+    const reference = '![截图](assets/cursor.png)'
+    const authoritative = { ...note(`AB${reference}CDE`), tags: ['Backend'], revision: 2 }
+    const search = fakeSearchPort({ updateTags: vi.fn().mockResolvedValue(['Backend']) })
+    const onDocumentAdopt = vi.fn()
+    const user = userEvent.setup()
+    render(<EditorPane document={note('ABCDE')} notes={fakeNotePort({ loadNote: vi.fn().mockResolvedValue(authoritative) })} assets={assets} search={search} onDocumentAdopt={onDocumentAdopt} />)
+    const source = view()
+    source.dispatch({ selection: EditorSelection.range(1, 4) })
+    fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    source.dispatch({ selection: EditorSelection.cursor(2) })
+    fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
+    await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
+
+    await act(async () => resolveCursor({ relativePath: 'assets/cursor.png', width: 1, height: 1 }))
+    expect(search.updateTags).not.toHaveBeenCalled()
+    await act(async () => rejectRange(new Error('disk')))
+    await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
+    await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
+  })
 })

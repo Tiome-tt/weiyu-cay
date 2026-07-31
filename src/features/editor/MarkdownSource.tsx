@@ -1,10 +1,12 @@
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
-import { Compartment, EditorState } from '@codemirror/state'
+import { Annotation, Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import type { NoteId } from '../../domain/model'
 import type { AssetPort } from '../../domain/ports'
-import { handleImagePaste } from './imagePaste'
+import { handleImagePaste, type ImagePasteResult } from './imagePaste'
+
+const pasteTokenAnnotation = Annotation.define<symbol>()
 
 interface MarkdownSourceProps {
   markdown: string
@@ -26,6 +28,11 @@ interface PendingPaste {
   from: number
   to: number
   settled: Promise<void>
+  settle(): void
+  noteId: NoteId
+  generation: number
+  view: EditorView
+  outcome: ImagePasteResult | null
 }
 
 export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourceProps>(function MarkdownSource({
@@ -50,8 +57,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const editorGenerationRef = useRef(0)
   const readOnlyRef = useRef(readOnly)
   const barrierLockedRef = useRef(false)
-  const internalEditRef = useRef(false)
   const pendingPastesRef = useRef(new Map<symbol, PendingPaste>())
+  const authorizedPasteTokensRef = useRef(new Set<symbol>())
   const editableCompartmentRef = useRef(new Compartment())
 
   if (noteIdRef.current !== noteId) {
@@ -78,15 +85,61 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     })
   }
 
+  const drainReadyPastes = () => {
+    while (true) {
+      const next = pendingPastesRef.current.entries().next()
+      if (next.done) return
+      const [token, entry] = next.value
+      const result = entry.outcome
+      if (result === null) return
+      const current =
+        noteIdRef.current === entry.noteId &&
+        editorGenerationRef.current === entry.generation &&
+        viewRef.current === entry.view
+      if (current && result.kind === 'failure') {
+        onImageErrorRef.current?.(result.message)
+      } else if (current && result.kind === 'success') {
+        for (const pending of pendingPastesRef.current.values()) {
+          if (pending !== entry && selectionsOverlap(entry, pending)) {
+            pending.from = entry.to
+            pending.to = entry.to
+          }
+        }
+        onImageErrorRef.current?.(null)
+        try {
+          entry.view.dispatch({
+            changes: { from: entry.from, to: entry.to, insert: result.markdown },
+            selection: { anchor: entry.from + result.markdown.length },
+            annotations: pasteTokenAnnotation.of(token),
+          })
+        } catch {
+          onImageErrorRef.current?.('无法保存截图。')
+        }
+        pendingPastesRef.current.delete(token)
+        authorizedPasteTokensRef.current.delete(token)
+        entry.settle()
+        continue
+      }
+      pendingPastesRef.current.delete(token)
+      authorizedPasteTokensRef.current.delete(token)
+      entry.settle()
+    }
+  }
+
   useImperativeHandle(ref, () => ({
     beginEditBarrier: async () => {
       barrierLockedRef.current = true
       configureEditable(viewRef.current)
+      authorizedPasteTokensRef.current.clear()
+      for (const token of pendingPastesRef.current.keys()) {
+        authorizedPasteTokensRef.current.add(token)
+      }
       const pending = Array.from(pendingPastesRef.current.values(), (entry) => entry.settled)
       await Promise.allSettled(pending)
     },
     endEditBarrier: () => {
       barrierLockedRef.current = false
+      authorizedPasteTokensRef.current.clear()
       configureEditable(viewRef.current)
     },
   }))
@@ -109,14 +162,16 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           EditorView.editable.of(!readOnly),
           EditorView.contentAttributes.of({ 'aria-readonly': String(readOnly) }),
         ]),
-        EditorState.transactionFilter.of((transaction) =>
-          (readOnlyRef.current || barrierLockedRef.current) &&
-          transaction.docChanged &&
-          !reconcilingRef.current &&
-          !internalEditRef.current
-            ? []
-            : transaction,
-        ),
+        EditorState.transactionFilter.of((transaction) => {
+          if (!transaction.docChanged) return transaction
+          if (barrierLockedRef.current) {
+            const token = transaction.annotation(pasteTokenAnnotation)
+            return token !== undefined && authorizedPasteTokensRef.current.has(token)
+              ? transaction
+              : []
+          }
+          return readOnlyRef.current && !reconcilingRef.current ? [] : transaction
+        }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             for (const entry of pendingPastesRef.current.values()) {
@@ -147,37 +202,25 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             const token = Symbol('pending-image-paste')
             let settle!: () => void
             const settled = new Promise<void>((resolve) => { settle = resolve })
-            pendingPastesRef.current.set(token, { from: selection.from, to: selection.to, settled })
+            const pending: PendingPaste = {
+              from: selection.from,
+              to: selection.to,
+              settled,
+              settle,
+              noteId: originatingNoteId,
+              generation: originatingGeneration,
+              view: pasteView,
+              outcome: null,
+            }
+            pendingPastesRef.current.set(token, pending)
             void handleImagePaste(event, { noteId: originatingNoteId, assets: assetPort })
               .then((result) => {
-                const pending = pendingPastesRef.current.get(token)
-                if (
-                  pending === undefined ||
-                  noteIdRef.current !== originatingNoteId ||
-                  editorGenerationRef.current !== originatingGeneration ||
-                  viewRef.current !== pasteView
-                ) {
-                  return
-                }
-                if (result.kind === 'failure') {
-                  onImageErrorRef.current?.(result.message)
-                  return
-                }
-                if (result.kind !== 'success') return
-                onImageErrorRef.current?.(null)
-                internalEditRef.current = true
-                try {
-                  pasteView.dispatch({
-                    changes: { from: pending.from, to: pending.to, insert: result.markdown },
-                    selection: { anchor: pending.from + result.markdown.length },
-                  })
-                } finally {
-                  internalEditRef.current = false
-                }
+                pending.outcome = result
+                drainReadyPastes()
               })
-              .finally(() => {
-                pendingPastesRef.current.delete(token)
-                settle()
+              .catch(() => {
+                pending.outcome = { kind: 'failure', message: '无法保存截图。' }
+                drainReadyPastes()
               })
             return event.defaultPrevented
           },
@@ -231,3 +274,12 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   return <div className="markdown-source" ref={hostRef} />
 })
+
+function selectionsOverlap(left: Pick<PendingPaste, 'from' | 'to'>, right: Pick<PendingPaste, 'from' | 'to'>) {
+  const leftPoint = left.from === left.to
+  const rightPoint = right.from === right.to
+  if (leftPoint && rightPoint) return left.from === right.from
+  if (leftPoint) return left.from >= right.from && left.from <= right.to
+  if (rightPoint) return right.from >= left.from && right.from <= left.to
+  return Math.max(left.from, right.from) < Math.min(left.to, right.to)
+}
