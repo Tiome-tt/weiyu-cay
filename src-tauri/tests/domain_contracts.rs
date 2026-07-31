@@ -1,16 +1,16 @@
 use simple_notes_lib::domain::{
-    BatchConversionFailure, BatchConversionResult, ConvertedTemporaryNote, NoteDocument, NoteKind,
+    BatchConversionFailure, BatchConversionResult, ConvertedTemporaryNote, FolderId, NoteDocument,
+    NoteId, NoteKind,
 };
 use simple_notes_lib::error::{CommandError, CommandErrorCode};
-use uuid::Uuid;
 
 #[test]
 fn domain_note_document_round_trips_with_camel_case_fields() {
     let note = NoteDocument {
-        id: Uuid::parse_str("019c0000-0000-7000-8000-000000000002").unwrap(),
+        id: NoteId::parse_str("019c0000-0000-7000-8000-000000000002").unwrap(),
         kind: NoteKind::Formal,
         title: "登录流程".to_owned(),
-        folder_id: Some(Uuid::parse_str("019c0000-0000-7000-8000-000000000001").unwrap()),
+        folder_id: Some(FolderId::parse_str("019c0000-0000-7000-8000-000000000001").unwrap()),
         tags: vec!["项目 B".to_owned()],
         markdown: "# 登录流程".to_owned(),
         revision: 1,
@@ -27,15 +27,15 @@ fn domain_note_document_round_trips_with_camel_case_fields() {
 
 #[test]
 fn domain_batch_conversion_round_trips_with_matching_typescript_fields() {
-    let temporary_id = Uuid::parse_str("019c0000-0000-7000-8000-000000000010").unwrap();
-    let note_id = Uuid::parse_str("019c0000-0000-7000-8000-000000000012").unwrap();
+    let temporary_id = NoteId::parse_str("019c0000-0000-7000-8000-000000000010").unwrap();
+    let note_id = NoteId::parse_str("019c0000-0000-7000-8000-000000000012").unwrap();
     let result = BatchConversionResult {
         converted: vec![ConvertedTemporaryNote {
             temporary_id,
             note_id,
         }],
         failed: vec![BatchConversionFailure {
-            temporary_id: Uuid::parse_str("019c0000-0000-7000-8000-000000000011").unwrap(),
+            temporary_id: NoteId::parse_str("019c0000-0000-7000-8000-000000000011").unwrap(),
             message: "接口异常处理".to_owned(),
         }],
     };
@@ -63,4 +63,46 @@ fn domain_command_errors_serialize_only_the_stable_safe_contract() {
     assert!(!json.to_string().contains("person"));
     assert_eq!(serde_json::from_value::<CommandError>(json).unwrap(), error);
     assert_eq!(error.code(), CommandErrorCode::Database);
+}
+
+#[test]
+fn domain_note_ids_reject_non_v7_non_rfc_and_noncanonical_values() {
+    let valid_folder_id = "019c0000-0000-7000-8000-000000000001";
+    for invalid_id in [
+        "019c0000-0000-4000-8000-000000000002",
+        "019c0000-0000-1000-8000-000000000002",
+        "019c0000-0000-7000-7000-000000000002",
+        "019C0000-0000-7000-8000-000000000002",
+    ] {
+        let value = serde_json::json!({
+            "id": invalid_id,
+            "kind": "formal",
+            "title": "登录流程",
+            "folderId": valid_folder_id,
+            "tags": [],
+            "markdown": "# 登录流程",
+            "revision": 1,
+            "createdAt": "2026-07-30T15:30:00+08:00",
+            "updatedAt": "2026-07-30T15:30:00+08:00"
+        });
+
+        assert!(serde_json::from_value::<NoteDocument>(value).is_err());
+    }
+}
+
+#[test]
+fn domain_folder_ids_reject_non_v7_values() {
+    let value = serde_json::json!({
+        "id": "019c0000-0000-7000-8000-000000000002",
+        "kind": "formal",
+        "title": "登录流程",
+        "folderId": "019c0000-0000-4000-8000-000000000001",
+        "tags": [],
+        "markdown": "# 登录流程",
+        "revision": 1,
+        "createdAt": "2026-07-30T15:30:00+08:00",
+        "updatedAt": "2026-07-30T15:30:00+08:00"
+    });
+
+    assert!(serde_json::from_value::<NoteDocument>(value).is_err());
 }

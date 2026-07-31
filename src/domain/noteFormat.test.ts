@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { formatStoredLink, parseStoredLink } from './noteFormat'
 
 const noteId = '019c0000-0000-7000-8000-000000000002'
+const invalidNoteIds = [
+  '019c0000-0000-4000-8000-000000000002',
+  '019c0000-0000-1000-8000-000000000002',
+  '019c0000-0000-7000-7000-000000000002',
+  '019C0000-0000-7000-8000-000000000002',
+]
 
 describe('stored internal links', () => {
   it('round-trips a Unicode title and immutable id', () => {
@@ -22,9 +28,24 @@ describe('stored internal links', () => {
     'not-a-uuid',
     '019c0000-0000-7000-8000-00000000000z',
     '00000000-0000-0000-0000-0000000000000',
+    ...invalidNoteIds,
   ])('rejects the invalid UUID %j', (id) => {
     expect(() => formatStoredLink('用户认证', id)).toThrow('Invalid note id')
   })
+
+  it.each(['   ', '\t', 'line one\nline two', 'line one\r\nline two'])(
+    'rejects the invalid title %j while parsing',
+    (title) => {
+      expect(() => parseStoredLink(`[[${title}|${noteId}]]`)).toThrow('Invalid stored link')
+    },
+  )
+
+  it.each(['line one\nline two', 'line one\r\nline two'])(
+    'rejects the multiline title %j while formatting',
+    (title) => {
+      expect(() => formatStoredLink(title, noteId)).toThrow('Invalid link title')
+    },
+  )
 
   it.each([
     `prefix [[用户认证|${noteId}]]`,
@@ -32,7 +53,7 @@ describe('stored internal links', () => {
     `[[|${noteId}]]`,
     `[[用户|认证|${noteId}]]`,
     `[[用户认证|not-a-uuid]]`,
-    `[[用户认证|${noteId.toUpperCase()}]] trailing`,
+    ...invalidNoteIds.map((id) => `[[用户认证|${id}]]`),
   ])('rejects malformed or partial persisted input %j', (value) => {
     expect(() => parseStoredLink(value)).toThrow('Invalid stored link')
   })
