@@ -66,6 +66,7 @@ struct ByHandleFileInformation {
 trait ReplaceOperations {
     fn replace(&mut self, source: &Path, destination: &Path, backup: &Path) -> Result<(), i32>;
     fn move_replace(&mut self, source: &Path, destination: &Path) -> Result<(), i32>;
+    fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), i32>;
 }
 
 struct SystemReplaceOperations;
@@ -102,6 +103,25 @@ impl ReplaceOperations for SystemReplaceOperations {
                 source.as_ptr(),
                 destination.as_ptr(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if succeeded == 0 {
+            Err(std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or_default())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), i32> {
+        let source = wide(source.as_os_str());
+        let destination = wide(destination.as_os_str());
+        let succeeded = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_WRITE_THROUGH,
             )
         };
         if succeeded == 0 {
@@ -300,13 +320,11 @@ fn persist_recovery_descriptor_using<O: ReplaceOperations>(
             CommandError::io(format!("could not sync recovery descriptor: {source}"))
         })?;
     drop(file);
-    operations
-        .move_replace(&temporary, &marker)
-        .map_err(|code| {
-            CommandError::io(format!(
-                "could not publish recovery descriptor with write-through: Windows error {code}"
-            ))
-        })
+    operations.move_new(&temporary, &marker).map_err(|code| {
+        CommandError::io(format!(
+            "could not publish recovery descriptor with write-through: Windows error {code}"
+        ))
+    })
 }
 
 pub fn recover_file(destination: &Path) -> Result<(), CommandError> {
@@ -724,6 +742,7 @@ mod tests {
         replace_results: VecDeque<Result<(), i32>>,
         move_results: VecDeque<Result<(), i32>>,
         moves: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+        descriptor_arrival: Option<Vec<u8>>,
     }
 
     impl ReplaceOperations for FakeReplaceOperations {
@@ -739,7 +758,30 @@ mod tests {
         fn move_replace(&mut self, source: &Path, destination: &Path) -> Result<(), i32> {
             self.moves
                 .push((source.to_path_buf(), destination.to_path_buf()));
+            if let Some(bytes) = self.descriptor_arrival.take() {
+                fs::write(destination, bytes).expect("inject descriptor arrival");
+            }
             match self.move_results.pop_front().expect("move result") {
+                Ok(()) => {
+                    if destination.exists() {
+                        fs::remove_file(destination)
+                            .map_err(|error| error.raw_os_error().unwrap_or(1))?;
+                    }
+                    fs::rename(source, destination)
+                        .map_err(|error| error.raw_os_error().unwrap_or(1))
+                }
+                Err(code) => Err(code),
+            }
+        }
+
+        fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), i32> {
+            self.moves
+                .push((source.to_path_buf(), destination.to_path_buf()));
+            if let Some(bytes) = self.descriptor_arrival.take() {
+                fs::write(destination, bytes).expect("inject descriptor arrival");
+            }
+            match self.move_results.pop_front().expect("move result") {
+                Ok(()) if destination.exists() => Err(183),
                 Ok(()) => fs::rename(source, destination)
                     .map_err(|error| error.raw_os_error().unwrap_or(1)),
                 Err(code) => Err(code),
@@ -779,6 +821,7 @@ mod tests {
             replace_results: VecDeque::from([Err(1177)]),
             move_results: VecDeque::from([Ok(())]),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
 
         let failure =
@@ -803,6 +846,7 @@ mod tests {
             replace_results: VecDeque::from([Err(1177)]),
             move_results: VecDeque::from([Err(32), Ok(())]),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
 
         let failure =
@@ -828,6 +872,7 @@ mod tests {
             replace_results: VecDeque::from([Err(1177)]),
             move_results: VecDeque::from([Err(32), Ok(())]),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
         let failure =
             replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
@@ -884,6 +929,7 @@ mod tests {
             replace_results: VecDeque::from([Err(1177)]),
             move_results: VecDeque::from([Err(32), Ok(())]),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
         assert_eq!(
             replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
@@ -919,6 +965,7 @@ mod tests {
             replace_results: VecDeque::new(),
             move_results: VecDeque::from([Err(5)]),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
 
         assert!(
@@ -950,6 +997,7 @@ mod tests {
             replace_results: VecDeque::new(),
             move_results: VecDeque::new(),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
 
         assert!(
@@ -959,6 +1007,35 @@ mod tests {
 
         assert!(operations.moves.is_empty());
         assert_eq!(fs::read(marker).unwrap(), b"unresolved descriptor");
+        assert_eq!(fs::read(source).unwrap(), b"new");
+        assert_eq!(fs::read(backup).unwrap(), b"old");
+    }
+
+    #[test]
+    fn descriptor_publication_does_not_replace_marker_arriving_at_move_time() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("index.sqlite");
+        let backup = root.path().join("backup");
+        let marker = super::recovery_descriptor_path(&destination);
+        let unresolved = b"descriptor published by another recovery";
+        fs::write(&source, b"new").unwrap();
+        fs::write(&backup, b"old").unwrap();
+        let mut operations = FakeReplaceOperations {
+            replace_results: VecDeque::new(),
+            move_results: VecDeque::from([Ok(())]),
+            moves: Vec::new(),
+            descriptor_arrival: Some(unresolved.to_vec()),
+        };
+
+        // Mutation caught: descriptor publication routed through the replacing move adapter.
+        let result =
+            persist_recovery_descriptor_using(&source, &destination, &backup, &mut operations);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&marker).unwrap(), unresolved);
+        assert_eq!(operations.moves.len(), 1);
+        assert!(operations.moves[0].0.is_file());
         assert_eq!(fs::read(source).unwrap(), b"new");
         assert_eq!(fs::read(backup).unwrap(), b"old");
     }
@@ -979,6 +1056,7 @@ mod tests {
             replace_results: VecDeque::from([Err(1177)]),
             move_results: VecDeque::from([Err(32), Ok(())]),
             moves: Vec::new(),
+            descriptor_arrival: None,
         };
         replace_file_with_backup_using(&source, &destination, &backup, true, &mut failed)
     }
