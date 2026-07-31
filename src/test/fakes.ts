@@ -1,0 +1,70 @@
+import { vi } from 'vitest'
+import type { Folder, FolderId, NoteDocument, NoteId } from '../domain/model'
+import type { AssetPort, FolderPort, NotePort, SystemPort, TemporaryPort } from '../domain/ports'
+
+export const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
+export const projectB = '019c0000-0000-7000-8000-000000000001' as FolderId
+
+export const note = (markdown = ''): NoteDocument => ({
+  id: noteId,
+  kind: 'formal',
+  title: '登录流程',
+  folderId: projectB,
+  tags: [],
+  markdown,
+  revision: 1,
+  createdAt: '2026-07-30T15:30:00+08:00',
+  updatedAt: '2026-07-30T15:30:00+08:00',
+})
+
+export const folders = (): Folder[] => [
+  { id: projectB, parentId: null, name: '项目 B', sortOrder: 0 },
+]
+
+export const fakeNotePort = (overrides: Partial<NotePort> = {}): NotePort => ({
+  createNote: vi.fn(),
+  loadNote: vi.fn(),
+  saveNote: vi.fn(),
+  listNotes: vi.fn(),
+  moveNote: vi.fn(),
+  ...overrides,
+})
+
+export const fakeFolderPort = (): FolderPort => ({
+  listFolders: vi.fn().mockResolvedValue(folders()),
+  createFolder: vi.fn(),
+  renameFolder: vi.fn(),
+  moveFolder: vi.fn(),
+  deleteEmptyFolder: vi.fn(),
+})
+
+export const fakeAssetPort = (
+  saved: Awaited<ReturnType<AssetPort['saveImage']>>,
+): AssetPort => ({ saveImage: vi.fn().mockResolvedValue(saved) })
+
+export const fakeSystemPort = (): SystemPort => ({
+  setWindowPreference: vi.fn(),
+  hideTemporaryWindow: vi.fn(),
+})
+
+export const fakeTemporaryPort = (items: NoteDocument[]): TemporaryPort => ({
+  list: vi.fn().mockResolvedValue(items),
+  convert: vi.fn(),
+  trash: vi.fn(),
+  undoTrash: vi.fn(),
+})
+
+export const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+export const pasteEvent = (bytes: Uint8Array) => ({ bytes, mediaType: 'image/png' })
+export const twoCaptures = () => [
+  {
+    ...note('发布前检查'),
+    id: '019c0000-0000-7000-8000-000000000010' as NoteId,
+    kind: 'temporary' as const,
+  },
+  {
+    ...note('接口异常处理'),
+    id: '019c0000-0000-7000-8000-000000000011' as NoteId,
+    kind: 'temporary' as const,
+  },
+]
