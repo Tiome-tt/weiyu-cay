@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FolderPort, LibraryColumnPreference, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { FolderTree } from './FolderTree'
@@ -14,13 +14,17 @@ interface LibraryLayoutProps {
 export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
+  const preferenceRequest = useRef(0)
 
   useEffect(() => {
+    const request = ++preferenceRequest.current
     let current = true
     void system
       .getWindowPreference('library-columns')
       .then((value) => {
-        if (current && isColumnPreference(value)) setColumnPreference(value)
+        if (current && preferenceRequest.current === request && isColumnPreference(value)) {
+          setColumnPreference(value)
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -29,6 +33,7 @@ export function LibraryLayout({ notes, folders, system }: LibraryLayoutProps) {
   }, [system])
 
   const persistColumns = (sizes: SplitPaneSizes, containerWidth: number) => {
+    preferenceRequest.current += 1
     const total = containerWidth > 0 ? containerWidth : window.innerWidth
     const value = {
       folder: sizes[0] / total,

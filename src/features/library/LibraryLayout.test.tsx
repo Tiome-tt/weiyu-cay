@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
@@ -109,6 +109,40 @@ describe('LibraryLayout', () => {
 
     await waitFor(() => expect(system.getWindowPreference).toHaveBeenCalled())
     expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
+  })
+
+  it('keeps a locally committed resize when an older preference read resolves late', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1200,
+      top: 0,
+      width: 1200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const preference = deferred<{ folder: number; noteList: number } | undefined>()
+    const system = fakeSystemPort({
+      getWindowPreference: vi.fn().mockReturnValue(preference.promise),
+    })
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+    const divider = screen.getAllByRole('separator')[0]
+
+    fireEvent.pointerDown(divider, { clientX: 240, pointerId: 1 })
+    fireEvent.pointerMove(divider, { clientX: 300, pointerId: 1 })
+    fireEvent.pointerUp(divider, { pointerId: 1 })
+    expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '300px' })
+    expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
+
+    await act(async () => {
+      preference.resolve({ folder: 0.4, noteList: 0.3 })
+      await preference.promise
+    })
+
+    expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '300px' })
     expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
   })
 
