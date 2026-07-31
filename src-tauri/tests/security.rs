@@ -2,7 +2,9 @@ mod support;
 
 use image::{DynamicImage, ImageFormat};
 use simple_notes_lib::{
-    commands::assets::{save_image_to, save_image_to_with, validate_image},
+    commands::assets::{
+        save_image_to, save_image_to_with, save_image_to_with_publish_hook, validate_image,
+    },
     domain::{NoteDocument, NoteId, NoteKind, SaveImageInput},
     error::CommandErrorCode,
     storage::{database::Database, repository::NoteRepository},
@@ -229,6 +231,37 @@ fn cleanup_never_deletes_a_replacement_that_arrives_before_sync_failure() {
 }
 
 #[test]
+fn replacement_during_directory_sync_is_not_returned_as_a_saved_asset() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let image_uuid = uuid("019c0000-0000-7000-8000-000000000089");
+    let mut names = || image_uuid;
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut replace_then_sync = |directory: &simple_notes_lib::platform::SafeDirectory,
+                                 name: &str| {
+        directory.remove_checked(name).unwrap();
+        let mut replacement = directory.create_new(name).unwrap();
+        replacement.write_all(b"replacement-during-sync").unwrap();
+        replacement.sync_all().unwrap();
+        directory.sync()
+    };
+
+    let error = save_image_to_with(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut replace_then_sync,
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), CommandErrorCode::Validation);
+}
+
+#[test]
 fn deterministic_name_collision_preserves_existing_bytes_and_retries_a_new_name() {
     let store = TestStore::new();
     create_note(&store, FORMAL_ID, NoteKind::Formal);
@@ -269,6 +302,128 @@ fn deterministic_name_collision_preserves_existing_bytes_and_retries_a_new_name(
         saved.relative_path,
         format!("assets/screenshot-{second}.png")
     );
+}
+
+#[test]
+fn staging_replacement_between_write_and_publish_is_never_returned_as_an_asset() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let replacement = b"replacement-is-not-a-validated-image";
+    let image_uuid = uuid("019c0000-0000-7000-8000-000000000086");
+    let filename = format!("screenshot-{image_uuid}.png");
+    let mut names = || image_uuid;
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut replace_staging = |directory: &simple_notes_lib::platform::SafeDirectory,
+                               staging: &str,
+                               destination: &str| {
+        assert_eq!(destination, filename);
+        directory.remove_checked(staging).unwrap();
+        let mut file = directory.create_new(staging).unwrap();
+        file.write_all(replacement).unwrap();
+        file.sync_all().unwrap();
+    };
+    let mut sync =
+        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+
+    let error = save_image_to_with_publish_hook(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut replace_staging,
+        &mut sync,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::Validation);
+    let published = store
+        .paths
+        .assets_dir(id(FORMAL_ID), NoteKind::Formal)
+        .unwrap()
+        .join(filename);
+    assert_eq!(std::fs::read(published).unwrap(), replacement);
+}
+
+#[cfg(unix)]
+#[test]
+fn staging_symlink_replacement_is_never_returned_as_an_asset() {
+    use std::os::unix::fs::symlink;
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(outside.path(), b"outside").unwrap();
+    let image_uuid = uuid("019c0000-0000-7000-8000-000000000087");
+    let mut names = || image_uuid;
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut replace_staging = |directory: &simple_notes_lib::platform::SafeDirectory,
+                               staging: &str,
+                               _destination: &str| {
+        directory.remove_checked(staging).unwrap();
+        symlink(outside.path(), directory.child_path(staging).unwrap()).unwrap();
+    };
+    let mut sync =
+        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+
+    let error = save_image_to_with_publish_hook(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut replace_staging,
+        &mut sync,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error.code(),
+        CommandErrorCode::Validation | CommandErrorCode::Io
+    ));
+    assert_eq!(std::fs::read(outside.path()).unwrap(), b"outside");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "creating a file symlink requires Windows Developer Mode or elevation"]
+fn staging_reparse_replacement_is_never_returned_as_an_asset() {
+    use std::os::windows::fs::symlink_file;
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    let image_uuid = uuid("019c0000-0000-7000-8000-000000000088");
+    let mut names = || image_uuid;
+    let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+    };
+    let mut replace_staging = |directory: &simple_notes_lib::platform::SafeDirectory,
+                               staging: &str,
+                               _destination: &str| {
+        directory.remove_checked(staging).unwrap();
+        symlink_file(outside.path(), directory.child_path(staging).unwrap()).unwrap();
+    };
+    let mut sync =
+        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+    let error = save_image_to_with_publish_hook(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+        &mut names,
+        &mut write,
+        &mut replace_staging,
+        &mut sync,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error.code(),
+        CommandErrorCode::Validation | CommandErrorCode::Io
+    ));
 }
 
 #[cfg(unix)]

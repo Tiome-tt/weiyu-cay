@@ -6,7 +6,7 @@ use crate::{
 use rustix::{
     fd::OwnedFd,
     fs::{
-        fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
+        fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
         OFlags, CWD,
     },
 };
@@ -160,6 +160,10 @@ impl SafeDirectory {
         Ok(fd.into())
     }
 
+    pub(crate) fn create_new_publishable(&self, name: &str) -> Result<fs::File, CommandError> {
+        self.create_new(name)
+    }
+
     pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
         validate_child_name(name)?;
         if self.regular_file_exists(name)? {
@@ -285,10 +289,28 @@ impl SafeDirectory {
         &self,
         source: &str,
         destination: &str,
+        original: &fs::File,
     ) -> Result<NewFilePublishState, CommandError> {
         validate_child_name(source)?;
         validate_child_name(destination)?;
-        self.publish_new_platform(source, destination)
+        let result = self.publish_new_platform(source, destination)?;
+        if result == NewFilePublishState::Published {
+            self.verify_published(destination, original)?;
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn verify_published(
+        &self,
+        destination: &str,
+        original: &fs::File,
+    ) -> Result<(), CommandError> {
+        if self.regular_identity(destination)? != regular_identity_from_file(original)? {
+            return Err(CommandError::validation(
+                "published contained file identity does not match its validated source",
+            ));
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -435,4 +457,18 @@ fn validate_child_name(name: &str) -> Result<(), CommandError> {
         return Err(CommandError::validation("invalid contained path segment"));
     }
     Ok(())
+}
+
+fn regular_identity_from_file(file: &fs::File) -> Result<(u64, u64), CommandError> {
+    let stat = fstat(file).map_err(|source| {
+        CommandError::io(format!(
+            "could not identify validated contained file: {source}"
+        ))
+    })?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(CommandError::validation(
+            "validated contained entry is not a regular file",
+        ));
+    }
+    Ok((stat.st_dev, stat.st_ino))
 }

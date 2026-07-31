@@ -27,6 +27,7 @@ const ERROR_FILE_EXISTS: i32 = 80;
 const ERROR_ALREADY_EXISTS: i32 = 183;
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+const FILE_SHARE_DELETE: u32 = 0x0000_0004;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -534,6 +535,20 @@ impl SafeDirectory {
             })
     }
 
+    pub(crate) fn create_new_publishable(&self, name: &str) -> Result<File, CommandError> {
+        let path = self.child_path(name)?;
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!(
+                    "could not create publishable contained file: {source}"
+                ))
+            })
+    }
+
     pub fn prepare_regular_file(&self, name: &str) -> Result<PathBuf, CommandError> {
         let path = self.child_path(name)?;
         validate_regular_or_missing(&path)?;
@@ -659,13 +674,17 @@ impl SafeDirectory {
         &self,
         source: &str,
         destination: &str,
+        original: &File,
     ) -> Result<NewFilePublishState, CommandError> {
         let source_path = self.child_path(source)?;
         let destination_path = self.child_path(destination)?;
         validate_regular_or_missing(&source_path)?;
         validate_regular_or_missing(&destination_path)?;
         match SystemReplaceOperations.move_new(&source_path, &destination_path) {
-            Ok(()) => Ok(NewFilePublishState::Published),
+            Ok(()) => {
+                self.verify_published(destination, original)?;
+                Ok(NewFilePublishState::Published)
+            }
             Err(ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS) => {
                 Ok(NewFilePublishState::DestinationExists)
             }
@@ -673,6 +692,20 @@ impl SafeDirectory {
                 "could not publish new contained file: Windows error {code}"
             ))),
         }
+    }
+
+    pub(crate) fn verify_published(
+        &self,
+        destination: &str,
+        original: &File,
+    ) -> Result<(), CommandError> {
+        let destination = self.child_path(destination)?;
+        if FileIdentity::from_path(&destination)? != FileIdentity::from_file(original)? {
+            return Err(CommandError::validation(
+                "published contained file identity does not match its validated source",
+            ));
+        }
+        Ok(())
     }
 
     pub fn read(&self, name: &str, max_bytes: u64) -> Result<Vec<u8>, CommandError> {

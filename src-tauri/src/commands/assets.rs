@@ -128,6 +128,25 @@ where
     W: FnMut(&mut File, &[u8]) -> Result<(), CommandError>,
     S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
 {
+    let mut before_publish = |_directory: &SafeDirectory, _staging: &str, _filename: &str| {};
+    save_image_to_with_publish_hook(paths, input, next_uuid, write, &mut before_publish, sync)
+}
+
+#[doc(hidden)]
+pub fn save_image_to_with_publish_hook<N, W, B, S>(
+    paths: &StoragePaths,
+    input: SaveImageInput,
+    next_uuid: &mut N,
+    write: &mut W,
+    before_publish: &mut B,
+    sync: &mut S,
+) -> Result<SavedImage, CommandError>
+where
+    N: FnMut() -> Uuid,
+    W: FnMut(&mut File, &[u8]) -> Result<(), CommandError>,
+    B: FnMut(&SafeDirectory, &str, &str),
+    S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
+{
     let validated = validate_image(&input.media_type, &input.bytes)?;
     let database = Database::open(paths.database())?;
     database.migrate()?;
@@ -146,7 +165,7 @@ where
             validated.extension()
         );
         let staging = format!(".{filename}.partial");
-        let mut file = match directory.create_new(&staging) {
+        let mut file = match directory.create_new_publishable(&staging) {
             Ok(file) => file,
             Err(error) => match directory.regular_file_exists(&staging) {
                 Ok(true) => continue,
@@ -154,16 +173,14 @@ where
                 Err(inspect_error) => return Err(inspect_error),
             },
         };
-        if let Err(error) = write(&mut file, &input.bytes) {
-            drop(file);
-            return Err(error);
-        }
-        drop(file);
-        match directory.publish_new(&staging, &filename)? {
+        write(&mut file, &input.bytes)?;
+        before_publish(&directory, &staging, &filename);
+        match directory.publish_new(&staging, &filename, &file)? {
             NewFilePublishState::Published => {}
             NewFilePublishState::DestinationExists => continue,
         }
         sync(&directory, &filename)?;
+        directory.verify_published(&filename, &file)?;
         return Ok(SavedImage {
             relative_path: format!("assets/{filename}"),
             width: validated.width,
