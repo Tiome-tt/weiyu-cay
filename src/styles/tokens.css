@@ -1,0 +1,10 @@
+:root {
+  --color-canvas: #f7f1e5;
+  --color-surface: #fffdf8;
+  --color-accent: #8dc9ac;
+  --color-warm: #e4a86c;
+  --color-text: #403b34;
+  --color-border: #d8cbb6;
+  --radius-panel: 18px;
+  --motion-fast: 120ms;
+}
