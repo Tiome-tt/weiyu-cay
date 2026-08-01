@@ -64,10 +64,9 @@ export const fakeLinkPort = (overrides: Partial<LinkPort> = {}): LinkPort => ({
 })
 
 export const fakeTemporaryPort = (items: NoteDocument[]): TemporaryPort => ({
+  create: vi.fn().mockResolvedValue(items[0]),
+  save: vi.fn().mockImplementation(async (document: NoteDocument) => document),
   list: vi.fn().mockResolvedValue(items),
-  convert: vi.fn(),
-  trash: vi.fn(),
-  undoTrash: vi.fn(),
 })
 
 export const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])

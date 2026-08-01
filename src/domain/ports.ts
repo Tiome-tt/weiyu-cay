@@ -63,6 +63,24 @@ export interface SystemPort {
   hideTemporaryWindow(noteId: NoteId): Promise<void>
 }
 
+export interface TemporaryWindowState {
+  noteId: NoteId
+  visible: boolean
+  x: number
+  y: number
+  width: number
+  height: number
+  alwaysOnTop: boolean
+}
+
+export interface TemporaryWindowPort {
+  show(noteId: NoteId): Promise<TemporaryWindowState>
+  hide(noteId: NoteId): Promise<void>
+  setState(state: TemporaryWindowState): Promise<TemporaryWindowState>
+  startDragging(): Promise<void>
+  onCloseRequested?(handler: () => void): Promise<() => void>
+}
+
 export interface LibraryColumnPreference {
   folder: number
   noteList: number
@@ -73,10 +91,9 @@ export interface WindowPreferenceMap {
 }
 
 export interface TemporaryPort {
+  create(): Promise<NoteDocument>
+  save(document: NoteDocument): Promise<NoteDocument>
   list(): Promise<NoteDocument[]>
-  convert(input: { ids: NoteId[]; folderId: FolderId }): Promise<BatchConversionResult>
-  trash(ids: NoteId[]): Promise<{ operationId: string }>
-  undoTrash(operationId: string): Promise<void>
 }
 
 export interface BatchConversionResult {

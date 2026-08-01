@@ -1,6 +1,8 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
+import { listen } from '@tauri-apps/api/event'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -110,6 +112,49 @@ class TauriSystemPort implements SystemPort {
   }
 }
 
+class TauriTemporaryPort implements TemporaryPort {
+  constructor(private readonly client: TauriClient) {}
+
+  create() {
+    return this.client.invoke<NoteDocument>('create_temporary')
+  }
+
+  save(document: NoteDocument) {
+    return this.client.invoke<NoteDocument>('save_temporary', {
+      input: { document, expectedRevision: document.revision },
+    })
+  }
+
+  list() {
+    return this.client.invoke<NoteDocument[]>('list_temporary')
+  }
+
+}
+
+class TauriTemporaryWindowPort implements TemporaryWindowPort {
+  constructor(private readonly client: TauriClient) {}
+
+  show(noteId: NoteId) {
+    return this.client.invoke<TemporaryWindowState>('show_temporary_window', { noteId })
+  }
+
+  hide(noteId: NoteId) {
+    return this.client.invoke<void>('hide_temporary_window', { noteId })
+  }
+
+  setState(windowState: TemporaryWindowState) {
+    return this.client.invoke<TemporaryWindowState>('set_temporary_window_state', { windowState })
+  }
+
+  startDragging() {
+    return getCurrentWebviewWindow().startDragging()
+  }
+
+  onCloseRequested(handler: () => void) {
+    return listen<string>('temporary-close-requested', handler)
+  }
+}
+
 export function createTauriPorts(): {
   notes: LibraryNotePort
   folders: FolderPort
@@ -117,6 +162,8 @@ export function createTauriPorts(): {
   assets: AssetPort
   search: SearchPort
   links: LinkPort
+  temporary: TemporaryPort
+  temporaryWindows: TemporaryWindowPort
 } {
   const client = new TauriClient()
   return {
@@ -126,5 +173,7 @@ export function createTauriPorts(): {
     assets: new TauriAssetPort(client),
     search: new TauriSearchPort(client),
     links: new TauriLinkPort(client),
+    temporary: new TauriTemporaryPort(client),
+    temporaryWindows: new TauriTemporaryWindowPort(client),
   }
 }

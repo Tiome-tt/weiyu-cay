@@ -3,6 +3,7 @@ pub mod domain;
 pub mod error;
 pub mod platform;
 pub mod storage;
+pub mod windows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +17,7 @@ pub fn run() {
         .setup(|app| {
             commands::notes::setup(app)?;
             commands::folders::setup(app)?;
+            commands::temporary::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +37,12 @@ pub fn run() {
             commands::folders::delete_empty_folder,
             commands::search::search_notes,
             commands::search::update_note_tags,
+            commands::temporary::create_temporary,
+            commands::temporary::save_temporary,
+            commands::temporary::list_temporary,
+            commands::temporary::show_temporary_window,
+            commands::temporary::hide_temporary_window,
+            commands::temporary::set_temporary_window_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

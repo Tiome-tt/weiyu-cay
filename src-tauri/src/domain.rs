@@ -8,6 +8,10 @@ macro_rules! uuid_v7_id {
         pub struct $name(Uuid);
 
         impl $name {
+            pub fn now_v7() -> Self {
+                Self(Uuid::now_v7())
+            }
+
             pub fn parse_str(value: &str) -> Result<Self, InvalidUuidV7> {
                 let uuid = Uuid::parse_str(value).map_err(|_| InvalidUuidV7)?;
                 if uuid.get_version() != Some(Version::SortRand)
@@ -193,4 +197,16 @@ pub struct SearchResult {
     pub tags: Vec<String>,
     pub excerpt: String,
     pub score: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemporaryWindowState {
+    pub note_id: NoteId,
+    pub visible: bool,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub always_on_top: bool,
 }

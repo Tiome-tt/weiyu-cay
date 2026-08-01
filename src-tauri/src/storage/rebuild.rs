@@ -1,5 +1,5 @@
 use crate::{
-    domain::{FolderId, NoteDocument, NoteId, NoteKind},
+    domain::{FolderId, NoteDocument, NoteId, NoteKind, TemporaryWindowState},
     error::CommandError,
     platform,
     storage::{
@@ -126,11 +126,13 @@ where
         ));
     }
 
+    let window_states = read_temporary_window_states(paths, &documents)?;
     report.notes_recovered = documents.len();
     report.folders_recovered = folders.len();
     let replacement_name = format!(".index.sqlite.{}.rebuild-new", Uuid::now_v7());
     let replacement = root.prepare_regular_file(&replacement_name)?;
-    let build_result = build_replacement_database(&replacement, &folders, &documents);
+    let build_result =
+        build_replacement_database(&replacement, &folders, &documents, &window_states);
     if let Err(error) = build_result {
         cleanup_replacement_files(&root, &replacement_name);
         return Err(error);
@@ -173,6 +175,7 @@ fn build_replacement_database(
     path: &Path,
     folders: &[FolderRecord],
     documents: &[NoteDocument],
+    window_states: &[TemporaryWindowState],
 ) -> Result<(), CommandError> {
     let database = Database::open_rebuild(path)?;
     database.migrate()?;
@@ -185,10 +188,82 @@ fn build_replacement_database(
     for document in documents {
         persist_document_in_transaction(&transaction, document)?;
     }
+    for state in window_states {
+        transaction
+            .execute(
+                "INSERT INTO temporary_windows (note_id, visible, x, y, width, height, always_on_top) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    crate::storage::repository::note_id_blob(state.note_id),
+                    state.visible,
+                    state.x,
+                    state.y,
+                    state.width,
+                    state.height,
+                    state.always_on_top,
+                ],
+            )
+            .map_err(database_error("could not restore temporary window state"))?;
+    }
     transaction
         .commit()
         .map_err(database_error("could not commit index rebuild"))?;
     database.close()
+}
+
+fn read_temporary_window_states(
+    paths: &StoragePaths,
+    documents: &[NoteDocument],
+) -> Result<Vec<TemporaryWindowState>, CommandError> {
+    let temporary_ids = documents
+        .iter()
+        .filter(|document| document.kind == NoteKind::Temporary)
+        .map(|document| document.id)
+        .collect::<HashSet<_>>();
+    if temporary_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let database = Database::open(paths.database())?;
+    database.migrate()?;
+    let mut statement = database
+        .connection()
+        .prepare(
+            "SELECT note_id, visible, x, y, width, height, always_on_top FROM temporary_windows",
+        )
+        .map_err(database_error("could not inspect temporary window state"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, i64>(1)? != 0,
+                row.get::<_, f64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, f64>(5)?,
+                row.get::<_, i64>(6)? != 0,
+            ))
+        })
+        .map_err(database_error("could not read temporary window state"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error("could not read temporary window state"))?;
+    let mut states = Vec::new();
+    for (id_bytes, visible, x, y, width, height, always_on_top) in rows {
+        let note_id = crate::storage::repository::note_id_from_blob(&id_bytes)?;
+        if !temporary_ids.contains(&note_id) {
+            continue;
+        }
+        let state = crate::windows::sticky::validate_and_clamp_state(TemporaryWindowState {
+            note_id,
+            visible,
+            x,
+            y,
+            width,
+            height,
+            always_on_top,
+        })?;
+        states.push(state);
+    }
+    Ok(states)
 }
 
 fn isolate_old_sidecars(

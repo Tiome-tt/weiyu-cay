@@ -6,7 +6,8 @@
     "linux"
   ],
   "windows": [
-    "main"
+    "main",
+    "temporary-*"
   ],
   "permissions": [
     "autostart:default",
