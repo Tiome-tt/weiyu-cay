@@ -113,6 +113,7 @@ fn migration_creates_only_the_required_initial_tables_and_is_idempotent() {
         "temporary_windows",
         "search_documents",
         "search_documents_fts",
+        "search_index_state",
         "schema_migrations",
     ];
     for table in required_tables {

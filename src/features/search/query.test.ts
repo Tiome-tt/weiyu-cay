@@ -30,11 +30,19 @@ describe('tag normalization', () => {
 describe('search query parsing', () => {
   it.each([
     [' #后端 ', { kind: 'tag', value: '后端' }],
+    [' ＃后端 ', { kind: 'tag', value: '后端' }],
     ['# TypeScript ', { kind: 'tag', value: 'typescript' }],
     ['登录 #flow', { kind: 'text', value: '登录 #flow' }],
     ['  登录 flow  ', { kind: 'text', value: '登录 flow' }],
   ] as const)('parses %s', (input, expected) => {
     expect(parseSearchQuery(input)).toEqual(expected)
+  })
+
+  it('normalizes text queries with NFKC while preserving meaningful internal spaces', () => {
+    expect(parseSearchQuery('  Ｃａｆé  keeps  two  ')).toEqual({
+      kind: 'text',
+      value: 'Café  keeps  two',
+    })
   })
 
   it.each(['#', '#   '])('returns typed guidance for bare tag query %j', (input) => {

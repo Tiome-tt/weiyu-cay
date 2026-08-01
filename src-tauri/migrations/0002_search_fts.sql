@@ -5,5 +5,10 @@ CREATE VIRTUAL TABLE search_documents_fts USING fts5(
     tokenize = 'trigram'
 );
 
-INSERT INTO search_documents_fts (note_id, title, plain_text)
-SELECT note_id, title, plain_text FROM search_documents;
+CREATE TABLE search_index_state (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    needs_rebuild INTEGER NOT NULL CHECK(needs_rebuild IN (0, 1))
+) STRICT;
+
+INSERT INTO search_index_state (singleton, needs_rebuild)
+VALUES (1, CASE WHEN EXISTS(SELECT 1 FROM notes) THEN 1 ELSE 0 END);

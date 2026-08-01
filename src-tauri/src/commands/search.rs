@@ -5,6 +5,7 @@ use crate::{
     storage::{
         database::Database,
         paths::StoragePaths,
+        rebuild::rebuild_index,
         repository::{
             normalized_tag_value, normalized_tags, note_id_from_blob, DocumentWriter,
             NoteRepository,
@@ -13,7 +14,7 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::{collections::HashSet, fs, io::ErrorKind};
 use tauri::State;
 use unicode_normalization::UnicodeNormalization;
 
@@ -165,8 +166,43 @@ impl SearchRepository {
     fn database(&self) -> Result<Database, CommandError> {
         let database = Database::open(self.paths.database())?;
         database.migrate()?;
-        Ok(database)
+        if !search_index_needs_rebuild(database.connection())?
+            && !rebuild_marker_exists(&self.paths)?
+        {
+            return Ok(database);
+        }
+        drop(database);
+        rebuild_index(&self.paths)?;
+        let rebuilt = Database::open(self.paths.database())?;
+        rebuilt.migrate()?;
+        if search_index_needs_rebuild(rebuilt.connection())? || rebuild_marker_exists(&self.paths)?
+        {
+            return Err(CommandError::database(
+                "the rebuilt search index is incomplete",
+            ));
+        }
+        Ok(rebuilt)
     }
+}
+
+fn rebuild_marker_exists(paths: &StoragePaths) -> Result<bool, CommandError> {
+    match fs::symlink_metadata(paths.root().join("rebuild-needed.json")) {
+        Ok(_) => Ok(true),
+        Err(source) if source.kind() == ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(CommandError::io(format!(
+            "could not inspect the index rebuild marker: {source}"
+        ))),
+    }
+}
+
+fn search_index_needs_rebuild(connection: &rusqlite::Connection) -> Result<bool, CommandError> {
+    connection
+        .query_row(
+            "SELECT needs_rebuild FROM search_index_state WHERE singleton = 1",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(database_error("could not inspect full-text search index"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,17 +263,18 @@ fn search_fts(
     let literal_match = format!("\"{}\"", query.replace('"', "\"\""));
     let mut statement = connection.prepare(
         "SELECT n.id, n.title, n.folder_id, sd.plain_text, \
-         CASE WHEN lower(n.title) = lower(?2) THEN 3.0 \
-              WHEN instr(lower(n.title), lower(?2)) > 0 THEN 2.0 ELSE 1.0 END AS score, \
-         CASE WHEN lower(n.title) = lower(?2) THEN 0 \
-              WHEN instr(lower(n.title), lower(?2)) > 0 THEN 1 ELSE 2 END AS title_rank, \
-         CASE WHEN instr(lower(n.title), lower(?2)) > 0 THEN instr(lower(n.title), lower(?2)) ELSE 2147483647 END AS title_position, \
+         CASE WHEN lower(sd.title) = lower(?2) THEN 3.0 \
+              WHEN instr(lower(sd.title), lower(?2)) > 0 THEN 2.0 ELSE 1.0 END AS score, \
+         CASE WHEN lower(sd.title) = lower(?2) THEN 0 \
+              WHEN instr(lower(sd.title), lower(?2)) > 0 THEN 1 ELSE 2 END AS title_rank, \
+         CASE WHEN instr(lower(sd.title), lower(?2)) > 0 THEN instr(lower(sd.title), lower(?2)) ELSE 2147483647 END AS title_position, \
          CASE WHEN instr(lower(sd.plain_text), lower(?2)) > 0 THEN instr(lower(sd.plain_text), lower(?2)) ELSE 2147483647 END AS body_position, \
          bm25(search_documents_fts, 8.0, 1.0) AS relevance \
          FROM search_documents_fts \
          JOIN notes n ON n.id = search_documents_fts.note_id \
          JOIN search_documents sd ON sd.note_id = n.id \
          WHERE search_documents_fts MATCH ?1 AND n.kind = 'formal' AND n.deleted_at IS NULL \
+           AND (instr(lower(sd.title), lower(?2)) > 0 OR instr(lower(sd.plain_text), lower(?2)) > 0) \
          ORDER BY title_rank, title_position, relevance, body_position, n.updated_at DESC, n.id ASC, n.title ASC LIMIT ?3",
     ).map_err(database_error("could not prepare full-text search"))?;
     let rows = statement
@@ -267,15 +304,15 @@ fn search_short(
     let contains = format!("%{}%", escape_like(query));
     let mut statement = connection.prepare(
         "SELECT n.id, n.title, n.folder_id, sd.plain_text, \
-         CASE WHEN lower(n.title) = lower(?1) THEN 3.0 \
-              WHEN n.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE THEN 2.0 ELSE 1.0 END AS score, \
-         CASE WHEN lower(n.title) = lower(?1) THEN 0 \
-              WHEN n.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE THEN 1 ELSE 2 END AS title_rank, \
-         CASE WHEN instr(lower(n.title), lower(?1)) > 0 THEN instr(lower(n.title), lower(?1)) ELSE 2147483647 END AS title_position, \
+         CASE WHEN lower(sd.title) = lower(?1) THEN 3.0 \
+              WHEN sd.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE THEN 2.0 ELSE 1.0 END AS score, \
+         CASE WHEN lower(sd.title) = lower(?1) THEN 0 \
+              WHEN sd.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE THEN 1 ELSE 2 END AS title_rank, \
+         CASE WHEN instr(lower(sd.title), lower(?1)) > 0 THEN instr(lower(sd.title), lower(?1)) ELSE 2147483647 END AS title_position, \
          CASE WHEN instr(lower(sd.plain_text), lower(?1)) > 0 THEN instr(lower(sd.plain_text), lower(?1)) ELSE 2147483647 END AS body_position \
          FROM notes n JOIN search_documents sd ON sd.note_id = n.id \
          WHERE n.kind = 'formal' AND n.deleted_at IS NULL \
-           AND (n.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE OR sd.plain_text LIKE ?2 ESCAPE '\\' COLLATE NOCASE) \
+           AND (sd.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE OR sd.plain_text LIKE ?2 ESCAPE '\\' COLLATE NOCASE) \
          ORDER BY title_rank, title_position, body_position, n.updated_at DESC, n.id ASC, n.title ASC LIMIT ?3",
     ).map_err(database_error("could not prepare short text search"))?;
     let rows = statement

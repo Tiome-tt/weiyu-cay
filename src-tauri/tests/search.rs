@@ -345,6 +345,37 @@ fn plain_text_extraction_keeps_meaning_and_discards_markup_and_raw_html() {
 }
 
 #[test]
+fn plain_text_extraction_preserves_inline_adjacency_and_suppresses_script_style_payloads() {
+    let markdown = "你**好**，前[链接](https://example.test)后\n\n<script>inline-secret</script><style>.hidden-secret { color: red }</style>\n\n| 列一 | 列二 |\n| --- | --- |\n| 单元 | 内容 |\n\n- [x] ~~完成~~";
+    let plain = plain_text_from_markdown(markdown);
+    assert!(plain.contains("你好,前链接后"));
+    assert!(plain.contains("列一 列二"));
+    assert!(plain.contains("单元 内容"));
+    assert!(plain.contains("完成"));
+    assert!(!plain.contains("inline-secret"));
+    assert!(!plain.contains("hidden-secret"));
+}
+
+#[test]
+fn text_index_and_query_share_nfkc_without_collapsing_internal_spaces() {
+    let store = seeded_store();
+    create_note_with_markdown(
+        &store,
+        NOTE_A,
+        "Ｆｕｌｌｗｉｄｔｈ",
+        NoteKind::Formal,
+        vec![],
+        "Cafe\u{301} keeps  two spaces",
+        "2026-07-31T08:00:00Z",
+    );
+    let search = SearchRepository::new(store.paths.clone());
+    assert_eq!(search.search_text("Fullwidth", 20).unwrap().len(), 1);
+    assert_eq!(search.search_text("Ｃａｆé", 20).unwrap().len(), 1);
+    assert_eq!(search.search_text("keeps  two", 20).unwrap().len(), 1);
+    assert!(search.search_text("keeps two", 20).unwrap().is_empty());
+}
+
+#[test]
 fn text_search_matches_chinese_title_body_and_short_queries() {
     let store = seeded_store();
     create_note_with_markdown(
@@ -417,18 +448,53 @@ fn text_search_is_literal_ranked_filtered_and_returns_bounded_context() {
     assert_eq!(results[1].tags, vec!["Ops"]);
     assert!(results[0].score > results[1].score);
     assert!(results[1].excerpt.chars().count() <= 180);
+}
 
-    for literal in [
-        "%",
-        "_",
-        r"\",
-        "\"",
-        "OR",
-        "NEAR(token failure)",
-        "token*",
-        "' OR 1=1 --",
-    ] {
-        let _ = search.search_text(literal, 20).unwrap();
+#[test]
+fn text_search_treats_metacharacters_and_injection_payloads_as_literal_content() {
+    let store = seeded_store();
+    let literals = [
+        ("%", "prefix safe suffix"),
+        ("_", "prefix safe suffix"),
+        (r"\", "prefix safe suffix"),
+        ("\"", "prefix safe suffix"),
+        ("OR", "prefix boolean suffix"),
+        ("NEAR(token failure)", "prefix NEAR token failure suffix"),
+        ("token*", "prefix token suffix"),
+        ("' OR 1=1 --", "prefix OR 1=1 suffix"),
+    ];
+    for (index, (literal, decoy_body)) in literals.into_iter().enumerate() {
+        let target = format!("019c0000-0000-7000-8001-{index:012x}");
+        let decoy = format!("019c0000-0000-7000-8002-{index:012x}");
+        create_note_with_markdown(
+            &store,
+            &target,
+            &format!("Literal {index}"),
+            NoteKind::Formal,
+            vec![],
+            &format!("prefix {literal} suffix"),
+            "2026-07-31T08:00:00Z",
+        );
+        create_note_with_markdown(
+            &store,
+            &decoy,
+            &format!("Decoy {index}"),
+            NoteKind::Formal,
+            vec![],
+            decoy_body,
+            "2026-07-31T08:00:00Z",
+        );
+        let results = SearchRepository::new(store.paths.clone())
+            .search_text(literal, 100)
+            .unwrap();
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.note_id)
+                .collect::<Vec<_>>(),
+            vec![note_id(&target)],
+            "literal query {literal:?} must not match a decoy",
+        );
     }
 }
 
@@ -486,12 +552,100 @@ fn version_one_migration_preserves_notes_and_backfills_search() {
     database.migrate().unwrap();
     assert_eq!(database.applied_migration_versions().unwrap(), vec![1, 2]);
     drop(database);
+    let migrated = Connection::open(paths.database()).unwrap();
     assert_eq!(
-        SearchRepository::new(paths)
-            .search_text("Legacy", 20)
+        migrated
+            .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1,
+    );
+    assert_eq!(
+        migrated
+            .query_row("SELECT COUNT(*) FROM search_documents", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1,
+    );
+    assert_eq!(
+        migrated
+            .query_row("SELECT COUNT(*) FROM search_documents_fts", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        0,
+    );
+}
+
+#[test]
+fn version_one_upgrade_rebuilds_search_from_durable_markdown_not_raw_cache() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = simple_notes_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
+    let note_dir = paths.note_dir(note_id(NOTE_A), NoteKind::Formal).unwrap();
+    fs::create_dir_all(&note_dir).unwrap();
+    fs::write(
+        note_dir.join("note.md"),
+        format!(
+            "---\nid: {NOTE_A}\nkind: formal\ntitle: Durable\nfolderId: null\ntags: []\ncreatedAt: 2026-07-31T08:00:00Z\nupdatedAt: 2026-07-31T08:00:00Z\nrevision: 0\n---\n\nVisible **prose** <script>cache-secret</script>"
+        ),
+    )
+    .unwrap();
+    let connection = Connection::open(paths.database()).unwrap();
+    connection
+        .execute_batch(include_str!("../migrations/0001_initial.sql"))
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-07-31T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+    connection.execute(
+        "INSERT INTO notes(id, kind, title, folder_id, relative_path, created_at, updated_at, revision, deleted_at) VALUES (?1, 'formal', 'Durable', NULL, ?2, '2026-07-31T08:00:00Z', '2026-07-31T08:00:00Z', 0, NULL)",
+        params![folder_blob(NOTE_A), format!("notes/{NOTE_A}")],
+    ).unwrap();
+    connection.execute(
+        "INSERT INTO search_documents(note_id, title, plain_text) VALUES (?1, 'Durable', 'Visible **prose** <script>cache-secret</script>')",
+        [folder_blob(NOTE_A)],
+    ).unwrap();
+    drop(connection);
+
+    let migrated = simple_notes_lib::storage::database::Database::open(paths.database()).unwrap();
+    migrated.migrate().unwrap();
+    drop(migrated);
+    assert_eq!(
+        Connection::open(paths.database())
             .unwrap()
-            .len(),
-        1
+            .query_row(
+                "SELECT needs_rebuild FROM search_index_state WHERE singleton = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1,
+    );
+
+    let search = SearchRepository::new(paths.clone());
+    assert_eq!(search.search_text("Visible prose", 20).unwrap().len(), 1);
+    assert!(search.search_text("cache-secret", 20).unwrap().is_empty());
+    assert!(search.search_text("script", 20).unwrap().is_empty());
+    assert_eq!(
+        simple_notes_lib::storage::database::Database::open(paths.database())
+            .unwrap()
+            .applied_migration_versions()
+            .unwrap(),
+        vec![1, 2],
+    );
+    assert_eq!(
+        Connection::open(paths.database())
+            .unwrap()
+            .query_row(
+                "SELECT needs_rebuild FROM search_index_state WHERE singleton = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
     );
 }
 
@@ -536,8 +690,7 @@ fn index_failure_keeps_durable_markdown_and_rebuild_repairs_text_search() {
         .unwrap();
     drop(connection);
     store.close_database();
-
-    rebuild_index(&store.paths).unwrap();
+    assert!(store.paths.root().join("rebuild-needed.json").is_file());
 
     assert_eq!(
         SearchRepository::new(store.paths.clone())
@@ -546,6 +699,7 @@ fn index_failure_keeps_durable_markdown_and_rebuild_repairs_text_search() {
             .len(),
         1
     );
+    assert!(!store.paths.root().join("rebuild-needed.json").exists());
 }
 
 fn seeded_store() -> TestStore {

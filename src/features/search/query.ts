@@ -32,6 +32,11 @@ export function mergeTags(current: string[], additions: string[]): string[] {
 }
 
 export function parseSearchQuery(input: string): SearchQuery {
+  if (!input.normalize('NFKC').trimStart().startsWith('#')) {
+    const text = normalizeTextQuery(input)
+    if (text.kind === 'invalid') return text
+    return { kind: 'text', value: text.value }
+  }
   let value: string
   try {
     value = normalizeDisplay(input)
@@ -39,15 +44,19 @@ export function parseSearchQuery(input: string): SearchQuery {
     if (!(error instanceof TagValidationError)) throw error
     return { kind: 'invalid', reason: 'control-character' }
   }
-  if (!value.startsWith('#')) {
-    return Array.from(value).length > MAX_SEARCH_QUERY_LENGTH
-      ? { kind: 'invalid', reason: 'too-long' }
-      : { kind: 'text', value }
-  }
   const keyword = normalizeDisplay(value.slice(1))
   if (keyword.trim().length === 0) return { kind: 'invalid', reason: 'empty-tag' }
   if (Array.from(keyword).length > MAX_SEARCH_QUERY_LENGTH) return { kind: 'invalid', reason: 'too-long' }
   return { kind: 'tag', value: applicationCaseFold(keyword) }
+}
+
+function normalizeTextQuery(input: string):
+  | { kind: 'text'; value: string }
+  | { kind: 'invalid'; reason: 'control-character' | 'too-long' } {
+  const value = input.normalize('NFKC').trim()
+  if (Array.from(value).some(isControl)) return { kind: 'invalid', reason: 'control-character' }
+  if (Array.from(value).length > MAX_SEARCH_QUERY_LENGTH) return { kind: 'invalid', reason: 'too-long' }
+  return { kind: 'text', value }
 }
 
 function normalizeDisplay(input: string) {
