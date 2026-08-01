@@ -488,7 +488,8 @@ fn input(note_id: &str, media_type: &str, bytes: Vec<u8>) -> SaveImageInput {
 fn create_note(store: &TestStore, note_id: &str, kind: NoteKind) {
     let db = Database::open(store.paths.database()).unwrap();
     db.migrate().unwrap();
-    NoteRepository::new(store.paths.clone(), db)
+    db.close().unwrap();
+    NoteRepository::new(store.paths.clone())
         .create(NoteDocument {
             id: id(note_id),
             kind,

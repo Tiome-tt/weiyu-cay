@@ -15,17 +15,17 @@ use uuid::Uuid;
 
 pub struct FolderRepository {
     paths: StoragePaths,
-    database: Database,
 }
 
 impl FolderRepository {
-    pub fn new(paths: StoragePaths, database: Database) -> Self {
-        Self { paths, database }
+    pub fn new(paths: StoragePaths) -> Self {
+        Self { paths }
     }
 
     pub fn list(&self) -> Result<Vec<Folder>, CommandError> {
-        let mut statement = self
-            .database
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = self.database()?;
+        let mut statement = database
             .connection()
             .prepare(
                 "SELECT id, parent_id, name, sort_order FROM folders \
@@ -50,9 +50,9 @@ impl FolderRepository {
         input: CreateFolderInput,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<Folder, CommandError> {
+        let database = self.database()?;
         let name = validate_name(&input.name)?;
-        let transaction = self
-            .database
+        let transaction = database
             .connection()
             .unchecked_transaction()
             .map_err(database_error("could not start folder creation"))?;
@@ -94,9 +94,9 @@ impl FolderRepository {
         name: String,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<Folder, CommandError> {
+        let database = self.database()?;
         let name = validate_name(&name)?;
-        let transaction = self
-            .database
+        let transaction = database
             .connection()
             .unchecked_transaction()
             .map_err(database_error("could not start folder rename"))?;
@@ -130,8 +130,8 @@ impl FolderRepository {
         parent_id: Option<FolderId>,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<Folder, CommandError> {
-        let transaction = self
-            .database
+        let database = self.database()?;
+        let transaction = database
             .connection()
             .unchecked_transaction()
             .map_err(database_error("could not start folder move"))?;
@@ -182,8 +182,8 @@ impl FolderRepository {
         id: FolderId,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<(), CommandError> {
-        let transaction = self
-            .database
+        let database = self.database()?;
+        let transaction = database
             .connection()
             .unchecked_transaction()
             .map_err(database_error("could not start empty folder deletion"))?;
@@ -219,6 +219,12 @@ impl FolderRepository {
         transaction
             .commit()
             .map_err(database_error("could not commit empty folder deletion"))
+    }
+
+    fn database(&self) -> Result<Database, CommandError> {
+        let database = Database::open(self.paths.database())?;
+        database.migrate()?;
+        Ok(database)
     }
 }
 
@@ -276,9 +282,7 @@ pub fn delete_empty_folder(
 }
 
 fn repository(state: &FolderCommandState) -> Result<FolderRepository, CommandError> {
-    let database = Database::open(state.paths.database())?;
-    database.migrate()?;
-    Ok(FolderRepository::new(state.paths.clone(), database))
+    Ok(FolderRepository::new(state.paths.clone()))
 }
 
 #[derive(Serialize)]

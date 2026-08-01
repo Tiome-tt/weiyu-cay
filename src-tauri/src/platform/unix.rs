@@ -26,6 +26,7 @@ const INDEX_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct IndexMutationLock {
     _file: OwnedFd,
+    _directory: OwnedFd,
 }
 
 impl IndexMutationLock {
@@ -63,13 +64,30 @@ impl IndexMutationLock {
             ));
         }
         let started = Instant::now();
+        let mut backoff = Duration::from_millis(1);
         loop {
             match flock(&file, FlockOperation::NonBlockingLockExclusive) {
-                Ok(()) => return Ok(Self { _file: file }),
-                Err(_) if started.elapsed() < timeout => thread::yield_now(),
-                Err(source) => {
+                Ok(()) => {
+                    return Ok(Self {
+                        _file: file,
+                        _directory: directory,
+                    })
+                }
+                Err(source)
+                    if source == rustix::io::Errno::WOULDBLOCK && started.elapsed() < timeout =>
+                {
+                    let remaining = timeout.saturating_sub(started.elapsed());
+                    thread::sleep(backoff.min(remaining));
+                    backoff = backoff.saturating_mul(2).min(Duration::from_millis(25));
+                }
+                Err(source) if source == rustix::io::Errno::WOULDBLOCK => {
                     return Err(CommandError::conflict(format!(
                         "index mutation lock is busy: {source}"
+                    )))
+                }
+                Err(source) => {
+                    return Err(CommandError::io(format!(
+                        "could not acquire index mutation lock: {source}"
                     )))
                 }
             }

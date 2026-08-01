@@ -21,7 +21,6 @@ const NOTE_RECOVERY_DESCRIPTOR: &str = ".note.md.replace-recovery.json";
 
 pub struct NoteRepository {
     paths: StoragePaths,
-    database: Database,
     writer: DocumentWriter,
 }
 
@@ -56,25 +55,16 @@ pub(crate) struct ParsedLink {
 }
 
 impl NoteRepository {
-    pub fn new(paths: StoragePaths, database: Database) -> Self {
+    pub fn new(paths: StoragePaths) -> Self {
         Self {
             paths,
-            database,
             writer: default_document_writer,
         }
     }
 
     #[doc(hidden)]
-    pub fn new_with_writer(
-        paths: StoragePaths,
-        database: Database,
-        writer: DocumentWriter,
-    ) -> Self {
-        Self {
-            paths,
-            database,
-            writer,
-        }
+    pub fn new_with_writer(paths: StoragePaths, writer: DocumentWriter) -> Self {
+        Self { paths, writer }
     }
 
     pub fn create(&self, document: NoteDocument) -> Result<NoteDocument, CommandError> {
@@ -88,18 +78,19 @@ impl NoteRepository {
         document: NoteDocument,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<NoteDocument, CommandError> {
+        let database = self.database()?;
         validate_document(&document)?;
         if document.revision != 0 {
             return Err(CommandError::validation(
                 "new notes must start at revision zero",
             ));
         }
-        self.validate_folder_exists(document.folder_id)?;
+        self.validate_folder_exists(&database, document.folder_id)?;
         if self.document_exists(document.id)? {
             return Err(CommandError::conflict("note identity already exists"));
         }
         self.write_document(&document)?;
-        self.persist_after_content(&document)?;
+        self.persist_after_content(&database, &document)?;
         Ok(document)
     }
 
@@ -172,6 +163,7 @@ impl NoteRepository {
         expected_revision: u64,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<NoteDocument, CommandError> {
+        let database = self.database()?;
         validate_document(&document)?;
         let current = self.load(document.id)?;
         if current.revision != expected_revision {
@@ -188,7 +180,7 @@ impl NoteRepository {
                 "save cannot change a note folder; use move_note",
             ));
         }
-        self.validate_folder_exists(document.folder_id)?;
+        self.validate_folder_exists(&database, document.folder_id)?;
         if document.revision != expected_revision {
             return Err(CommandError::validation(
                 "document revision does not match expected revision",
@@ -199,13 +191,14 @@ impl NoteRepository {
             .checked_add(1)
             .ok_or_else(|| CommandError::validation("note revision overflow"))?;
         self.write_document(&document)?;
-        self.persist_after_content(&document)?;
+        self.persist_after_content(&database, &document)?;
         Ok(document)
     }
 
     pub fn list(&self) -> Result<Vec<NoteSummary>, CommandError> {
-        let mut statement = self
-            .database
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = self.database()?;
+        let mut statement = database
             .connection()
             .prepare("SELECT id FROM notes WHERE deleted_at IS NULL ORDER BY updated_at DESC, id")
             .map_err(database_error("could not prepare note list"))?;
@@ -237,10 +230,11 @@ impl NoteRepository {
         &self,
         folder_id: Option<FolderId>,
     ) -> Result<Vec<NoteSummary>, CommandError> {
-        self.validate_folder_exists(folder_id)?;
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = self.database()?;
+        self.validate_folder_exists(&database, folder_id)?;
         let folder = folder_id.map(folder_id_blob);
-        let mut statement = self
-            .database
+        let mut statement = database
             .connection()
             .prepare(
                 "SELECT id FROM notes WHERE folder_id IS ?1 AND kind = 'formal' AND deleted_at IS NULL \
@@ -287,15 +281,16 @@ impl NoteRepository {
         folder_id: Option<FolderId>,
         _guard: &crate::platform::IndexMutationLock,
     ) -> Result<NoteDocument, CommandError> {
+        let database = self.database()?;
         let mut document = self.load(id)?;
-        self.validate_folder_exists(folder_id)?;
+        self.validate_folder_exists(&database, folder_id)?;
         let revision = document.revision;
         document.folder_id = folder_id;
         document.revision = revision
             .checked_add(1)
             .ok_or_else(|| CommandError::validation("note revision overflow"))?;
         self.write_document(&document)?;
-        self.persist_after_content(&document)?;
+        self.persist_after_content(&database, &document)?;
         Ok(document)
     }
 
@@ -330,8 +325,12 @@ impl NoteRepository {
         Ok(directory.join("note.md"))
     }
 
-    fn persist_after_content(&self, document: &NoteDocument) -> Result<(), CommandError> {
-        let result = persist_document(&self.database, document);
+    fn persist_after_content(
+        &self,
+        database: &Database,
+        document: &NoteDocument,
+    ) -> Result<(), CommandError> {
+        let result = persist_document(database, document);
         if let Err(database_failure) = result {
             let marker_result = self.write_rebuild_marker(document.id);
             let diagnostic = match marker_result {
@@ -405,12 +404,15 @@ impl NoteRepository {
         Ok(())
     }
 
-    fn validate_folder_exists(&self, folder_id: Option<FolderId>) -> Result<(), CommandError> {
+    fn validate_folder_exists(
+        &self,
+        database: &Database,
+        folder_id: Option<FolderId>,
+    ) -> Result<(), CommandError> {
         let Some(folder_id) = folder_id else {
             return Ok(());
         };
-        let exists = self
-            .database
+        let exists = database
             .connection()
             .query_row(
                 "SELECT 1 FROM folders WHERE id = ?1",
@@ -424,6 +426,12 @@ impl NoteRepository {
             return Err(CommandError::not_found("note folder does not exist"));
         }
         Ok(())
+    }
+
+    fn database(&self) -> Result<Database, CommandError> {
+        let database = Database::open(self.paths.database())?;
+        database.migrate()?;
+        Ok(database)
     }
 
     fn write_document(&self, document: &NoteDocument) -> Result<(), CommandError> {

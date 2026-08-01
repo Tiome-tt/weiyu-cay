@@ -26,6 +26,7 @@ pub struct SaveNoteInput {
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let root = app.path().app_data_dir()?;
     let paths = StoragePaths::open(root)?;
+    let _guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
     let database = Database::open(paths.database())?;
     database.migrate()?;
     database.close()?;
@@ -78,7 +79,5 @@ pub fn move_note(
 }
 
 fn repository(state: &NoteCommandState) -> Result<NoteRepository, CommandError> {
-    let database = Database::open(state.paths.database())?;
-    database.migrate()?;
-    Ok(NoteRepository::new(state.paths.clone(), database))
+    Ok(NoteRepository::new(state.paths.clone()))
 }

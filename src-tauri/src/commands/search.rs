@@ -5,7 +5,7 @@ use crate::{
     storage::{
         database::Database,
         paths::StoragePaths,
-        rebuild::rebuild_index_strict,
+        rebuild::rebuild_index_strict_locked,
         repository::{
             normalized_tag_value, normalized_tags, note_id_from_blob, DocumentWriter,
             NoteRepository,
@@ -50,7 +50,7 @@ impl SearchRepository {
     ) -> Result<NoteDocument, CommandError> {
         let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         let requested = normalized_tags(&tags)?;
-        let database = self.database()?;
+        let database = self.database_locked(&guard)?;
         let mut canonical = Vec::with_capacity(requested.len());
         {
             let mut statement = database
@@ -65,9 +65,10 @@ impl SearchRepository {
                 canonical.push(existing.unwrap_or(display));
             }
         }
+        drop(database);
         let repository = match self.writer {
-            Some(writer) => NoteRepository::new_with_writer(self.paths.clone(), database, writer),
-            None => NoteRepository::new(self.paths.clone(), database),
+            Some(writer) => NoteRepository::new_with_writer(self.paths.clone(), writer),
+            None => NoteRepository::new(self.paths.clone()),
         };
         let mut document = repository.load(note_id)?;
         if document.kind != NoteKind::Formal {
@@ -165,6 +166,16 @@ impl SearchRepository {
     }
 
     fn database(&self) -> Result<Database, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.database_locked(&guard)
+    }
+
+    fn database_locked(
+        &self,
+        guard: &crate::platform::IndexMutationLock,
+    ) -> Result<Database, CommandError> {
+        // Another process may have repaired the index before this caller acquired
+        // the mutation lock, so state must always be checked again under the guard.
         let database = Database::open(self.paths.database())?;
         database.migrate()?;
         if !search_index_needs_rebuild(database.connection())?
@@ -173,7 +184,7 @@ impl SearchRepository {
             return Ok(database);
         }
         drop(database);
-        rebuild_index_strict(&self.paths)?;
+        rebuild_index_strict_locked(&self.paths, guard)?;
         let rebuilt = Database::open(self.paths.database())?;
         rebuilt.migrate()?;
         if search_index_needs_rebuild(rebuilt.connection())? || rebuild_marker_exists(&self.paths)?

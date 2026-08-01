@@ -43,11 +43,20 @@ struct FolderRecord {
 }
 
 pub fn rebuild_index(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
-    rebuild_index_with_policy(paths, |_| Ok(()), RebuildPolicy::AllowPartial)
+    let guard = platform::IndexMutationLock::acquire(paths.root())?;
+    rebuild_index_with_policy_locked(paths, |_| Ok(()), RebuildPolicy::AllowPartial, &guard)
 }
 
 pub fn rebuild_index_strict(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
-    rebuild_index_with_policy(paths, |_| Ok(()), RebuildPolicy::RequireComplete)
+    let guard = platform::IndexMutationLock::acquire(paths.root())?;
+    rebuild_index_strict_locked(paths, &guard)
+}
+
+pub(crate) fn rebuild_index_strict_locked(
+    paths: &StoragePaths,
+    guard: &platform::IndexMutationLock,
+) -> Result<RebuildReport, CommandError> {
+    rebuild_index_with_policy_locked(paths, |_| Ok(()), RebuildPolicy::RequireComplete, guard)
 }
 
 #[doc(hidden)]
@@ -58,7 +67,8 @@ pub fn rebuild_index_with_hook<F>(
 where
     F: FnOnce(&Path) -> Result<(), CommandError>,
 {
-    rebuild_index_with_policy(paths, before_publish, RebuildPolicy::AllowPartial)
+    let guard = platform::IndexMutationLock::acquire(paths.root())?;
+    rebuild_index_with_policy_locked(paths, before_publish, RebuildPolicy::AllowPartial, &guard)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -67,15 +77,15 @@ enum RebuildPolicy {
     RequireComplete,
 }
 
-fn rebuild_index_with_policy<F>(
+fn rebuild_index_with_policy_locked<F>(
     paths: &StoragePaths,
     before_publish: F,
     policy: RebuildPolicy,
+    _guard: &platform::IndexMutationLock,
 ) -> Result<RebuildReport, CommandError>
 where
     F: FnOnce(&Path) -> Result<(), CommandError>,
 {
-    let _mutation_lock = platform::IndexMutationLock::acquire(paths.root())?;
     let root = platform::SafeDirectory::open(paths.root(), &[], false)?;
     // Validate the live database before creating or moving any rebuild artifact.
     root.regular_file_exists("index.sqlite")?;

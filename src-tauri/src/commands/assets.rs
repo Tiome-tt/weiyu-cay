@@ -3,7 +3,7 @@ use crate::{
     domain::{NoteKind, SaveImageInput, SavedImage},
     error::CommandError,
     platform::{NewFilePublishState, SafeDirectory},
-    storage::{database::Database, paths::StoragePaths, repository::NoteRepository},
+    storage::{paths::StoragePaths, repository::NoteRepository},
 };
 use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 use std::{
@@ -148,9 +148,7 @@ where
     S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
 {
     let validated = validate_image(&input.media_type, &input.bytes)?;
-    let database = Database::open(paths.database())?;
-    database.migrate()?;
-    let owner = NoteRepository::new(paths.clone(), database).load(input.note_id)?;
+    let owner = NoteRepository::new(paths.clone()).load(input.note_id)?;
     let collection = match owner.kind {
         NoteKind::Formal => "notes",
         NoteKind::Temporary => "temporary",

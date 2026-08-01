@@ -150,6 +150,63 @@ fn tag_update_is_durable_first_preserves_first_display_and_rebuilds_identically(
 }
 
 #[test]
+fn tag_update_repairs_a_dirty_index_without_reentering_the_mutation_lock() {
+    let mut store = seeded_store();
+    create_note(
+        &store,
+        NOTE_A,
+        "Dirty tags",
+        NoteKind::Formal,
+        vec!["before"],
+        "2026-07-31T08:00:00Z",
+    );
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute(
+            "UPDATE search_index_state SET needs_rebuild = 1 WHERE singleton = 1",
+            [],
+        )
+        .unwrap();
+    store.close_database();
+
+    let updated = SearchRepository::new(store.paths.clone())
+        .update_tags(note_id(NOTE_A), vec!["after".into()])
+        .unwrap();
+
+    assert_eq!(updated.tags, vec!["after"]);
+    assert_eq!(updated.revision, 1);
+    assert_eq!(
+        SearchRepository::new(store.paths.clone())
+            .search_tag("after", 20)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn tag_update_consumes_a_rebuild_marker_without_reentering_the_mutation_lock() {
+    let mut store = seeded_store();
+    create_note(
+        &store,
+        NOTE_A,
+        "Marked tags",
+        NoteKind::Formal,
+        vec!["before"],
+        "2026-07-31T08:00:00Z",
+    );
+    fs::write(store.paths.root().join("rebuild-needed.json"), b"{}").unwrap();
+    store.close_database();
+
+    let updated = SearchRepository::new(store.paths.clone())
+        .update_tags(note_id(NOTE_A), vec!["after-marker".into()])
+        .unwrap();
+
+    assert_eq!(updated.tags, vec!["after-marker"]);
+    assert!(!store.paths.root().join("rebuild-needed.json").exists());
+}
+
+#[test]
 fn injected_document_write_failure_leaves_file_and_tag_index_unchanged() {
     let store = seeded_store();
     create_note(
@@ -776,10 +833,7 @@ fn index_failure_keeps_durable_markdown_and_rebuild_repairs_text_search() {
         "CREATE TRIGGER reject_search_update BEFORE INSERT ON search_documents BEGIN SELECT RAISE(ABORT, 'injected index failure'); END;",
     ).unwrap();
     drop(connection);
-    let repository = NoteRepository::new(
-        store.paths.clone(),
-        simple_notes_lib::storage::database::Database::open(store.paths.database()).unwrap(),
-    );
+    let repository = NoteRepository::new(store.paths.clone());
     let mut document = repository.load(note_id(NOTE_A)).unwrap();
     document.markdown = "new repaired phrase".into();
     let error = repository.save(document, 0).unwrap_err();
@@ -865,22 +919,19 @@ fn create_note_with_markdown(
     markdown: &str,
     updated_at: &str,
 ) {
-    NoteRepository::new(
-        store.paths.clone(),
-        simple_notes_lib::storage::database::Database::open(store.paths.database()).unwrap(),
-    )
-    .create(NoteDocument {
-        id: note_id(id),
-        kind,
-        title: title.into(),
-        folder_id: (kind == NoteKind::Formal).then(|| folder_id(CHILD_FOLDER)),
-        tags: tags.into_iter().map(str::to_owned).collect(),
-        markdown: markdown.into(),
-        revision: 0,
-        created_at: "2026-07-31T08:00:00Z".into(),
-        updated_at: updated_at.into(),
-    })
-    .unwrap();
+    NoteRepository::new(store.paths.clone())
+        .create(NoteDocument {
+            id: note_id(id),
+            kind,
+            title: title.into(),
+            folder_id: (kind == NoteKind::Formal).then(|| folder_id(CHILD_FOLDER)),
+            tags: tags.into_iter().map(str::to_owned).collect(),
+            markdown: markdown.into(),
+            revision: 0,
+            created_at: "2026-07-31T08:00:00Z".into(),
+            updated_at: updated_at.into(),
+        })
+        .unwrap();
 }
 
 fn write_durable_note(

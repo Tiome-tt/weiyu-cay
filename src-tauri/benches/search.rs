@@ -19,7 +19,8 @@ impl SearchFixture {
         let paths = StoragePaths::open(root.path()).expect("open benchmark storage");
         let database = Database::open(paths.database()).expect("open benchmark index");
         database.migrate().expect("migrate benchmark index");
-        let repository = NoteRepository::new(paths.clone(), database);
+        database.close().expect("close benchmark setup index");
+        let repository = NoteRepository::new(paths.clone());
         let started = Instant::now();
         for index in 0..NOTE_COUNT {
             let id = NoteId::parse_str(&format!(

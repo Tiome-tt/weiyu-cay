@@ -6,7 +6,7 @@ use simple_notes_lib::{
     error::CommandErrorCode,
     storage::{database::Database, paths::StoragePaths},
 };
-use std::{path::Path, time::Duration};
+use std::{fs, path::Path, time::Duration};
 use support::TestStore;
 
 const NOTE_ID: &str = "019c0000-0000-7000-8000-000000000002";
@@ -31,6 +31,21 @@ fn index_mutation_lock_reports_busy_and_releases_with_handle_lifetime() {
         Duration::ZERO,
     )
     .unwrap();
+}
+
+#[test]
+fn index_mutation_lock_does_not_retry_a_permanent_open_error_as_contention() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    fs::create_dir(paths.root().join(".index-mutation.lock")).unwrap();
+
+    let error = simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+        paths.root(),
+        Duration::from_millis(100),
+    )
+    .unwrap_err();
+
+    assert_ne!(error.code(), CommandErrorCode::Conflict);
 }
 
 #[test]

@@ -32,12 +32,18 @@ const FILE_SHARE_DELETE: u32 = 0x0000_0004;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+const ERROR_SHARING_VIOLATION: i32 = 32;
+const ERROR_LOCK_VIOLATION: i32 = 33;
 const INDEX_LOCK: &str = ".index-mutation.lock";
 const INDEX_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const INDEX_LOCK_MAX_BACKOFF: Duration = Duration::from_millis(25);
 
 #[derive(Debug)]
 pub struct IndexMutationLock {
+    // Fields drop in declaration order: release the exclusive file before
+    // releasing the directory pin that prevents root replacement.
     _file: File,
+    _root: SafeDirectory,
 }
 
 impl IndexMutationLock {
@@ -47,18 +53,35 @@ impl IndexMutationLock {
 
     #[doc(hidden)]
     pub fn acquire_with_timeout(root: &Path, timeout: Duration) -> Result<Self, CommandError> {
+        Self::acquire_with_timeout_using(root, timeout, || {})
+    }
+
+    #[cfg(test)]
+    fn acquire_with_timeout_and_hook<F>(
+        root: &Path,
+        timeout: Duration,
+        after_pin: F,
+    ) -> Result<Self, CommandError>
+    where
+        F: FnOnce(),
+    {
+        Self::acquire_with_timeout_using(root, timeout, after_pin)
+    }
+
+    fn acquire_with_timeout_using<F>(
+        root: &Path,
+        timeout: Duration,
+        after_pin: F,
+    ) -> Result<Self, CommandError>
+    where
+        F: FnOnce(),
+    {
         let safe_root = SafeDirectory::open(root, &[], false)?;
-        drop(safe_root);
-        let path = root.join(INDEX_LOCK);
+        after_pin();
         let started = Instant::now();
+        let mut backoff = Duration::from_millis(1);
         loop {
-            let opened = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .share_mode(0)
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-                .open(&path);
+            let opened = safe_root.open_exclusive_lock(INDEX_LOCK);
             match opened {
                 Ok(file) => {
                     let attributes = file
@@ -74,17 +97,36 @@ impl IndexMutationLock {
                             "index mutation lock must not be a reparse point",
                         ));
                     }
-                    return Ok(Self { _file: file });
+                    return Ok(Self {
+                        _file: file,
+                        _root: safe_root,
+                    });
                 }
-                Err(_source) if started.elapsed() < timeout => thread::yield_now(),
-                Err(source) => {
+                Err(source) if is_lock_contention(&source) && started.elapsed() < timeout => {
+                    let remaining = timeout.saturating_sub(started.elapsed());
+                    thread::sleep(backoff.min(remaining));
+                    backoff = backoff.saturating_mul(2).min(INDEX_LOCK_MAX_BACKOFF);
+                }
+                Err(source) if is_lock_contention(&source) => {
                     return Err(CommandError::conflict(format!(
                         "index mutation lock is busy: {source}"
+                    )))
+                }
+                Err(source) => {
+                    return Err(CommandError::io(format!(
+                        "could not open index mutation lock: {source}"
                     )))
                 }
             }
         }
     }
+}
+
+fn is_lock_contention(source: &std::io::Error) -> bool {
+    matches!(
+        source.raw_os_error(),
+        Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
+    )
 }
 
 #[link(name = "kernel32")]
@@ -542,6 +584,7 @@ pub fn sync_parent(_parent: &Path) -> Result<(), CommandError> {
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct SafeDirectory {
     path: PathBuf,
     _pins: Vec<File>,
@@ -571,6 +614,19 @@ impl SafeDirectory {
     pub fn child_path(&self, name: &str) -> Result<PathBuf, CommandError> {
         validate_child_name(name)?;
         Ok(self.path.join(name))
+    }
+
+    fn open_exclusive_lock(&self, name: &str) -> std::io::Result<File> {
+        let path = self
+            .child_path(name)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
     }
 
     pub fn recover(&self, name: &str) -> Result<(), CommandError> {
@@ -853,6 +909,25 @@ mod tests {
     use crate::storage::atomic_file::PublishState;
     use std::{collections::VecDeque, fs, path::Path};
 
+    #[test]
+    fn index_mutation_lock_keeps_the_validated_root_pinned_while_opening_the_lock_file() {
+        let root = tempfile::tempdir().unwrap();
+        let moved = root.path().with_extension("moved");
+
+        let guard = super::IndexMutationLock::acquire_with_timeout_and_hook(
+            root.path(),
+            std::time::Duration::ZERO,
+            || {
+                assert!(fs::rename(root.path(), &moved).is_err());
+                assert!(root.path().is_dir());
+            },
+        )
+        .unwrap();
+
+        assert!(root.path().join(super::INDEX_LOCK).is_file());
+        drop(guard);
+    }
+
     struct FakeReplaceOperations {
         replace_results: VecDeque<Result<(), i32>>,
         move_results: VecDeque<Result<(), i32>>,
@@ -1009,17 +1084,12 @@ mod tests {
     fn rebuild_consumes_a_note_recovery_descriptor_before_scanning() {
         use crate::{
             domain::{NoteDocument, NoteId, NoteKind},
-            storage::{
-                database::Database, paths::StoragePaths, rebuild::rebuild_index,
-                repository::NoteRepository,
-            },
+            storage::{paths::StoragePaths, rebuild::rebuild_index, repository::NoteRepository},
         };
         let root = tempfile::tempdir().unwrap();
         let paths = StoragePaths::open(root.path()).unwrap();
-        let database = Database::open(paths.database()).unwrap();
-        database.migrate().unwrap();
         let id = NoteId::parse_str("019c0000-0000-7000-8000-000000000401").unwrap();
-        let repository = NoteRepository::new(paths.clone(), database);
+        let repository = NoteRepository::new(paths.clone());
         repository
             .create(NoteDocument {
                 id,
@@ -1180,12 +1250,10 @@ mod tests {
     fn repository_load_recovers_note_and_consumes_application_recovery_signal() {
         use crate::{
             domain::{NoteDocument, NoteId, NoteKind},
-            storage::{database::Database, paths::StoragePaths, repository::NoteRepository},
+            storage::{paths::StoragePaths, repository::NoteRepository},
         };
         let root = tempfile::tempdir().unwrap();
         let paths = StoragePaths::open(root.path()).unwrap();
-        let database = Database::open(paths.database()).unwrap();
-        database.migrate().unwrap();
         let id = NoteId::parse_str("019c0000-0000-7000-8000-000000000402").unwrap();
         let original = NoteDocument {
             id,
@@ -1198,13 +1266,10 @@ mod tests {
             created_at: "2026-07-31T00:00:00Z".to_owned(),
             updated_at: "2026-07-31T00:00:00Z".to_owned(),
         };
-        let repository = NoteRepository::new(paths.clone(), database);
+        let repository = NoteRepository::new(paths.clone());
         repository.create(original.clone()).unwrap();
-        let repository = NoteRepository::new_with_writer(
-            paths.clone(),
-            Database::open(paths.database()).unwrap(),
-            recovery_required_note_writer,
-        );
+        let repository =
+            NoteRepository::new_with_writer(paths.clone(), recovery_required_note_writer);
         let mut updated = original.clone();
         updated.markdown = "new interrupted body".to_owned();
         assert!(repository.save(updated, 0).is_err());

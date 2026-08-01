@@ -9,7 +9,6 @@ use simple_notes_lib::{
             atomic_replace, atomic_replace_contained_with_hook, atomic_replace_with_hook,
             PublishFailure, PublishState,
         },
-        database::Database,
         repository::NoteRepository,
     },
 };
@@ -165,7 +164,7 @@ fn successful_replace_publishes_all_new_bytes_and_leaves_no_owned_temp() {
 #[test]
 fn stale_revision_does_not_change_markdown_or_index_state() {
     let store = TestStore::new();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
     let created = repository.create(note("old body", 0)).unwrap();
     assert_eq!(created.revision, 0);
     let saved = repository.save(note("current body", 0), 0).unwrap();
@@ -193,7 +192,7 @@ fn database_failure_after_durable_content_keeps_markdown_and_marks_rebuild() {
     let store = TestStore::new();
     let path = document_path(&store);
     let database_path = store.paths.database().to_path_buf();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
     repository.create(note("old body", 0)).unwrap();
     let sabotage = Connection::open(&database_path).unwrap();
     sabotage.execute_batch("DROP TABLE note_tags;").unwrap();
@@ -218,7 +217,7 @@ fn failed_metadata_transaction_does_not_publish_partial_rows() {
         )
         .unwrap();
     drop(sabotage);
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
 
     assert_eq!(
         repository
@@ -247,7 +246,7 @@ fn failed_metadata_transaction_does_not_publish_partial_rows() {
 fn save_rejects_folder_changes_before_writing_or_advancing_the_index() {
     let store = TestStore::new();
     let database_path = store.paths.database().to_path_buf();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
     repository.create(note("old body", 0)).unwrap();
     let before = fs::read(document_path_from_root(store.root.path())).unwrap();
     let mut changed = note("new body", 0);
@@ -271,7 +270,7 @@ fn save_rejects_folder_changes_before_writing_or_advancing_the_index() {
 fn create_and_move_reject_missing_folders_before_durable_changes() {
     let store = TestStore::new();
     let database_path = store.paths.database().to_path_buf();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
     let mut create = note("never written", 0);
     create.folder_id = Some(FolderId::parse_str(FOLDER_ID).unwrap());
     assert_eq!(
@@ -323,13 +322,9 @@ fn publish_then_fail_sync(
 fn repository_marks_rebuild_and_keeps_old_index_when_publish_sync_fails() {
     let store = TestStore::new();
     let database_path = store.paths.database().to_path_buf();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
     repository.create(note("old body", 0)).unwrap();
-    let repository = NoteRepository::new_with_writer(
-        store.paths.clone(),
-        Database::open(&database_path).unwrap(),
-        publish_then_fail_sync,
-    );
+    let repository = NoteRepository::new_with_writer(store.paths.clone(), publish_then_fail_sync);
 
     let error = repository.save(note("published body", 0), 0).unwrap_err();
 
@@ -362,7 +357,7 @@ fn repository_create_load_list_and_move_preserve_identity_and_markdown() {
         )
         .unwrap();
     drop(connection);
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let repository = NoteRepository::new(store.paths.clone());
     let markdown = "# Exact body\n\n<custom keep=\"yes\">value</custom>\n";
 
     repository.create(note(markdown, 0)).unwrap();

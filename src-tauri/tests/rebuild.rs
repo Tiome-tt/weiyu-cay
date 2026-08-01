@@ -3,11 +3,11 @@ mod support;
 use rusqlite::Connection;
 use serde_json::json;
 use simple_notes_lib::{
+    commands::{folders::FolderRepository, search::SearchRepository},
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandError,
     storage::{
         atomic_file::{atomic_replace_contained, PublishResult},
-        database::Database,
         rebuild::{rebuild_index, rebuild_index_with_hook},
         repository::NoteRepository,
     },
@@ -17,6 +17,7 @@ use std::{
     path::Path,
     sync::{mpsc, Mutex, OnceLock},
     thread,
+    time::Duration,
 };
 use support::TestStore;
 
@@ -59,10 +60,7 @@ fn pausing_writer(
 #[test]
 fn rebuild_serializes_a_save_after_its_scan_and_indexes_the_new_revision() {
     let mut store = TestStore::new();
-    let repository = NoteRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    );
+    let repository = NoteRepository::new(store.paths.clone());
     repository
         .create(NoteDocument {
             id: NoteId::parse_str(NOTE_ID).unwrap(),
@@ -96,9 +94,7 @@ fn rebuild_serializes_a_save_after_its_scan_and_indexes_the_new_revision() {
     let save = thread::spawn(move || {
         let guard =
             simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
-        let database = Database::open(save_paths.database()).unwrap();
-        database.migrate().unwrap();
-        let repository = NoteRepository::new(save_paths, database);
+        let repository = NoteRepository::new(save_paths);
         let mut document = repository
             .load(NoteId::parse_str(NOTE_ID).unwrap())
             .unwrap();
@@ -130,12 +126,148 @@ fn rebuild_serializes_a_save_after_its_scan_and_indexes_the_new_revision() {
 }
 
 #[test]
+fn preconstructed_note_repository_does_not_hold_the_live_index_open_during_rebuild() {
+    let mut store = TestStore::new();
+    let setup = NoteRepository::new(store.paths.clone());
+    setup
+        .create(NoteDocument {
+            id: NoteId::parse_str(NOTE_ID).unwrap(),
+            kind: NoteKind::Formal,
+            title: "Preconstructed".into(),
+            folder_id: None,
+            tags: vec![],
+            markdown: "before".into(),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".into(),
+            updated_at: "2026-07-30T00:00:00Z".into(),
+        })
+        .unwrap();
+    let repository = NoteRepository::new(store.paths.clone());
+    store.close_database();
+
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let paths = store.paths.clone();
+    let rebuild = thread::spawn(move || {
+        rebuild_index_with_hook(&paths, |_| {
+            paused_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    paused_rx.recv().unwrap();
+
+    let save = thread::spawn(move || {
+        let mut document = repository
+            .load(NoteId::parse_str(NOTE_ID).unwrap())
+            .unwrap();
+        document.markdown = "after".into();
+        repository.save(document, 0)
+    });
+    release_tx.send(()).unwrap();
+
+    rebuild.join().unwrap().unwrap();
+    save.join().unwrap().unwrap();
+}
+
+#[test]
+fn preconstructed_folder_repository_does_not_hold_the_live_index_open_during_rebuild() {
+    let mut store = TestStore::new();
+    let repository = FolderRepository::new(store.paths.clone());
+    store.close_database();
+
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let paths = store.paths.clone();
+    let rebuild = thread::spawn(move || {
+        rebuild_index_with_hook(&paths, |_| {
+            paused_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    paused_rx.recv().unwrap();
+
+    let create = thread::spawn(move || {
+        repository.create(simple_notes_lib::domain::CreateFolderInput {
+            parent_id: None,
+            name: "After rebuild".into(),
+        })
+    });
+    release_tx.send(()).unwrap();
+
+    rebuild.join().unwrap().unwrap();
+    create.join().unwrap().unwrap();
+}
+
+#[test]
+fn public_index_readers_wait_until_rebuild_publication_releases_the_guard() {
+    let mut store = TestStore::new();
+    let setup = NoteRepository::new(store.paths.clone());
+    setup
+        .create(NoteDocument {
+            id: NoteId::parse_str(NOTE_ID).unwrap(),
+            kind: NoteKind::Formal,
+            title: "Reader".into(),
+            folder_id: None,
+            tags: vec![],
+            markdown: "reader content".into(),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".into(),
+            updated_at: "2026-07-30T00:00:00Z".into(),
+        })
+        .unwrap();
+    let notes = NoteRepository::new(store.paths.clone());
+    let folders = FolderRepository::new(store.paths.clone());
+    let search = SearchRepository::new(store.paths.clone());
+    store.close_database();
+
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let paths = store.paths.clone();
+    let rebuild = thread::spawn(move || {
+        rebuild_index_with_hook(&paths, |_| {
+            paused_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    paused_rx.recv().unwrap();
+
+    let (note_tx, note_rx) = mpsc::channel();
+    let note_reader = thread::spawn(move || note_tx.send(notes.list()).unwrap());
+    let (folder_tx, folder_rx) = mpsc::channel();
+    let folder_reader = thread::spawn(move || folder_tx.send(folders.list()).unwrap());
+    let (search_tx, search_rx) = mpsc::channel();
+    let search_reader =
+        thread::spawn(move || search_tx.send(search.search_text("reader", 20)).unwrap());
+
+    assert!(matches!(
+        note_rx.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(matches!(
+        folder_rx.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(matches!(
+        search_rx.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    release_tx.send(()).unwrap();
+    rebuild.join().unwrap().unwrap();
+    assert_eq!(note_rx.recv().unwrap().unwrap().len(), 1);
+    assert!(folder_rx.recv().unwrap().unwrap().is_empty());
+    assert_eq!(search_rx.recv().unwrap().unwrap().len(), 1);
+    note_reader.join().unwrap();
+    folder_reader.join().unwrap();
+    search_reader.join().unwrap();
+}
+
+#[test]
 fn failed_index_save_marker_survives_until_locked_rebuild_indexes_durable_content() {
     let mut store = TestStore::new();
-    let repository = NoteRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    );
+    let repository = NoteRepository::new(store.paths.clone());
     repository
         .create(NoteDocument {
             id: NoteId::parse_str(NOTE_ID).unwrap(),
@@ -163,9 +295,7 @@ fn failed_index_save_marker_survives_until_locked_rebuild_indexes_durable_conten
     let save = thread::spawn(move || {
         let guard =
             simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
-        let database = Database::open(save_paths.database()).unwrap();
-        database.migrate().unwrap();
-        let repository = NoteRepository::new_with_writer(save_paths, database, pausing_writer);
+        let repository = NoteRepository::new_with_writer(save_paths, pausing_writer);
         let mut document = repository
             .load(NoteId::parse_str(NOTE_ID).unwrap())
             .unwrap();
@@ -245,10 +375,7 @@ fn rebuild_recovers_folders_note_tags_search_and_unresolved_links_after_db_delet
         )
         .unwrap();
     drop(folder_connection);
-    let repository = NoteRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    );
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note());
     drop(repository);
     store.close_database();
@@ -280,10 +407,11 @@ fn rebuild_recovers_folders_note_tags_search_and_unresolved_links_after_db_delet
 
 #[test]
 fn malformed_frontmatter_is_isolated_without_blocking_valid_notes_or_rewriting_files() {
-    let store = TestStore::new();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
+    store.close_database();
     let broken_dir = store.paths.notes().join(BROKEN_ID);
     fs::create_dir_all(&broken_dir).unwrap();
     let broken = b"---\nid: not-a-uuid\ntitle: Broken\n---\nbody stays byte-identical\n";
@@ -301,10 +429,11 @@ fn malformed_frontmatter_is_isolated_without_blocking_valid_notes_or_rewriting_f
 
 #[test]
 fn a_second_rebuild_is_idempotent_and_does_not_change_markdown_bytes() {
-    let store = TestStore::new();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
+    store.close_database();
     let path = store.paths.notes().join(NOTE_ID).join("note.md");
     let before = fs::read(&path).unwrap();
 
@@ -322,10 +451,7 @@ fn a_second_rebuild_is_idempotent_and_does_not_change_markdown_bytes() {
 #[test]
 fn rebuild_replaces_a_database_with_missing_tables_and_keeps_a_recovery_copy() {
     let mut store = TestStore::new();
-    let repository = NoteRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    );
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
     let damaged = Connection::open(store.paths.database()).unwrap();
@@ -344,10 +470,7 @@ fn rebuild_replaces_a_database_with_missing_tables_and_keeps_a_recovery_copy() {
 #[test]
 fn rebuild_replaces_corrupt_database_bytes_and_keeps_a_recovery_copy() {
     let mut store = TestStore::new();
-    let repository = NoteRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    );
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
     store.close_database();
@@ -368,10 +491,11 @@ fn rebuild_replaces_corrupt_database_bytes_and_keeps_a_recovery_copy() {
 #[test]
 fn rebuild_keeps_marker_when_the_old_database_cannot_be_replaced_then_recovers() {
     use std::os::windows::fs::OpenOptionsExt;
-    let store = TestStore::new();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
+    store.close_database();
     fs::write(store.paths.root().join("rebuild-needed.json"), b"{}").unwrap();
     let lock = fs::OpenOptions::new()
         .read(true)
@@ -389,10 +513,11 @@ fn rebuild_keeps_marker_when_the_old_database_cannot_be_replaced_then_recovers()
 
 #[test]
 fn revision_too_large_for_sqlite_isolated_while_valid_sibling_recovers() {
-    let store = TestStore::new();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
+    store.close_database();
     let oversized_id = "019c0000-0000-7000-8000-000000000213";
     let valid = fs::read_to_string(store.paths.notes().join(NOTE_ID).join("note.md")).unwrap();
     let oversized = valid
@@ -418,10 +543,11 @@ fn revision_too_large_for_sqlite_isolated_while_valid_sibling_recovers() {
     ignore = "requires Windows Developer Mode file-symlink privilege; deterministic reparse rejection is covered by platform unit tests"
 )]
 fn rebuild_rejects_note_file_symlinks_without_reading_outside_content() {
-    let store = TestStore::new();
-    let repository = NoteRepository::new(store.paths.clone(), store.db);
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
     persist_at_revision(&repository, note_without_folder());
     drop(repository);
+    store.close_database();
     let outside = tempfile::NamedTempFile::new().unwrap();
     fs::write(outside.path(), b"outside sentinel").unwrap();
     let note_path = store.paths.notes().join(NOTE_ID).join("note.md");

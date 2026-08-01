@@ -5,7 +5,7 @@ use simple_notes_lib::{
     commands::folders::FolderRepository,
     domain::{CreateFolderInput, FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
-    storage::{database::Database, rebuild::rebuild_index, repository::NoteRepository},
+    storage::{rebuild::rebuild_index, repository::NoteRepository},
 };
 use support::TestStore;
 
@@ -20,10 +20,7 @@ fn folder_id(value: &str) -> FolderId {
 
 fn repository(store: &TestStore) -> FolderRepository {
     assert!(store.root.path().exists());
-    FolderRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    )
+    FolderRepository::new(store.paths.clone())
 }
 
 #[test]
@@ -195,10 +192,7 @@ fn folder_mutations_survive_a_full_index_rebuild_with_note_associations() {
             name: "初始子目录".to_owned(),
         })
         .unwrap();
-    let notes = NoteRepository::new(
-        store.paths.clone(),
-        Database::open(store.paths.database()).unwrap(),
-    );
+    let notes = NoteRepository::new(store.paths.clone());
     let note_id = NoteId::parse_str("019c0000-0000-7000-8000-000000000198").unwrap();
     notes
         .create(NoteDocument {
