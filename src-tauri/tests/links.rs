@@ -91,6 +91,140 @@ fn rebuild_recreates_link_rows_from_durable_markdown_after_database_deletion() {
 }
 
 #[test]
+fn rename_discovers_durable_links_when_their_index_rows_are_missing() {
+    let fixture = LinkFixture::linked_notes("Old");
+    Connection::open(fixture.store.paths.database())
+        .unwrap()
+        .execute(
+            "DELETE FROM note_links WHERE source_note_id=?1",
+            [blob(SOURCE_A)],
+        )
+        .unwrap();
+
+    let result = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, "New")
+        .unwrap();
+
+    assert_eq!(result.updated, 1);
+    assert!(result.failed_source_ids.is_empty());
+    assert!(fixture
+        .source_markdown()
+        .contains(&format!("[[New|{TARGET}]]")));
+}
+
+#[test]
+fn rename_reports_unreadable_durable_sources_and_retries_after_they_are_repaired() {
+    let fixture = LinkFixture::linked_notes("Old");
+    let malformed_id = note_id(SOURCE_B);
+    let missing_id = note_id(MISSING);
+    let malformed_dir = fixture.store.paths.notes().join(SOURCE_B);
+    let missing_dir = fixture.store.paths.notes().join(MISSING);
+    create_note(
+        &fixture.store,
+        malformed_id,
+        "Recovered",
+        &format!("[[Old|{TARGET}]]"),
+        "2026-07-30T08:03:00Z",
+    );
+    let valid_source = fs::read(malformed_dir.join("note.md")).unwrap();
+    Connection::open(fixture.store.paths.database())
+        .unwrap()
+        .execute(
+            "DELETE FROM note_links WHERE source_note_id=?1",
+            [blob(SOURCE_B)],
+        )
+        .unwrap();
+    fs::write(
+        malformed_dir.join("note.md"),
+        b"---\ninvalid: [\n---\nbroken",
+    )
+    .unwrap();
+    fs::create_dir(&missing_dir).unwrap();
+
+    let first = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, "New")
+        .unwrap();
+
+    assert_eq!(first.updated, 1);
+    assert_eq!(first.failed_source_ids, vec![malformed_id, missing_id]);
+
+    fs::write(malformed_dir.join("note.md"), valid_source).unwrap();
+    fs::remove_dir(&missing_dir).unwrap();
+
+    let retry = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, "New")
+        .unwrap();
+
+    assert_eq!(retry.updated, 1);
+    assert!(retry.failed_source_ids.is_empty());
+    assert!(NoteRepository::new(fixture.store.paths.clone())
+        .load(malformed_id)
+        .unwrap()
+        .markdown
+        .contains(&format!("[[New|{TARGET}]]")));
+}
+
+#[test]
+fn escaped_labels_round_trip_and_malformed_escapes_are_not_indexed() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Target",
+        "body",
+        "2026-07-30T08:00:00Z",
+    );
+    let markdown = format!(
+        r"[[plain title|{TARGET}]] [[a\\b\|c\[d\]😀|{TARGET}]] [[bad\q|{TARGET}]] [[trailing\|{TARGET}]]"
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "Source",
+        &markdown,
+        "2026-07-30T08:01:00Z",
+    );
+
+    let connection = Connection::open(store.paths.database()).unwrap();
+    let labels = connection
+        .prepare(
+            "SELECT visible_label FROM note_links WHERE source_note_id=?1 ORDER BY source_start",
+        )
+        .unwrap()
+        .query_map([blob(SOURCE_A)], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(labels, vec!["plain title", "a\\b|c[d]😀"]);
+}
+
+#[test]
+fn rename_escapes_special_characters_and_reindex_decodes_the_same_label() {
+    let fixture = LinkFixture::linked_notes("Old");
+    let title = r"a\b|c[d]😀";
+
+    let result = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, title)
+        .unwrap();
+
+    assert_eq!(result.updated, 1);
+    assert_eq!(
+        fixture.source_markdown(),
+        format!(r"before [[a\\b\|c\[d\]😀|{TARGET}]] after")
+    );
+    let stored_label: String = Connection::open(fixture.store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT visible_label FROM note_links WHERE source_note_id=?1",
+            [blob(SOURCE_A)],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_label, title);
+}
+
+#[test]
 fn resolve_returns_only_formal_non_deleted_notes() {
     let store = TestStore::new();
     create_note(
@@ -308,6 +442,31 @@ fn repair_waits_for_the_cross_process_mutation_lock_instead_of_reentering_it() {
         .unwrap()
         .unwrap();
     assert_eq!(result.updated, 1);
+    worker.join().unwrap();
+}
+
+#[test]
+fn public_load_waits_for_the_mutation_lock_before_reading_or_recovering() {
+    let fixture = LinkFixture::linked_notes("Old");
+    let paths = fixture.store.paths.clone();
+    let source_id = fixture.source_id;
+    let guard = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let (sent, received) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result = NoteRepository::new(paths).load(source_id);
+        sent.send(result).unwrap();
+    });
+
+    assert!(received.recv_timeout(Duration::from_millis(150)).is_err());
+    drop(guard);
+    assert_eq!(
+        received
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .id,
+        source_id
+    );
     worker.join().unwrap();
 }
 

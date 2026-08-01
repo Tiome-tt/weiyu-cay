@@ -96,7 +96,7 @@ fn rebuild_serializes_a_save_after_its_scan_and_indexes_the_new_revision() {
             simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
         let repository = NoteRepository::new(save_paths);
         let mut document = repository
-            .load(NoteId::parse_str(NOTE_ID).unwrap())
+            .load_locked(NoteId::parse_str(NOTE_ID).unwrap(), &guard)
             .unwrap();
         document.markdown = "after rebuild revision".into();
         let result = repository.save_locked(document, 0, &guard);
@@ -297,7 +297,7 @@ fn failed_index_save_marker_survives_until_locked_rebuild_indexes_durable_conten
             simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
         let repository = NoteRepository::new_with_writer(save_paths, pausing_writer);
         let mut document = repository
-            .load(NoteId::parse_str(NOTE_ID).unwrap())
+            .load_locked(NoteId::parse_str(NOTE_ID).unwrap(), &guard)
             .unwrap();
         document.markdown = "durable marker race content".into();
         repository.save_locked(document, 0, &guard)

@@ -148,6 +148,8 @@ The persisted internal-link syntax is:
 [[Visible note title|019c0000-0000-7000-8000-000000000000]]
 ```
 
+Within the persisted visible label, the reserved characters `\`, `|`, `[`, and `]` are escaped as `\\`, `\|`, `\[`, and `\]`. Parsing decodes these escapes for display, serialization and rename repair add them, unknown or incomplete escapes are malformed, and links using the original syntax without reserved characters remain compatible.
+
 CodeMirror renders the entire syntax as an atomic decorated node displaying only:
 
 ```md

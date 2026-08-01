@@ -70,7 +70,7 @@ impl SearchRepository {
             Some(writer) => NoteRepository::new_with_writer(self.paths.clone(), writer),
             None => NoteRepository::new(self.paths.clone()),
         };
-        let mut document = repository.load(note_id)?;
+        let mut document = repository.load_locked(note_id, &guard)?;
         if document.kind != NoteKind::Formal {
             return Err(CommandError::validation(
                 "temporary captures cannot receive formal note tags",

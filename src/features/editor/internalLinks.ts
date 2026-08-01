@@ -1,4 +1,4 @@
-import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
+import { EditorSelection, EditorState, StateEffect, type Extension } from '@codemirror/state'
 import { history, historyKeymap } from '@codemirror/commands'
 import {
   Decoration,
@@ -27,6 +27,9 @@ export interface InternalLinkExtensionOptions {
 }
 
 type Resolution = NoteSummary | null | undefined
+const escapableLabelCharacters = new Set(['\\', '|', '[', ']'])
+
+export const refreshInternalLinkContext = StateEffect.define<void>()
 
 export function parseInternalLinks(markdown: string): InternalLinkRange[] {
   const links: InternalLinkRange[] = []
@@ -34,23 +37,19 @@ export function parseInternalLinks(markdown: string): InternalLinkRange[] {
   while (cursor < markdown.length) {
     const from = markdown.indexOf('[[', cursor)
     if (from < 0) break
-    const close = markdown.indexOf(']]', from + 2)
-    if (close < 0) break
-    const nestedOpen = markdown.indexOf('[[', from + 2)
-    if (nestedOpen >= 0 && nestedOpen < close) {
-      cursor = nestedOpen
+    const candidate = scanInternalLinkCandidate(markdown, from)
+    if (candidate.kind === 'unterminated') break
+    if (candidate.kind === 'nested') {
+      cursor = candidate.from
       continue
     }
-    const to = close + 2
-    const content = markdown.slice(from + 2, close)
-    const separator = content.lastIndexOf('|')
-    if (separator > 0) {
-      const label = content.slice(0, separator)
-      const target = content.slice(separator + 1)
+    const to = candidate.close + 2
+    if (candidate.separators.length === 1) {
+      const separator = candidate.separators[0]
+      const label = unescapeInternalLinkLabel(markdown.slice(from + 2, separator))
+      const target = markdown.slice(separator + 1, candidate.close)
       if (
-        label.length > 0 &&
-        !label.includes('[') &&
-        !label.includes(']') &&
+        label !== null &&
         isCanonicalUuidV7(target)
       ) {
         links.push({ from, to, label, targetId: target as NoteId })
@@ -62,7 +61,15 @@ export function parseInternalLinks(markdown: string): InternalLinkRange[] {
 }
 
 export function serializeInternalLink(target: NoteSummary): string {
-  return `[[${target.title}|${target.id}]]`
+  return `[[${escapeInternalLinkLabel(target.title)}|${target.id}]]`
+}
+
+export function escapeInternalLinkLabel(label: string): string {
+  let escaped = ''
+  for (const character of label) {
+    escaped += escapableLabelCharacters.has(character) ? `\\${character}` : character
+  }
+  return escaped
 }
 
 export function displayInternalLinks(markdown: string): string {
@@ -87,9 +94,12 @@ export function internalLinkExtension(options: InternalLinkExtensionOptions): Ex
       }
 
       update(update: ViewUpdate) {
-        if (!update.docChanged) return
+        const contextChanged = update.transactions.some((transaction) =>
+          transaction.effects.some((effect) => effect.is(refreshInternalLinkContext)),
+        )
+        if (!update.docChanged && !contextChanged) return
         this.generation += 1
-        const retained = new Map(this.resolutions)
+        const retained = contextChanged ? undefined : new Map(this.resolutions)
         this.resolutions.clear()
         this.decorations = this.buildDecorations(retained)
       }
@@ -259,7 +269,7 @@ export function resolutionTitle(resolution: Resolution): string {
   return resolution === null ? 'Note is missing or deleted' : `Open ${resolution.title}`
 }
 
-export function markdownWithPreviewLinks(markdown: string): {
+export function markdownWithPreviewLinks(markdown: string, identity: string): {
   markdown: string
   links: InternalLinkRange[]
 } {
@@ -268,8 +278,46 @@ export function markdownWithPreviewLinks(markdown: string): {
   for (let index = links.length - 1; index >= 0; index -= 1) {
     const link = links[index]
     const label = link.label.replace(/([\\[\]])/g, '\\$1')
-    const replacement = `[\\[\\[${label}\\]\\]](#simple-notes-internal-${index})`
+    const replacement = `[\\[\\[${label}\\]\\]](#simple-notes-internal-${identity}-${index})`
     rendered = `${rendered.slice(0, link.from)}${replacement}${rendered.slice(link.to)}`
   }
   return { markdown: rendered, links }
+}
+
+function scanInternalLinkCandidate(markdown: string, from: number):
+  | { kind: 'complete'; close: number; separators: number[] }
+  | { kind: 'nested'; from: number }
+  | { kind: 'unterminated' } {
+  const separators: number[] = []
+  let index = from + 2
+  while (index < markdown.length) {
+    const character = markdown[index]
+    if (character === '\\') {
+      index += 2
+      continue
+    }
+    if (markdown.startsWith('[[', index)) return { kind: 'nested', from: index }
+    if (markdown.startsWith(']]', index)) return { kind: 'complete', close: index, separators }
+    if (character === '|') separators.push(index)
+    index += 1
+  }
+  return { kind: 'unterminated' }
+}
+
+function unescapeInternalLinkLabel(raw: string): string | null {
+  if (raw.length === 0) return null
+  let label = ''
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index]
+    if (character === '\\') {
+      const escaped = raw[index + 1]
+      if (escaped === undefined || !escapableLabelCharacters.has(escaped)) return null
+      label += escaped
+      index += 1
+      continue
+    }
+    if (escapableLabelCharacters.has(character)) return null
+    label += character
+  }
+  return label.length > 0 ? label : null
 }

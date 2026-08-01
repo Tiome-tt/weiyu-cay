@@ -23,6 +23,7 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 - Markdown and assets are durable content. SQLite is an index and metadata store that can be rebuilt from the files.
 - Every note and temporary capture has an immutable UUIDv7. A title, folder, or file-path change must never break an internal link.
 - The persisted internal-link form is `[[Visible title|UUID]]`; the editor displays only `[[Visible title]]` as an atomic decoration.
+- Inside a persisted link label, `\`, `|`, `[`, and `]` are escaped as `\\`, `\|`, `\[`, and `\]`; TypeScript and Rust must parse and serialize this grammar identically.
 - Closing a sticky-note window hides it; it does not delete the temporary capture.
 - Temporary captures are converted or deleted only from the main application's temporary inbox.
 - Sticky notes use one shared theme color, not per-note colors.

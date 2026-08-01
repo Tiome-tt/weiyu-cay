@@ -5,7 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } f
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { AssetPort, LinkPort } from '../../domain/ports'
 import { handleImagePaste, type ImagePasteResult } from './imagePaste'
-import { internalLinkExtension } from './internalLinks'
+import { internalLinkExtension, refreshInternalLinkContext } from './internalLinks'
 
 const pasteTokenAnnotation = Annotation.define<symbol>()
 
@@ -70,6 +70,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const linksRef = useRef(links)
   const linkCacheRef = useRef(linkCache)
   const onNavigateLinkRef = useRef(onNavigateLink)
+  const renderedLinkContextRef = useRef({ links, linkCache })
 
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
@@ -278,6 +279,13 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     if (view === null) return
     configureEditable(view)
   }, [readOnly])
+
+  useEffect(() => {
+    const previous = renderedLinkContextRef.current
+    renderedLinkContextRef.current = { links, linkCache }
+    if (previous.links === links && previous.linkCache === linkCache) return
+    viewRef.current?.dispatch({ effects: refreshInternalLinkContext.of(undefined) })
+  }, [linkCache, links])
 
   useEffect(() => {
     const view = viewRef.current

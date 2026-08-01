@@ -18,7 +18,10 @@ interface MarkdownPreviewProps {
 
 export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
   function MarkdownPreview({ markdown, onScroll, links, linkCache, onNavigateLink }, ref) {
-    const prepared = useMemo(() => markdownWithPreviewLinks(markdown), [markdown])
+    const prepared = useMemo(() => {
+      const identity = createPreviewIdentity()
+      return { ...markdownWithPreviewLinks(markdown, identity), identity }
+    }, [markdown])
     const html = useMemo(() => renderMarkdown(prepared.markdown), [prepared.markdown])
     const [resolutions, setResolutions] = useState<ReadonlyMap<NoteId, NoteSummary | null>>(new Map())
     const articleRef = useRef<HTMLElement | null>(null)
@@ -59,7 +62,9 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
       const host = articleRef.current
       if (host === null) return
       prepared.links.forEach((link, index) => {
-        const anchor = host.querySelector<HTMLAnchorElement>(`a[href="#simple-notes-internal-${index}"]`)
+        const anchor = host.querySelector<HTMLAnchorElement>(
+          `a[href="#simple-notes-internal-${prepared.identity}-${index}"]`,
+        )
         if (anchor === null) return
         const resolution = resolutions.has(link.targetId) ? resolutions.get(link.targetId) : undefined
         anchor.className = `internal-link internal-link--${resolutionClass(resolution)}`
@@ -72,7 +77,7 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
     const activate = (event: MouseEvent<HTMLElement>) => {
       const element = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a') : null
       const href = element?.getAttribute('href')
-      const match = href?.match(/^#simple-notes-internal-(\d+)$/)
+      const match = href?.match(new RegExp(`^#simple-notes-internal-${prepared.identity}-(\\d+)$`))
       if (match === undefined || match === null) return
       event.preventDefault()
       const link = prepared.links[Number(match[1])]
@@ -95,3 +100,9 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
     )
   },
 )
+
+function createPreviewIdentity(): string {
+  const random = new Uint32Array(4)
+  globalThis.crypto.getRandomValues(random)
+  return Array.from(random, (value) => value.toString(36)).join('-')
+}
