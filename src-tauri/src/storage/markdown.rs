@@ -80,15 +80,36 @@ fn append_space(output: &mut String) {
 fn update_html_suppression(suppressed: &mut Option<&str>, html: &str) {
     let lower = html.trim_start().to_ascii_lowercase();
     if let Some(tag) = *suppressed {
-        if lower.contains(&format!("</{tag}")) {
+        if contains_html_tag(&lower, &format!("</{tag}")) {
             *suppressed = None;
         }
         return;
     }
     for tag in ["script", "style"] {
-        if lower.starts_with(&format!("<{tag}")) && !lower.contains(&format!("</{tag}")) {
+        if starts_with_html_tag(&lower, &format!("<{tag}"))
+            && !lower.trim_end().ends_with("/>")
+            && !contains_html_tag(&lower, &format!("</{tag}"))
+        {
             *suppressed = Some(tag);
             return;
         }
     }
+}
+
+fn starts_with_html_tag(value: &str, prefix: &str) -> bool {
+    value
+        .strip_prefix(prefix)
+        .is_some_and(|rest| html_tag_boundary(rest.chars().next()))
+}
+
+fn contains_html_tag(value: &str, prefix: &str) -> bool {
+    value
+        .match_indices(prefix)
+        .any(|(index, _)| html_tag_boundary(value[index + prefix.len()..].chars().next()))
+}
+
+fn html_tag_boundary(next: Option<char>) -> bool {
+    next.is_none_or(|character| {
+        character == '>' || character == '/' || character.is_ascii_whitespace()
+    })
 }

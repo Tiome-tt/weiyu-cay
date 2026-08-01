@@ -43,13 +43,34 @@ struct FolderRecord {
 }
 
 pub fn rebuild_index(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
-    rebuild_index_with_hook(paths, |_| Ok(()))
+    rebuild_index_with_policy(paths, |_| Ok(()), RebuildPolicy::AllowPartial)
+}
+
+pub fn rebuild_index_strict(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
+    rebuild_index_with_policy(paths, |_| Ok(()), RebuildPolicy::RequireComplete)
 }
 
 #[doc(hidden)]
 pub fn rebuild_index_with_hook<F>(
     paths: &StoragePaths,
     before_publish: F,
+) -> Result<RebuildReport, CommandError>
+where
+    F: FnOnce(&Path) -> Result<(), CommandError>,
+{
+    rebuild_index_with_policy(paths, before_publish, RebuildPolicy::AllowPartial)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RebuildPolicy {
+    AllowPartial,
+    RequireComplete,
+}
+
+fn rebuild_index_with_policy<F>(
+    paths: &StoragePaths,
+    before_publish: F,
+    policy: RebuildPolicy,
 ) -> Result<RebuildReport, CommandError>
 where
     F: FnOnce(&Path) -> Result<(), CommandError>,
@@ -85,6 +106,14 @@ where
             true
         }
     });
+
+    if policy == RebuildPolicy::RequireComplete
+        && (report.notes_failed > 0 || !report.failures.is_empty())
+    {
+        return Err(CommandError::database(
+            "the index rebuild could not include every durable note",
+        ));
+    }
 
     report.notes_recovered = documents.len();
     report.folders_recovered = folders.len();

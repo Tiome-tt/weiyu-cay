@@ -346,7 +346,7 @@ fn plain_text_extraction_keeps_meaning_and_discards_markup_and_raw_html() {
 
 #[test]
 fn plain_text_extraction_preserves_inline_adjacency_and_suppresses_script_style_payloads() {
-    let markdown = "你**好**，前[链接](https://example.test)后\n\n<script>inline-secret</script><style>.hidden-secret { color: red }</style>\n\n| 列一 | 列二 |\n| --- | --- |\n| 单元 | 内容 |\n\n- [x] ~~完成~~";
+    let markdown = "你**好**，前[链接](https://example.test)后\n\n<script>inline-secret</script><style>.hidden-secret { color: red }</style>\n\n<script/>self-closing-visible <scripture>scripture-visible</scripture> <styleguide>styleguide-visible</styleguide>\n\n| 列一 | 列二 |\n| --- | --- |\n| 单元 | 内容 |\n\n- [x] ~~完成~~";
     let plain = plain_text_from_markdown(markdown);
     assert!(plain.contains("你好,前链接后"));
     assert!(plain.contains("列一 列二"));
@@ -354,6 +354,9 @@ fn plain_text_extraction_preserves_inline_adjacency_and_suppresses_script_style_
     assert!(plain.contains("完成"));
     assert!(!plain.contains("inline-secret"));
     assert!(!plain.contains("hidden-secret"));
+    assert!(plain.contains("self-closing-visible"));
+    assert!(plain.contains("scripture-visible"));
+    assert!(plain.contains("styleguide-visible"));
 }
 
 #[test]
@@ -373,6 +376,113 @@ fn text_index_and_query_share_nfkc_without_collapsing_internal_spaces() {
     assert_eq!(search.search_text("Ｃａｆé", 20).unwrap().len(), 1);
     assert_eq!(search.search_text("keeps  two", 20).unwrap().len(), 1);
     assert!(search.search_text("keeps two", 20).unwrap().is_empty());
+}
+
+#[test]
+fn text_query_trims_application_boundary_whitespace_and_preserves_it_inside() {
+    let store = seeded_store();
+    create_note_with_markdown(
+        &store,
+        NOTE_A,
+        "Boundary",
+        NoteKind::Formal,
+        vec![],
+        "A\u{feff}B\u{85}C D E",
+        "2026-07-31T08:00:00Z",
+    );
+    let search = SearchRepository::new(store.paths.clone());
+
+    assert_eq!(
+        search
+            .search_text("\u{feff}\u{85}\u{a0}\u{2003}Boundary\u{202f}", 20)
+            .unwrap()
+            .len(),
+        1,
+    );
+    assert_eq!(
+        search
+            .search_text("A\u{feff}B\u{85}C D E", 20)
+            .unwrap()
+            .len(),
+        1,
+    );
+}
+
+#[test]
+fn strict_upgrade_keeps_old_index_dirty_until_every_durable_note_can_rebuild() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = simple_notes_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
+    write_durable_note(&paths, NOTE_A, "Valid", "visible valid prose");
+    let broken_dir = paths.note_dir(note_id(NOTE_B), NoteKind::Formal).unwrap();
+    fs::create_dir_all(&broken_dir).unwrap();
+    fs::write(broken_dir.join("note.md"), "---\ninvalid: [\n---\nbroken").unwrap();
+    let connection = Connection::open(paths.database()).unwrap();
+    connection
+        .execute_batch(include_str!("../migrations/0001_initial.sql"))
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-07-31T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+    for (id, title) in [(NOTE_A, "Valid"), (NOTE_B, "Broken")] {
+        connection.execute(
+            "INSERT INTO notes(id, kind, title, folder_id, relative_path, created_at, updated_at, revision, deleted_at) VALUES (?1, 'formal', ?2, NULL, ?3, '2026-07-31T08:00:00Z', '2026-07-31T08:00:00Z', 0, NULL)",
+            params![folder_blob(id), title, format!("notes/{id}")],
+        ).unwrap();
+        connection
+            .execute(
+                "INSERT INTO search_documents(note_id, title, plain_text) VALUES (?1, ?2, ?3)",
+                params![folder_blob(id), title, format!("legacy raw {title}")],
+            )
+            .unwrap();
+    }
+    drop(connection);
+
+    assert!(SearchRepository::new(paths.clone())
+        .search_text("visible", 20)
+        .is_err());
+    assert!(!fs::read_dir(paths.root()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("rebuild-new")
+    }));
+    let old = Connection::open(paths.database()).unwrap();
+    assert_eq!(
+        old.query_row("SELECT COUNT(*) FROM notes", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        old.query_row(
+            "SELECT needs_rebuild FROM search_index_state WHERE singleton=1",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    drop(old);
+
+    write_durable_note(&paths, NOTE_B, "Repaired", "visible repaired prose");
+    let results = SearchRepository::new(paths.clone())
+        .search_text("visible", 20)
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        Connection::open(paths.database())
+            .unwrap()
+            .query_row(
+                "SELECT needs_rebuild FROM search_index_state WHERE singleton=1",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -771,6 +881,20 @@ fn create_note_with_markdown(
         updated_at: updated_at.into(),
     })
     .unwrap();
+}
+
+fn write_durable_note(
+    paths: &simple_notes_lib::storage::paths::StoragePaths,
+    id: &str,
+    title: &str,
+    markdown: &str,
+) {
+    let note_dir = paths.note_dir(note_id(id), NoteKind::Formal).unwrap();
+    fs::create_dir_all(&note_dir).unwrap();
+    fs::write(
+        note_dir.join("note.md"),
+        format!("---\nid: {id}\nkind: formal\ntitle: {title}\nfolderId: null\ntags: []\nrevision: 0\ncreatedAt: 2026-07-31T08:00:00Z\nupdatedAt: 2026-07-31T08:00:00Z\n---\n{markdown}"),
+    ).unwrap();
 }
 
 fn note_id(value: &str) -> NoteId {

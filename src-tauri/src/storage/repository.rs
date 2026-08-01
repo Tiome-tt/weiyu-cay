@@ -733,7 +733,7 @@ pub(crate) fn normalized_tag_value(
     Ok((display, normalized))
 }
 
-fn is_application_whitespace(character: char) -> bool {
+pub(crate) fn is_application_whitespace(character: char) -> bool {
     matches!(
         character as u32,
         0x09..=0x0d

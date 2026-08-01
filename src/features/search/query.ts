@@ -32,7 +32,7 @@ export function mergeTags(current: string[], additions: string[]): string[] {
 }
 
 export function parseSearchQuery(input: string): SearchQuery {
-  if (!input.normalize('NFKC').trimStart().startsWith('#')) {
+  if (!trimApplicationBoundary(input.normalize('NFKC')).startsWith('#')) {
     const text = normalizeTextQuery(input)
     if (text.kind === 'invalid') return text
     return { kind: 'text', value: text.value }
@@ -53,10 +53,21 @@ export function parseSearchQuery(input: string): SearchQuery {
 function normalizeTextQuery(input: string):
   | { kind: 'text'; value: string }
   | { kind: 'invalid'; reason: 'control-character' | 'too-long' } {
-  const value = input.normalize('NFKC').trim()
-  if (Array.from(value).some(isControl)) return { kind: 'invalid', reason: 'control-character' }
+  const value = trimApplicationBoundary(input.normalize('NFKC'))
+  if (Array.from(value).some((character) => isControl(character) && !isApplicationWhitespace(character))) {
+    return { kind: 'invalid', reason: 'control-character' }
+  }
   if (Array.from(value).length > MAX_SEARCH_QUERY_LENGTH) return { kind: 'invalid', reason: 'too-long' }
   return { kind: 'text', value }
+}
+
+function trimApplicationBoundary(input: string) {
+  const characters = Array.from(input)
+  let start = 0
+  let end = characters.length
+  while (start < end && isApplicationWhitespace(characters[start])) start += 1
+  while (end > start && isApplicationWhitespace(characters[end - 1])) end -= 1
+  return characters.slice(start, end).join('')
 }
 
 function normalizeDisplay(input: string) {

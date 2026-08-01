@@ -5,7 +5,7 @@ use crate::{
     storage::{
         database::Database,
         paths::StoragePaths,
-        rebuild::rebuild_index,
+        rebuild::rebuild_index_strict,
         repository::{
             normalized_tag_value, normalized_tags, note_id_from_blob, DocumentWriter,
             NoteRepository,
@@ -172,7 +172,7 @@ impl SearchRepository {
             return Ok(database);
         }
         drop(database);
-        rebuild_index(&self.paths)?;
+        rebuild_index_strict(&self.paths)?;
         let rebuilt = Database::open(self.paths.database())?;
         rebuilt.migrate()?;
         if search_index_needs_rebuild(rebuilt.connection())? || rebuild_marker_exists(&self.paths)?
@@ -336,11 +336,13 @@ fn search_short(
 
 fn normalize_text_query(input: &str) -> Result<String, CommandError> {
     let value: String = input.nfkc().collect();
-    let value = value.trim();
+    let value = value.trim_matches(crate::storage::repository::is_application_whitespace);
     if value.is_empty() {
         return Err(CommandError::validation("search query is empty"));
     }
-    if value.chars().any(char::is_control) {
+    if value.chars().any(|character| {
+        character.is_control() && !crate::storage::repository::is_application_whitespace(character)
+    }) {
         return Err(CommandError::validation(
             "search query contains a control character",
         ));

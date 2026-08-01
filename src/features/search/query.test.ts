@@ -45,6 +45,17 @@ describe('search query parsing', () => {
     })
   })
 
+  it('uses explicit application whitespace only at text-query boundaries', () => {
+    expect(parseSearchQuery('\uFEFF\u0085\u00A0\u2003Boundary\u202F')).toEqual({
+      kind: 'text',
+      value: 'Boundary',
+    })
+    expect(parseSearchQuery('A\uFEFFB\u0085C\u00A0D\u2003E')).toEqual({
+      kind: 'text',
+      value: 'A\uFEFFB\u0085C D E',
+    })
+  })
+
   it.each(['#', '#   '])('returns typed guidance for bare tag query %j', (input) => {
     expect(parseSearchQuery(input)).toEqual({ kind: 'invalid', reason: 'empty-tag' })
   })
