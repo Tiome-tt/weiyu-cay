@@ -18,6 +18,14 @@ pub struct TemporaryCommandState {
 }
 
 impl TemporaryCommandState {
+    pub(crate) fn paths(&self) -> &StoragePaths {
+        &self.paths
+    }
+
+    pub(crate) fn backend(&self) -> &TauriTemporaryWindowBackend {
+        &self.backend
+    }
+
     pub fn mark_lifecycle(&self, event: AppLifecycleEvent) {
         if crate::windows::sticky::reduce_shutdown_lifecycle(false, event) {
             self.backend.mark_shutting_down();

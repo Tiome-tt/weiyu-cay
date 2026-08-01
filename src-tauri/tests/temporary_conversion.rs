@@ -646,7 +646,9 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-update-note-tags",
             "allow-create-temporary",
             "allow-list-temporary",
-            "allow-show-temporary-window"
+            "allow-show-temporary-window",
+            "allow-get-capture-shortcut",
+            "allow-rebind-capture-shortcut"
         ])
     );
     assert_eq!(

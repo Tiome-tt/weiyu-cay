@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rebind-capture-shortcut"
+description = "Enables the rebind_capture_shortcut command without any pre-configured scope."
+commands.allow = ["rebind_capture_shortcut"]
+
+[[permission]]
+identifier = "deny-rebind-capture-shortcut"
+description = "Denies the rebind_capture_shortcut command without any pre-configured scope."
+commands.deny = ["rebind_capture_shortcut"]

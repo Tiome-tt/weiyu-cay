@@ -2,6 +2,7 @@ pub mod commands;
 pub mod domain;
 pub mod error;
 pub mod platform;
+pub mod shortcuts;
 pub mod storage;
 pub mod windows;
 
@@ -13,13 +14,24 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if let Some(state) =
+                        app.try_state::<commands::shortcuts::CaptureShortcutState>()
+                    {
+                        state.handle_plugin_event(app, event.state);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             commands::notes::setup(app)?;
             commands::folders::setup(app)?;
             commands::temporary::setup(app)?;
+            commands::shortcuts::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +58,8 @@ pub fn run() {
             commands::temporary::show_temporary_window,
             commands::temporary::hide_temporary_window,
             commands::temporary::set_temporary_always_on_top,
+            commands::shortcuts::get_capture_shortcut,
+            commands::shortcuts::rebind_capture_shortcut,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -62,6 +76,15 @@ pub fn run() {
             app_handle.try_state::<commands::temporary::TemporaryCommandState>(),
         ) {
             state.mark_lifecycle(lifecycle);
+        }
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            if let Some(state) = app_handle.try_state::<commands::shortcuts::CaptureShortcutState>()
+            {
+                state.shutdown();
+            }
         }
     });
 }

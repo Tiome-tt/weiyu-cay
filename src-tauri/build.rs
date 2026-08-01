@@ -24,6 +24,8 @@ fn main() {
             "show_temporary_window",
             "hide_temporary_window",
             "set_temporary_always_on_top",
+            "get_capture_shortcut",
+            "rebind_capture_shortcut",
         ]),
     ))
     .expect("failed to build Tauri application metadata")
