@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { App } from './App'
-import { fakeAssetPort, fakeFolderPort, fakeNotePort, fakeSearchPort, fakeSystemPort } from '../test/fakes'
+import { fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSystemPort } from '../test/fakes'
 
 describe('App', () => {
   it('renders the local library shell without authentication', () => {
@@ -14,6 +14,7 @@ describe('App', () => {
           system: fakeSystemPort(),
           assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
           search: fakeSearchPort(),
+          links: fakeLinkPort(),
         }}
       />,
     )

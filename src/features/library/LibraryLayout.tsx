@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import type { AssetPort, FolderPort, LibraryColumnPreference, SearchPort, SystemPort } from '../../domain/ports'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { SearchBox } from '../search/SearchBox'
@@ -13,14 +13,19 @@ interface LibraryLayoutProps {
   system: SystemPort
   assets?: AssetPort
   search?: SearchPort
+  links?: LinkPort
 }
 
-export function LibraryLayout({ notes, folders, system, assets, search }: LibraryLayoutProps) {
+export function LibraryLayout({ notes, folders, system, assets, search, links }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
   const navigationRequest = useRef(0)
+  const linkCache = useMemo(
+    () => new Map(library.notes.map((note) => [note.id, note] as const)),
+    [library.notes],
+  )
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -102,6 +107,9 @@ export function LibraryLayout({ notes, folders, system, assets, search }: Librar
             notes={notes}
             assets={assets}
             search={search}
+            links={links}
+            linkCache={linkCache}
+            onNavigateNote={(noteId) => navigateAfterSave(() => library.selectNote(noteId))}
             onDocumentAdopt={library.adoptDocument}
           />
         )}

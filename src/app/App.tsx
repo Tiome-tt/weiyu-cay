@@ -8,7 +8,7 @@ const defaultServices = createAppServices()
 export function App({ services = defaultServices }: { services?: AppServices }) {
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell">
-      <LibraryLayout notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} />
+      <LibraryLayout notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} />
     </main>
   )
 }

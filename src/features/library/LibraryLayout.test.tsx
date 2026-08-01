@@ -5,13 +5,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import { commandError } from '../../domain/errors'
-import { fakeFolderPort, fakeNotePort, fakeSystemPort, note } from '../../test/fakes'
+import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, note } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
 
 const folderA = '019c0000-0000-7000-8000-000000000021' as FolderId
 const folderB = '019c0000-0000-7000-8000-000000000022' as FolderId
 const noteA = '019c0000-0000-7000-8000-000000000031' as NoteId
 const noteB = '019c0000-0000-7000-8000-000000000032' as NoteId
+const noteC = '019c0000-0000-7000-8000-000000000033' as NoteId
 const folderRows: Folder[] = [
   { id: folderA, parentId: null, name: '项目 A', sortOrder: 0 },
   { id: folderB, parentId: null, name: '项目 B', sortOrder: 1 },
@@ -385,6 +386,65 @@ describe('LibraryLayout', () => {
     await waitFor(() => expect(saveNote).toHaveBeenCalledTimes(2))
     expect(saveNote.mock.calls[1][0]).toMatchObject({ id: noteB, markdown: 'B saved' })
     expect(saveNote).not.toHaveBeenCalledWith(expect.objectContaining({ id: noteB, markdown: 'A saved' }))
+  })
+
+  it('flushes source-link navigation and applies only the latest rapid target', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const documents = new Map<NoteId, NoteDocument>([
+      [noteA, { ...note(`[[Note B|${noteB}]] [[Note C|${noteC}]]`), id: noteA, title: 'Note A' }],
+      [noteB, { ...note('B'), id: noteB, title: 'Note B' }],
+      [noteC, { ...note('C'), id: noteC, title: 'Note C' }],
+    ])
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([
+        summary(noteA, 'Note A'),
+        summary(noteB, 'Note B'),
+        summary(noteC, 'Note C'),
+      ]),
+      loadNote: vi.fn(async (id) => documents.get(id)!),
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={notes}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+        links={fakeLinkPort()}
+      />,
+    )
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    const view = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))!
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: ' draft' } }))
+
+    await user.click(await screen.findByRole('link', { name: '[[Note B]]' }))
+    await user.click(screen.getByRole('link', { name: '[[Note C]]' }))
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+    expect(notes.loadNote).not.toHaveBeenCalledWith(noteB)
+    expect(notes.loadNote).not.toHaveBeenCalledWith(noteC)
+
+    await act(async () => pendingSave.resolve({ ...documents.get(noteA)!, markdown: documents.get(noteA)!.markdown + ' draft', revision: 2 }))
+    expect(await screen.findByRole('heading', { name: 'Note C' })).toBeVisible()
+    expect(notes.loadNote).not.toHaveBeenCalledWith(noteB)
+  })
+
+  it('uses the same stable link navigation in preview mode', async () => {
+    const documents = new Map<NoteId, NoteDocument>([
+      [noteA, { ...note(`[[Note B|${noteB}]]`), id: noteA, title: 'Note A' }],
+      [noteB, { ...note('B'), id: noteB, title: 'Note B' }],
+    ])
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote: vi.fn(async (id) => documents.get(id)!),
+    })
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} links={fakeLinkPort()} />,
+    )
+    await user.click(await screen.findByRole('button', { name: /Note A/ }))
+    await user.click(screen.getByRole('button', { name: '预览视图' }))
+    await user.click(await screen.findByRole('link', { name: '[[Note B]]' }))
+    expect(await screen.findByRole('heading', { name: 'Note B' })).toBeVisible()
   })
 
   it('does not let an earlier folder response overwrite the latest selection', async () => {

@@ -1,0 +1,342 @@
+mod support;
+
+use rusqlite::{params, Connection};
+use simple_notes_lib::{
+    domain::{NoteDocument, NoteId, NoteKind},
+    storage::{
+        atomic_file::{atomic_replace_contained, PublishFailure, PublishResult},
+        rebuild::rebuild_index,
+        repository::{DocumentWriter, LinkRepository, NoteRepository},
+    },
+};
+use std::{fs, sync::mpsc, thread, time::Duration};
+use support::{create_note, note_id, LinkFixture, TestStore};
+
+const TARGET: &str = "019c0000-0000-7000-8000-000000000022";
+const SOURCE_A: &str = "019c0000-0000-7000-8000-000000000021";
+const SOURCE_B: &str = "019c0000-0000-7000-8000-000000000023";
+const TEMP: &str = "019c0000-0000-7000-8000-000000000024";
+const MISSING: &str = "019c0000-0000-7000-8000-000000000025";
+
+#[test]
+fn save_indexes_only_exact_valid_links_with_byte_safe_unicode_ranges() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Target",
+        "target",
+        "2026-07-30T08:00:00Z",
+    );
+    let markdown = format!(
+        "😀 [[用户认证|{TARGET}]][[missing|{MISSING}]] [[ordinary]] [[bad|not-a-uuid]] [[nested [x]|{TARGET}]]"
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "Source",
+        &markdown,
+        "2026-07-30T08:01:00Z",
+    );
+
+    let connection = Connection::open(store.paths.database()).unwrap();
+    let mut statement = connection.prepare(
+        "SELECT target_note_id, visible_label, source_start, source_end FROM note_links WHERE source_note_id=?1 ORDER BY source_start",
+    ).unwrap();
+    let rows = statement
+        .query_map([blob(SOURCE_A)], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].1, "用户认证");
+    assert_eq!(
+        &markdown.as_bytes()[rows[0].2 as usize..rows[0].3 as usize],
+        format!("[[用户认证|{TARGET}]]").as_bytes()
+    );
+    assert_eq!(
+        rows[1].0,
+        blob(MISSING),
+        "valid missing targets remain indexable and unresolved"
+    );
+}
+
+#[test]
+fn rebuild_recreates_link_rows_from_durable_markdown_after_database_deletion() {
+    let mut fixture = LinkFixture::linked_notes("Old title");
+    fixture.store.close_database();
+    fs::remove_file(fixture.store.paths.database()).unwrap();
+
+    rebuild_index(&fixture.store.paths).unwrap();
+
+    let connection = Connection::open(fixture.store.paths.database()).unwrap();
+    let count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM note_links WHERE source_note_id=?1 AND target_note_id=?2",
+            params![blob(SOURCE_A), blob(TARGET)],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(fixture
+        .source_markdown()
+        .contains(&format!("[[Old title|{TARGET}]]")));
+}
+
+#[test]
+fn resolve_returns_only_formal_non_deleted_notes() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Formal",
+        "body",
+        "2026-07-30T08:00:00Z",
+    );
+    NoteRepository::new(store.paths.clone())
+        .create(NoteDocument {
+            id: note_id(TEMP),
+            kind: NoteKind::Temporary,
+            title: "Temporary".into(),
+            folder_id: None,
+            tags: vec![],
+            markdown: "body".into(),
+            revision: 0,
+            created_at: "2026-07-30T08:00:00Z".into(),
+            updated_at: "2026-07-30T08:00:00Z".into(),
+        })
+        .unwrap();
+    let links = LinkRepository::new(store.paths.clone());
+    assert_eq!(
+        links.resolve(note_id(TARGET)).unwrap().unwrap().title,
+        "Formal"
+    );
+    assert!(links.resolve(note_id(TEMP)).unwrap().is_none());
+    assert!(links.resolve(note_id(MISSING)).unwrap().is_none());
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute(
+            "UPDATE notes SET deleted_at='2026-07-30T09:00:00Z' WHERE id=?1",
+            [blob(TARGET)],
+        )
+        .unwrap();
+    assert!(links.resolve(note_id(TARGET)).unwrap().is_none());
+}
+
+#[test]
+fn backlinks_deduplicate_sources_and_order_by_newest_then_title_then_id() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Target",
+        "self",
+        "2026-07-30T08:00:00Z",
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "Zulu",
+        &format!("[[one|{TARGET}]] and [[two|{TARGET}]]"),
+        "2026-07-30T09:00:00Z",
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_B),
+        "Alpha",
+        &format!("[[target|{TARGET}]]"),
+        "2026-07-30T09:00:00Z",
+    );
+    let results = LinkRepository::new(store.paths.clone())
+        .backlinks(note_id(TARGET))
+        .unwrap();
+    assert_eq!(
+        results.iter().map(|item| item.id).collect::<Vec<_>>(),
+        vec![note_id(SOURCE_B), note_id(SOURCE_A)]
+    );
+    assert_eq!(results[0].excerpt, format!("[[target|{TARGET}]]"));
+}
+
+#[test]
+fn rename_updates_all_matching_labels_once_per_source_without_changing_ids_or_other_bytes() {
+    let fixture = LinkFixture::linked_notes("Old title");
+    let repository = NoteRepository::new(fixture.store.paths.clone());
+    let mut source = repository.load(fixture.source_id).unwrap();
+    source.markdown =
+        format!("前😀 [[Old title|{TARGET}]] middle [[stale|{TARGET}]] [[other|{MISSING}]] 后");
+    repository.save(source, 0).unwrap();
+    let mut target = repository.load(fixture.target_id).unwrap();
+    target.markdown = format!("self [[Old title|{TARGET}]]");
+    repository.save(target, 0).unwrap();
+
+    let result = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, "新的标题😀")
+        .unwrap();
+
+    assert_eq!(result.updated, 2);
+    assert!(result.failed_source_ids.is_empty());
+    assert_eq!(
+        repository.load(fixture.source_id).unwrap().markdown,
+        format!(
+            "前😀 [[新的标题😀|{TARGET}]] middle [[新的标题😀|{TARGET}]] [[other|{MISSING}]] 后"
+        )
+    );
+    assert_eq!(
+        repository.load(fixture.target_id).unwrap().markdown,
+        format!("self [[新的标题😀|{TARGET}]]")
+    );
+}
+
+#[test]
+fn per_source_write_failure_is_partial_deterministic_and_retry_repairs_only_the_remaining_source() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Target",
+        "body",
+        "2026-07-30T08:00:00Z",
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "A",
+        &format!("left [[Old|{TARGET}]]"),
+        "2026-07-30T08:01:00Z",
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_B),
+        "B",
+        &format!("right [[Old|{TARGET}]]"),
+        "2026-07-30T08:02:00Z",
+    );
+
+    let result =
+        LinkRepository::new_with_writer(store.paths.clone(), fail_source_b as DocumentWriter)
+            .rename_target_labels(note_id(TARGET), "New")
+            .unwrap();
+    assert_eq!(result.updated, 1);
+    assert_eq!(result.failed_source_ids, vec![note_id(SOURCE_B)]);
+    assert!(NoteRepository::new(store.paths.clone())
+        .load(note_id(SOURCE_A))
+        .unwrap()
+        .markdown
+        .contains("[[New|"));
+    assert!(NoteRepository::new(store.paths.clone())
+        .load(note_id(SOURCE_B))
+        .unwrap()
+        .markdown
+        .contains("[[Old|"));
+
+    let retry = LinkRepository::new(store.paths.clone())
+        .rename_target_labels(note_id(TARGET), "New")
+        .unwrap();
+    assert_eq!(retry.updated, 1);
+    assert!(retry.failed_source_ids.is_empty());
+    assert!(NoteRepository::new(store.paths.clone())
+        .load(note_id(SOURCE_A))
+        .unwrap()
+        .markdown
+        .contains("[[New|"));
+    assert!(NoteRepository::new(store.paths.clone())
+        .load(note_id(SOURCE_B))
+        .unwrap()
+        .markdown
+        .contains("[[New|"));
+}
+
+#[test]
+fn index_failure_after_durable_repair_is_reported_and_retry_reindexes_current_markdown() {
+    let fixture = LinkFixture::linked_notes("Old");
+    Connection::open(fixture.store.paths.database()).unwrap().execute_batch(&format!(
+        "CREATE TRIGGER fail_link_reindex BEFORE INSERT ON note_links WHEN hex(NEW.source_note_id)=upper('{}') BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        SOURCE_A.replace('-', "")
+    )).unwrap();
+    let first = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, "New")
+        .unwrap();
+    assert_eq!(first.updated, 0);
+    assert_eq!(first.failed_source_ids, vec![fixture.source_id]);
+    assert!(
+        fixture.source_markdown().contains("[[New|"),
+        "durable publication happened before index failure"
+    );
+    Connection::open(fixture.store.paths.database())
+        .unwrap()
+        .execute("DROP TRIGGER fail_link_reindex", [])
+        .unwrap();
+
+    let retry = LinkRepository::new(fixture.store.paths.clone())
+        .rename_target_labels(fixture.target_id, "New")
+        .unwrap();
+    assert_eq!(retry.updated, 0);
+    assert!(retry.failed_source_ids.is_empty());
+    let label: String = Connection::open(fixture.store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT visible_label FROM note_links WHERE source_note_id=?1",
+            [blob(SOURCE_A)],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(label, "New");
+}
+
+#[test]
+fn repair_waits_for_the_cross_process_mutation_lock_instead_of_reentering_it() {
+    let fixture = LinkFixture::linked_notes("Old");
+    let paths = fixture.store.paths.clone();
+    let target = fixture.target_id;
+    let guard = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let (sent, received) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result = LinkRepository::new(paths).rename_target_labels(target, "New");
+        sent.send(result).unwrap();
+    });
+    assert!(received.recv_timeout(Duration::from_millis(150)).is_err());
+    drop(guard);
+    let result = received
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.updated, 1);
+    worker.join().unwrap();
+}
+
+fn blob(value: &str) -> Vec<u8> {
+    uuid::Uuid::parse_str(value).unwrap().as_bytes().to_vec()
+}
+
+fn fail_source_b(
+    paths: &simple_notes_lib::storage::paths::StoragePaths,
+    id: NoteId,
+    kind: NoteKind,
+    bytes: &[u8],
+) -> PublishResult {
+    if id == note_id(SOURCE_B) {
+        return Err(PublishFailure::not_published(
+            simple_notes_lib::error::CommandError::io("injected source write failure"),
+        ));
+    }
+    let id_string = id.to_string();
+    atomic_replace_contained(
+        paths.root(),
+        &[
+            match kind {
+                NoteKind::Formal => "notes",
+                NoteKind::Temporary => "temporary",
+            },
+            id_string.as_str(),
+        ],
+        "note.md",
+        bytes,
+    )
+}

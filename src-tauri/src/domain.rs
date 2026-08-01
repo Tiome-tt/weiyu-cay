@@ -106,6 +106,13 @@ pub struct NoteSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LinkRepairResult {
+    pub updated: usize,
+    pub failed_source_ids: Vec<NoteId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: FolderId,
     pub parent_id: Option<FolderId>,

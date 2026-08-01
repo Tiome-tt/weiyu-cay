@@ -2,9 +2,10 @@ import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
 import { Annotation, Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
-import type { NoteId } from '../../domain/model'
-import type { AssetPort } from '../../domain/ports'
+import type { NoteId, NoteSummary } from '../../domain/model'
+import type { AssetPort, LinkPort } from '../../domain/ports'
 import { handleImagePaste, type ImagePasteResult } from './imagePaste'
+import { internalLinkExtension } from './internalLinks'
 
 const pasteTokenAnnotation = Annotation.define<symbol>()
 
@@ -17,6 +18,9 @@ interface MarkdownSourceProps {
   onScroll?(scrollTop: number): void
   onScrollElement?(element: HTMLElement | null): void
   readOnly?: boolean
+  links?: Pick<LinkPort, 'resolve'>
+  linkCache?: ReadonlyMap<NoteId, NoteSummary>
+  onNavigateLink?(noteId: NoteId): void
 }
 
 export interface MarkdownSourceHandle {
@@ -44,6 +48,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   onScroll,
   onScrollElement,
   readOnly = false,
+  links,
+  linkCache,
+  onNavigateLink,
 }: MarkdownSourceProps, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -60,6 +67,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const pendingPastesRef = useRef(new Map<symbol, PendingPaste>())
   const authorizedPasteTokensRef = useRef(new Set<symbol>())
   const editableCompartmentRef = useRef(new Compartment())
+  const linksRef = useRef(links)
+  const linkCacheRef = useRef(linkCache)
+  const onNavigateLinkRef = useRef(onNavigateLink)
 
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
@@ -68,6 +78,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   assetsRef.current = assets
   onImageErrorRef.current = onImageError
   readOnlyRef.current = readOnly
+  linksRef.current = links
+  linkCacheRef.current = linkCache
+  onNavigateLinkRef.current = onNavigateLink
 
   onChangeRef.current = onChange
   onScrollRef.current = onScroll
@@ -151,6 +164,13 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       doc: markdown,
       extensions: [
         markdownLanguage(),
+        ...(links
+          ? [internalLinkExtension({
+              links: { resolve: (id) => linksRef.current?.resolve(id) ?? Promise.resolve(null) },
+              getCached: (id) => linkCacheRef.current?.get(id),
+              onNavigate: (id) => onNavigateLinkRef.current?.(id),
+            })]
+          : []),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({
           'aria-label': 'Markdown source',

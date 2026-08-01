@@ -7,9 +7,10 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import type { EditorMode, NoteDocument } from '../../domain/model'
-import type { AssetPort, NotePort, SearchPort } from '../../domain/ports'
+import type { EditorMode, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
+import type { AssetPort, LinkPort, NotePort, SearchPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
+import { Backlinks } from './Backlinks'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
@@ -21,6 +22,9 @@ interface EditorPaneProps {
   search?: SearchPort
   onDocumentAdopt?: (document: NoteDocument) => void
   autosaveDelayMs?: number
+  links?: LinkPort
+  linkCache?: ReadonlyMap<NoteId, NoteSummary>
+  onNavigateNote?(noteId: NoteId): void | Promise<void>
 }
 
 export interface EditorPaneHandle {
@@ -38,7 +42,17 @@ const maximumSplitPercent = 75
 const defaultSplitPercent = 50
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { document, notes, assets, search, onDocumentAdopt, autosaveDelayMs },
+  {
+    document,
+    notes,
+    assets,
+    search,
+    links,
+    linkCache,
+    onNavigateNote,
+    onDocumentAdopt,
+    autosaveDelayMs,
+  },
   ref,
 ) {
   const [mode, setMode] = useState<EditorMode>('source')
@@ -165,6 +179,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
               sourceScrollRef.current = element
             }}
             readOnly={tagTransactionActive}
+            links={links}
+            linkCache={linkCache}
+            onNavigateLink={(noteId) => void onNavigateNote?.(noteId)}
           />
         </div>
         <div
@@ -195,9 +212,15 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             ref={previewRef}
             markdown={autosave.markdown}
             onScroll={syncPreviewToSource}
+            links={links}
+            linkCache={linkCache}
+            onNavigateLink={(noteId) => void onNavigateNote?.(noteId)}
           />
         </div>
       </div>
+      {links && onNavigateNote && (
+        <Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} />
+      )}
     </div>
   )
 })

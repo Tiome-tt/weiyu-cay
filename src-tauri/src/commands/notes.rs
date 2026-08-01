@@ -1,7 +1,11 @@
 use crate::{
-    domain::{FolderId, NoteDocument, NoteId, NoteSummary},
+    domain::{FolderId, LinkRepairResult, NoteDocument, NoteId, NoteSummary},
     error::CommandError,
-    storage::{database::Database, paths::StoragePaths, repository::NoteRepository},
+    storage::{
+        database::Database,
+        paths::StoragePaths,
+        repository::{LinkRepository, NoteRepository},
+    },
 };
 use serde::Deserialize;
 use tauri::{Manager, State};
@@ -76,6 +80,31 @@ pub fn move_note(
 ) -> Result<NoteDocument, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
     repository(&state)?.move_note_locked(note_id, folder_id, &guard)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn resolve_link(
+    state: State<'_, NoteCommandState>,
+    note_id: NoteId,
+) -> Result<Option<NoteSummary>, CommandError> {
+    LinkRepository::new(state.paths.clone()).resolve(note_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn backlinks(
+    state: State<'_, NoteCommandState>,
+    note_id: NoteId,
+) -> Result<Vec<NoteSummary>, CommandError> {
+    LinkRepository::new(state.paths.clone()).backlinks(note_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn rename_target_labels(
+    state: State<'_, NoteCommandState>,
+    note_id: NoteId,
+    title: String,
+) -> Result<LinkRepairResult, CommandError> {
+    LinkRepository::new(state.paths.clone()).rename_target_labels(note_id, &title)
 }
 
 fn repository(state: &NoteCommandState) -> Result<NoteRepository, CommandError> {

@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TauriClient } from './client'
+import { createTauriPorts } from './ports'
+import type { NoteId } from '../../domain/model'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
@@ -48,5 +50,24 @@ describe('TauriClient', () => {
       code: 'unsupported',
       message: 'This operation is not supported.',
     })
+  })
+
+  it('maps stable link ports to the narrow Tauri command boundary', async () => {
+    const target = '019c0000-0000-7000-8000-000000000002' as NoteId
+    invokeMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ updated: 0, failedSourceIds: [] })
+    const { links } = createTauriPorts()
+
+    await links.resolve(target)
+    await links.backlinks(target)
+    await links.renameTargetLabels(target, 'New title')
+
+    expect(invokeMock.mock.calls).toEqual([
+      ['resolve_link', { noteId: target }],
+      ['backlinks', { noteId: target }],
+      ['rename_target_labels', { noteId: target, title: 'New title' }],
+    ])
   })
 })

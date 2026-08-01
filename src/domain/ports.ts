@@ -43,6 +43,15 @@ export interface SearchPort {
   updateTags(noteId: NoteId, tags: string[]): Promise<string[]>
 }
 
+export interface LinkPort {
+  resolve(noteId: NoteId): Promise<NoteSummary | null>
+  backlinks(noteId: NoteId): Promise<NoteSummary[]>
+  renameTargetLabels(
+    noteId: NoteId,
+    title: string,
+  ): Promise<{ updated: number; failedSourceIds: NoteId[] }>
+}
+
 export interface SystemPort {
   getWindowPreference<Key extends keyof WindowPreferenceMap>(
     key: Key,

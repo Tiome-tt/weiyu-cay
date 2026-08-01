@@ -1,6 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, FolderPort, SearchPort, SystemPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -70,6 +70,25 @@ class TauriSearchPort implements SearchPort {
   }
 }
 
+class TauriLinkPort implements LinkPort {
+  constructor(private readonly client: TauriClient) {}
+
+  resolve(noteId: NoteId) {
+    return this.client.invoke<NoteSummary | null>('resolve_link', { noteId })
+  }
+
+  backlinks(noteId: NoteId) {
+    return this.client.invoke<NoteSummary[]>('backlinks', { noteId })
+  }
+
+  renameTargetLabels(noteId: NoteId, title: string) {
+    return this.client.invoke<Awaited<ReturnType<LinkPort['renameTargetLabels']>>>(
+      'rename_target_labels',
+      { noteId, title },
+    )
+  }
+}
+
 class TauriSystemPort implements SystemPort {
   private readonly preferences = new LazyStore('settings.json', { autoSave: true })
 
@@ -97,6 +116,7 @@ export function createTauriPorts(): {
   system: SystemPort
   assets: AssetPort
   search: SearchPort
+  links: LinkPort
 } {
   const client = new TauriClient()
   return {
@@ -105,5 +125,6 @@ export function createTauriPorts(): {
     system: new TauriSystemPort(client),
     assets: new TauriAssetPort(client),
     search: new TauriSearchPort(client),
+    links: new TauriLinkPort(client),
   }
 }

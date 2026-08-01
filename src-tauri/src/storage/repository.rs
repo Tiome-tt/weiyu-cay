@@ -1,5 +1,5 @@
 use crate::{
-    domain::{FolderId, NoteDocument, NoteId, NoteKind, NoteSummary},
+    domain::{FolderId, LinkRepairResult, NoteDocument, NoteId, NoteKind, NoteSummary},
     error::CommandError,
     storage::{
         atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -20,6 +20,11 @@ const RECOVERY_MARKER: &str = "recovery-needed.json";
 const NOTE_RECOVERY_DESCRIPTOR: &str = ".note.md.replace-recovery.json";
 
 pub struct NoteRepository {
+    paths: StoragePaths,
+    writer: DocumentWriter,
+}
+
+pub struct LinkRepository {
     paths: StoragePaths,
     writer: DocumentWriter,
 }
@@ -468,6 +473,164 @@ impl NoteRepository {
     }
 }
 
+impl LinkRepository {
+    pub fn new(paths: StoragePaths) -> Self {
+        Self {
+            paths,
+            writer: default_document_writer,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn new_with_writer(paths: StoragePaths, writer: DocumentWriter) -> Self {
+        Self { paths, writer }
+    }
+
+    pub fn resolve(&self, id: NoteId) -> Result<Option<NoteSummary>, CommandError> {
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = open_database(&self.paths)?;
+        let exists = database
+            .connection()
+            .query_row(
+                "SELECT 1 FROM notes WHERE id=?1 AND kind='formal' AND deleted_at IS NULL",
+                [note_id_blob(id)],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(database_error("could not resolve note link"))?
+            .is_some();
+        drop(database);
+        if !exists {
+            return Ok(None);
+        }
+        let document = NoteRepository::new(self.paths.clone()).load(id)?;
+        if document.kind != NoteKind::Formal {
+            return Ok(None);
+        }
+        Ok(Some(note_summary(document)))
+    }
+
+    pub fn backlinks(&self, target_id: NoteId) -> Result<Vec<NoteSummary>, CommandError> {
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = open_database(&self.paths)?;
+        let ids = {
+            let mut statement = database
+                .connection()
+                .prepare(
+                    "SELECT DISTINCT notes.id FROM note_links \
+                     JOIN notes ON notes.id=note_links.source_note_id \
+                     WHERE note_links.target_note_id=?1 AND notes.kind='formal' AND notes.deleted_at IS NULL \
+                     ORDER BY notes.updated_at DESC, notes.title COLLATE NOCASE, notes.id",
+                )
+                .map_err(database_error("could not prepare backlinks"))?;
+            let rows = statement
+                .query_map([note_id_blob(target_id)], |row| row.get::<_, Vec<u8>>(0))
+                .map_err(database_error("could not query backlinks"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error("could not read backlinks"))?;
+            rows
+        };
+        drop(database);
+        let notes = NoteRepository::new(self.paths.clone());
+        ids.into_iter()
+            .map(|bytes| {
+                note_id_from_blob(&bytes)
+                    .and_then(|id| notes.load(id))
+                    .map(note_summary)
+            })
+            .collect()
+    }
+
+    pub fn rename_target_labels(
+        &self,
+        target_id: NoteId,
+        title: &str,
+    ) -> Result<LinkRepairResult, CommandError> {
+        validate_link_label(title)?;
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = open_database(&self.paths)?;
+        let source_ids = {
+            let mut statement = database
+                .connection()
+                .prepare(
+                    "SELECT DISTINCT source_note_id FROM note_links WHERE target_note_id=?1 ORDER BY source_note_id",
+                )
+                .map_err(database_error("could not prepare link label repair"))?;
+            let rows = statement
+                .query_map([note_id_blob(target_id)], |row| row.get::<_, Vec<u8>>(0))
+                .map_err(database_error("could not query link label repair"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error("could not read link label repair"))?;
+            rows
+        };
+        drop(database);
+
+        let notes = NoteRepository::new_with_writer(self.paths.clone(), self.writer);
+        let mut updated = 0;
+        let mut failed_source_ids = Vec::new();
+        for bytes in source_ids {
+            let source_id = note_id_from_blob(&bytes)?;
+            let result = self.repair_source(&notes, source_id, target_id, title, &guard);
+            match result {
+                Ok(true) => updated += 1,
+                Ok(false) => {}
+                Err(_) => failed_source_ids.push(source_id),
+            }
+        }
+        failed_source_ids.sort_by_key(ToString::to_string);
+        failed_source_ids.dedup();
+        Ok(LinkRepairResult {
+            updated,
+            failed_source_ids,
+        })
+    }
+
+    fn repair_source(
+        &self,
+        notes: &NoteRepository,
+        source_id: NoteId,
+        target_id: NoteId,
+        title: &str,
+        guard: &crate::platform::IndexMutationLock,
+    ) -> Result<bool, CommandError> {
+        let mut document = notes.load(source_id)?;
+        let (markdown, changed) = rewrite_target_labels(&document.markdown, target_id, title);
+        if changed {
+            let revision = document.revision;
+            document.markdown = markdown;
+            notes.save_locked(document, revision, guard)?;
+            return Ok(true);
+        }
+
+        // A previous attempt may have published Markdown before its index transaction failed.
+        // Reindexing the authoritative durable document makes that retry discoverable without
+        // rewriting the file or inflating the successful-rewrite count.
+        let database = open_database(&self.paths)?;
+        notes.persist_after_content(&database, &document)?;
+        Ok(false)
+    }
+}
+
+fn open_database(paths: &StoragePaths) -> Result<Database, CommandError> {
+    let database = Database::open(paths.database())?;
+    database.migrate()?;
+    Ok(database)
+}
+
+fn note_summary(document: NoteDocument) -> NoteSummary {
+    NoteSummary {
+        id: document.id,
+        kind: document.kind,
+        title: document.title,
+        folder_id: document.folder_id,
+        tags: document.tags,
+        revision: document.revision,
+        created_at: document.created_at,
+        updated_at: document.updated_at,
+        excerpt: document.markdown.chars().take(160).collect(),
+    }
+}
+
 fn default_document_writer(
     paths: &StoragePaths,
     id: NoteId,
@@ -662,9 +825,13 @@ pub(crate) fn parse_links(markdown: &str) -> Vec<ParsedLink> {
             break;
         };
         let end = content_start + relative_end + 2;
+        if let Some(relative_nested) = markdown[content_start..end - 2].find("[[") {
+            cursor = content_start + relative_nested;
+            continue;
+        }
         let content = &markdown[content_start..end - 2];
         if let Some((label, target)) = content.rsplit_once('|') {
-            if !label.is_empty() {
+            if !label.is_empty() && !label.contains(['[', ']']) {
                 if let Ok(target) = NoteId::parse_str(target) {
                     links.push(ParsedLink {
                         target,
@@ -678,6 +845,30 @@ pub(crate) fn parse_links(markdown: &str) -> Vec<ParsedLink> {
         cursor = end;
     }
     links
+}
+
+fn validate_link_label(label: &str) -> Result<(), CommandError> {
+    if label.is_empty() || label.contains(['[', ']']) {
+        return Err(CommandError::validation(
+            "note title cannot be represented as an internal-link label",
+        ));
+    }
+    Ok(())
+}
+
+fn rewrite_target_labels(markdown: &str, target_id: NoteId, title: &str) -> (String, bool) {
+    let matching = parse_links(markdown)
+        .into_iter()
+        .filter(|link| link.target == target_id && link.label != title)
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return (markdown.to_owned(), false);
+    }
+    let mut rewritten = markdown.to_owned();
+    for link in matching.into_iter().rev() {
+        rewritten.replace_range(link.start..link.end, &format!("[[{title}|{target_id}]]"));
+    }
+    (rewritten, true)
 }
 
 pub(crate) fn note_id_blob(id: NoteId) -> Vec<u8> {
