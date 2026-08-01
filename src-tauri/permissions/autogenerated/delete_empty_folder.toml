@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-empty-folder"
+description = "Enables the delete_empty_folder command without any pre-configured scope."
+commands.allow = ["delete_empty_folder"]
+
+[[permission]]
+identifier = "deny-delete-empty-folder"
+description = "Denies the delete_empty_folder command without any pre-configured scope."
+commands.deny = ["delete_empty_folder"]

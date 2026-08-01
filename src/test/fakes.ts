@@ -65,6 +65,11 @@ export const fakeLinkPort = (overrides: Partial<LinkPort> = {}): LinkPort => ({
 
 export const fakeTemporaryPort = (items: NoteDocument[]): TemporaryPort => ({
   create: vi.fn().mockResolvedValue(items[0]),
+  load: vi.fn().mockImplementation(async (noteId: NoteId) => {
+    const item = items.find((candidate) => candidate.id === noteId)
+    if (item === undefined) throw new Error('temporary capture not found')
+    return item
+  }),
   save: vi.fn().mockImplementation(async (document: NoteDocument) => document),
   list: vi.fn().mockResolvedValue(items),
 })

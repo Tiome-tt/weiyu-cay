@@ -1,3 +1,30 @@
 fn main() {
-    tauri_build::build()
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            "create_note",
+            "load_note",
+            "save_note",
+            "list_notes",
+            "move_note",
+            "resolve_link",
+            "backlinks",
+            "rename_target_labels",
+            "save_image",
+            "list_folders",
+            "create_folder",
+            "rename_folder",
+            "move_folder",
+            "delete_empty_folder",
+            "search_notes",
+            "update_note_tags",
+            "create_temporary",
+            "load_temporary",
+            "save_temporary",
+            "list_temporary",
+            "show_temporary_window",
+            "hide_temporary_window",
+            "set_temporary_always_on_top",
+        ]),
+    ))
+    .expect("failed to build Tauri application metadata")
 }

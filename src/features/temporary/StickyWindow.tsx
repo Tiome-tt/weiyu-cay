@@ -7,7 +7,7 @@ import { useAutosave, type SaveState } from '../editor/useAutosave'
 interface StickyWindowProps {
   note: NoteDocument
   temporary: Pick<TemporaryPort, 'save'>
-  windows: Pick<TemporaryWindowPort, 'hide' | 'setState' | 'startDragging' | 'onCloseRequested'>
+  windows: Pick<TemporaryWindowPort, 'hide' | 'setAlwaysOnTop' | 'startDragging' | 'onCloseRequested'>
   assets?: AssetPort
   themeColor?: string
   autosaveDelayMs?: number
@@ -58,7 +58,9 @@ export function StickyWindow({
     if (windows.onCloseRequested === undefined) return
     let unlisten: (() => void) | undefined
     let disposed = false
-    void windows.onCloseRequested(() => void hideAfterFlush()).then((stop) => {
+    void windows.onCloseRequested((payload) => {
+      if (shouldHandleTemporaryClose(note.id, { payload })) void hideAfterFlush()
+    }).then((stop) => {
       if (disposed) stop()
       else unlisten = stop
     })
@@ -71,11 +73,10 @@ export function StickyWindow({
   const togglePin = async () => {
     setWindowError(null)
     try {
-      const authoritative = await windows.setState({
-        ...windowState,
-        visible: true,
-        alwaysOnTop: !windowState.alwaysOnTop,
-      })
+      const authoritative = await windows.setAlwaysOnTop(
+        note.id,
+        !windowState.alwaysOnTop,
+      )
       setWindowState(authoritative)
     } catch {
       setWindowError('无法更新置顶状态。')
@@ -129,6 +130,13 @@ export function StickyWindow({
       </footer>
     </main>
   )
+}
+
+export function shouldHandleTemporaryClose(
+  noteId: NoteDocument['id'],
+  event: { payload: unknown },
+): boolean {
+  return event.payload === noteId
 }
 
 function StickySaveStatus({ state }: { state: SaveState }) {

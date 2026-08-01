@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-temporary-always-on-top"
+description = "Enables the set_temporary_always_on_top command without any pre-configured scope."
+commands.allow = ["set_temporary_always_on_top"]
+
+[[permission]]
+identifier = "deny-set-temporary-always-on-top"
+description = "Denies the set_temporary_always_on_top command without any pre-configured scope."
+commands.deny = ["set_temporary_always_on_top"]

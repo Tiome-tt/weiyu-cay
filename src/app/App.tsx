@@ -61,11 +61,10 @@ function StickyWindowEntry({ services, route }: { services: AppServices; route: 
       return
     }
     void services.temporary
-      .list()
-      .then((items) => {
+      .load(route.noteId)
+      .then((found) => {
         if (!active) return
-        const found = items.find((item) => item.id === route.noteId && item.kind === 'temporary')
-        if (found === undefined) setError(true)
+        if (found.id !== route.noteId || found.kind !== 'temporary') setError(true)
         else setNote(found)
       })
       .catch(() => active && setError(true))

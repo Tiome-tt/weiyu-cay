@@ -21,6 +21,192 @@ pub const MIN_WINDOW_HEIGHT: f64 = 180.0;
 pub const MAX_WINDOW_WIDTH: f64 = 2400.0;
 pub const MAX_WINDOW_HEIGHT: f64 = 1600.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporaryCommandOperation {
+    Create,
+    List,
+    Show,
+    Load,
+    Save,
+    Hide,
+    SetPin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppLifecycleEvent {
+    MainWindowCloseRequested,
+    ExitRequested,
+    Exit,
+}
+
+pub fn reduce_shutdown_lifecycle(current: bool, event: AppLifecycleEvent) -> bool {
+    current
+        || matches!(
+            event,
+            AppLifecycleEvent::ExitRequested | AppLifecycleEvent::Exit
+        )
+}
+
+pub fn authorize_temporary_caller(
+    caller_label: &str,
+    operation: TemporaryCommandOperation,
+    note_id: Option<NoteId>,
+) -> Result<(), CommandError> {
+    if matches!(
+        operation,
+        TemporaryCommandOperation::Create
+            | TemporaryCommandOperation::List
+            | TemporaryCommandOperation::Show
+    ) {
+        return if caller_label == "main" {
+            Ok(())
+        } else {
+            Err(CommandError::validation(
+                "this temporary operation requires the main window",
+            ))
+        };
+    }
+    let caller_note_id = parse_temporary_window_label(caller_label)?;
+    if note_id != Some(caller_note_id) {
+        return Err(CommandError::validation(
+            "temporary window may access only its matching capture",
+        ));
+    }
+    Ok(())
+}
+
+pub fn authorize_asset_caller(caller_label: &str, note_id: NoteId) -> Result<(), CommandError> {
+    if caller_label == "main" {
+        return Ok(());
+    }
+    if parse_temporary_window_label(caller_label)? == note_id {
+        Ok(())
+    } else {
+        Err(CommandError::validation(
+            "temporary window may save assets only for its matching capture",
+        ))
+    }
+}
+
+pub fn close_event_target(note_id: NoteId, label: &str) -> Result<String, CommandError> {
+    if parse_temporary_window_label(label)? != note_id {
+        return Err(CommandError::validation(
+            "temporary close target does not match its capture",
+        ));
+    }
+    Ok(label.to_owned())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalWindowBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl PhysicalWindowBounds {
+    pub fn to_physical(self, scale_factor: f64) -> Self {
+        Self {
+            x: self.x * scale_factor,
+            y: self.y * scale_factor,
+            width: self.width * scale_factor,
+            height: self.height * scale_factor,
+        }
+    }
+
+    pub fn to_logical(self, scale_factor: f64) -> Self {
+        Self {
+            x: self.x / scale_factor,
+            y: self.y / scale_factor,
+            width: self.width / scale_factor,
+            height: self.height / scale_factor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonitorGeometry {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub scale_factor: f64,
+}
+
+pub fn clamp_to_available_monitors(
+    bounds: PhysicalWindowBounds,
+    monitors: &[MonitorGeometry],
+) -> PhysicalWindowBounds {
+    if monitors.is_empty() || monitors.iter().any(|monitor| intersects(bounds, *monitor)) {
+        return bounds;
+    }
+    let center_x = bounds.x + bounds.width / 2.0;
+    let center_y = bounds.y + bounds.height / 2.0;
+    let target = monitors
+        .iter()
+        .min_by(|left, right| {
+            distance_squared(center_x, center_y, **left)
+                .total_cmp(&distance_squared(center_x, center_y, **right))
+        })
+        .expect("non-empty monitor collection");
+    let width = bounds.width.min(target.width);
+    let height = bounds.height.min(target.height);
+    PhysicalWindowBounds {
+        x: bounds.x.clamp(target.x, target.x + target.width - width),
+        y: bounds.y.clamp(target.y, target.y + target.height - height),
+        width,
+        height,
+    }
+}
+
+pub fn physical_bounds_for_restore(
+    stored: PhysicalWindowBounds,
+    monitors: &[MonitorGeometry],
+    fallback_scale: f64,
+) -> PhysicalWindowBounds {
+    let scale = monitor_scale_for_position(stored.x, stored.y, monitors).unwrap_or(fallback_scale);
+    clamp_to_available_monitors(
+        PhysicalWindowBounds {
+            x: stored.x,
+            y: stored.y,
+            width: stored.width * scale,
+            height: stored.height * scale,
+        },
+        monitors,
+    )
+}
+
+fn monitor_scale_for_position(x: f64, y: f64, monitors: &[MonitorGeometry]) -> Option<f64> {
+    monitors
+        .iter()
+        .find(|monitor| {
+            x >= monitor.x
+                && x < monitor.x + monitor.width
+                && y >= monitor.y
+                && y < monitor.y + monitor.height
+        })
+        .or_else(|| {
+            monitors.iter().min_by(|left, right| {
+                distance_squared(x, y, **left).total_cmp(&distance_squared(x, y, **right))
+            })
+        })
+        .map(|monitor| monitor.scale_factor)
+}
+
+fn intersects(bounds: PhysicalWindowBounds, monitor: MonitorGeometry) -> bool {
+    bounds.x < monitor.x + monitor.width
+        && bounds.x + bounds.width > monitor.x
+        && bounds.y < monitor.y + monitor.height
+        && bounds.y + bounds.height > monitor.y
+}
+
+fn distance_squared(x: f64, y: f64, monitor: MonitorGeometry) -> f64 {
+    let nearest_x = x.clamp(monitor.x, monitor.x + monitor.width);
+    let nearest_y = y.clamp(monitor.y, monitor.y + monitor.height);
+    (x - nearest_x).powi(2) + (y - nearest_y).powi(2)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DefaultWindowState {
     pub x: f64,
@@ -100,6 +286,17 @@ impl TemporaryRepository {
         NoteRepository::new(self.paths.clone()).save_locked(document, expected_revision, &guard)
     }
 
+    pub fn load(&self, note_id: NoteId) -> Result<NoteDocument, CommandError> {
+        let guard = IndexMutationLock::acquire(self.paths.root())?;
+        let document = NoteRepository::new(self.paths.clone()).load_locked(note_id, &guard)?;
+        if document.kind != NoteKind::Temporary {
+            return Err(CommandError::validation(
+                "the requested document is not temporary",
+            ));
+        }
+        Ok(document)
+    }
+
     pub fn list(&self) -> Result<Vec<NoteDocument>, CommandError> {
         let guard = IndexMutationLock::acquire(self.paths.root())?;
         let database = open_database(&self.paths)?;
@@ -132,7 +329,12 @@ pub trait TemporaryWindowBackend: Clone + Send + Sync + 'static {
     ) -> Result<(), CommandError>;
     fn show_and_focus(&self, label: &str) -> Result<(), CommandError>;
     fn hide(&self, label: &str) -> Result<(), CommandError>;
-    fn apply_state(&self, label: &str, state: TemporaryWindowState) -> Result<(), CommandError>;
+    fn set_always_on_top(&self, label: &str, always_on_top: bool) -> Result<(), CommandError>;
+    fn apply_state(
+        &self,
+        label: &str,
+        state: TemporaryWindowState,
+    ) -> Result<TemporaryWindowState, CommandError>;
 }
 
 #[derive(Clone)]
@@ -154,14 +356,14 @@ impl<B: TemporaryWindowBackend> TemporaryWindowService<B> {
         let label = temporary_window_label(note_id);
         let previous = self.load_state(note_id)?;
         self.backend.ensure_window(&label, note_id, previous)?;
-        self.backend.apply_state(&label, previous)?;
+        let applied = self.backend.apply_state(&label, previous)?;
         if let Err(error) = self.backend.show_and_focus(&label) {
             let _ = self.backend.hide(&label);
             return Err(error);
         }
         let next = TemporaryWindowState {
             visible: true,
-            ..previous
+            ..applied
         };
         let publication = (|| {
             let guard = IndexMutationLock::acquire(self.paths.root())?;
@@ -212,20 +414,53 @@ impl<B: TemporaryWindowBackend> TemporaryWindowService<B> {
         }
         let label = temporary_window_label(state.note_id);
         let previous = self.load_state(state.note_id)?;
-        if let Err(error) = self.backend.apply_state(&label, state) {
-            let _ = self.backend.apply_state(&label, previous);
-            return Err(error);
-        }
+        let requested = TemporaryWindowState {
+            visible: previous.visible,
+            ..state
+        };
+        let applied = match self.backend.apply_state(&label, requested) {
+            Ok(applied) => TemporaryWindowState {
+                visible: previous.visible,
+                ..applied
+            },
+            Err(error) => {
+                let _ = self.backend.apply_state(&label, previous);
+                return Err(error);
+            }
+        };
         let publication = (|| {
             let guard = IndexMutationLock::acquire(self.paths.root())?;
             ensure_temporary(&self.paths, state.note_id, &guard)?;
-            self.persist_state_locked(state, &guard)
+            self.persist_state_locked(applied, &guard)
         })();
         if let Err(error) = publication {
             let _ = self.backend.apply_state(&label, previous);
             return Err(error);
         }
-        Ok(state)
+        Ok(applied)
+    }
+
+    pub fn set_always_on_top(
+        &self,
+        note_id: NoteId,
+        always_on_top: bool,
+    ) -> Result<TemporaryWindowState, CommandError> {
+        let guard = IndexMutationLock::acquire(self.paths.root())?;
+        ensure_temporary(&self.paths, note_id, &guard)?;
+        let previous = self.load_state_locked(note_id, &guard)?;
+        let label = temporary_window_label(note_id);
+        self.backend.set_always_on_top(&label, always_on_top)?;
+        let authoritative = TemporaryWindowState {
+            always_on_top,
+            ..previous
+        };
+        if let Err(error) = self.persist_state_locked(authoritative, &guard) {
+            let _ = self
+                .backend
+                .set_always_on_top(&label, previous.always_on_top);
+            return Err(error);
+        }
+        Ok(authoritative)
     }
 
     pub fn load_state(&self, note_id: NoteId) -> Result<TemporaryWindowState, CommandError> {
@@ -395,6 +630,8 @@ struct InMemoryBackendState {
     show_count: usize,
     operations: usize,
     fail_on_operation: Option<usize>,
+    state_apply_count: usize,
+    pin_update_count: usize,
 }
 
 impl InMemoryTemporaryWindowBackend {
@@ -423,6 +660,20 @@ impl InMemoryTemporaryWindowBackend {
             .lock()
             .expect("backend mutex poisoned")
             .fail_on_operation = Some(operation);
+    }
+
+    pub fn state_apply_count(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .state_apply_count
+    }
+
+    pub fn pin_update_count(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .pin_update_count
     }
 
     fn operation(&self) -> Result<(), CommandError> {
@@ -464,8 +715,26 @@ impl TemporaryWindowBackend for InMemoryTemporaryWindowBackend {
         self.operation()
     }
 
-    fn apply_state(&self, _label: &str, _state: TemporaryWindowState) -> Result<(), CommandError> {
-        self.operation()
+    fn set_always_on_top(&self, _label: &str, _always_on_top: bool) -> Result<(), CommandError> {
+        self.operation()?;
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .pin_update_count += 1;
+        Ok(())
+    }
+
+    fn apply_state(
+        &self,
+        _label: &str,
+        state: TemporaryWindowState,
+    ) -> Result<TemporaryWindowState, CommandError> {
+        self.operation()?;
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .state_apply_count += 1;
+        Ok(state)
     }
 }
 
@@ -548,18 +817,23 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
                     .unwrap_or(true)
                 {
                     api.prevent_close();
-                    let _ = event_window.emit("temporary-close-requested", note_id.to_string());
+                    if let Ok(target) = close_event_target(note_id, event_window.label()) {
+                        let _ = event_window.app_handle().emit_to(
+                            target,
+                            "temporary-close-requested",
+                            note_id.to_string(),
+                        );
+                    }
                 }
             }
             WindowEvent::Moved(position) => {
                 if let Ok(scale) = event_window.scale_factor() {
-                    let logical = position.to_logical::<f64>(scale);
                     if let Ok(size) = event_window.outer_size() {
                         let size = size.to_logical::<f64>(scale);
                         let _ = service.persist_observed_bounds(
                             note_id,
-                            logical.x,
-                            logical.y,
+                            f64::from(position.x),
+                            f64::from(position.y),
                             size.width,
                             size.height,
                         );
@@ -570,12 +844,11 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
                 if let (Ok(scale), Ok(position)) =
                     (event_window.scale_factor(), event_window.outer_position())
                 {
-                    let logical_position = position.to_logical::<f64>(scale);
                     let logical_size = size.to_logical::<f64>(scale);
                     let _ = service.persist_observed_bounds(
                         note_id,
-                        logical_position.x,
-                        logical_position.y,
+                        f64::from(position.x),
+                        f64::from(position.y),
                         logical_size.width,
                         logical_size.height,
                     );
@@ -602,37 +875,79 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
         })
     }
 
-    fn apply_state(&self, label: &str, state: TemporaryWindowState) -> Result<(), CommandError> {
+    fn set_always_on_top(&self, label: &str, always_on_top: bool) -> Result<(), CommandError> {
+        self.window(label)?
+            .set_always_on_top(always_on_top)
+            .map_err(|source| {
+                CommandError::io(format!("could not update temporary pin state: {source}"))
+            })
+    }
+
+    fn apply_state(
+        &self,
+        label: &str,
+        state: TemporaryWindowState,
+    ) -> Result<TemporaryWindowState, CommandError> {
         let window = self.window(label)?;
-        let (x, y, width, height) = clamp_to_primary_monitor(&window, state)?;
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let stored = PhysicalWindowBounds {
+            x: state.x,
+            y: state.y,
+            width: state.width,
+            height: state.height,
+        };
+        let monitors = window
+            .available_monitors()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|monitor| MonitorGeometry {
+                x: f64::from(monitor.position().x),
+                y: f64::from(monitor.position().y),
+                width: f64::from(monitor.size().width),
+                height: f64::from(monitor.size().height),
+                scale_factor: monitor.scale_factor(),
+            })
+            .collect::<Vec<_>>();
+        let applied = physical_bounds_for_restore(stored, &monitors, scale);
         window
-            .set_position(PhysicalPosition::new(x as i32, y as i32))
-            .and_then(|_| window.set_size(PhysicalSize::new(width as u32, height as u32)))
+            .set_position(PhysicalPosition::new(applied.x as i32, applied.y as i32))
+            .and_then(|_| {
+                window.set_size(PhysicalSize::new(
+                    applied.width as u32,
+                    applied.height as u32,
+                ))
+            })
             .and_then(|_| window.set_always_on_top(state.always_on_top))
             .map_err(|source| {
                 CommandError::io(format!("could not apply temporary window state: {source}"))
-            })
+            })?;
+        let actual_position = window
+            .outer_position()
+            .unwrap_or(PhysicalPosition::new(applied.x as i32, applied.y as i32));
+        let actual_size = window.outer_size().unwrap_or(PhysicalSize::new(
+            applied.width as u32,
+            applied.height as u32,
+        ));
+        let actual_scale = window.scale_factor().unwrap_or(scale);
+        let actual_width_height = PhysicalWindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: f64::from(actual_size.width),
+            height: f64::from(actual_size.height),
+        }
+        .to_logical(actual_scale);
+        let actual = PhysicalWindowBounds {
+            x: f64::from(actual_position.x),
+            y: f64::from(actual_position.y),
+            width: actual_width_height.width,
+            height: actual_width_height.height,
+        };
+        Ok(TemporaryWindowState {
+            x: actual.x,
+            y: actual.y,
+            width: actual.width,
+            height: actual.height,
+            ..state
+        })
     }
-}
-
-fn clamp_to_primary_monitor(
-    window: &tauri::WebviewWindow,
-    state: TemporaryWindowState,
-) -> Result<(f64, f64, f64, f64), CommandError> {
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let mut x = state.x * scale;
-    let mut y = state.y * scale;
-    let mut width = state.width * scale;
-    let mut height = state.height * scale;
-    if let Ok(Some(monitor)) = window.primary_monitor() {
-        let size = monitor.size();
-        let origin = monitor.position();
-        width = width.min(f64::from(size.width));
-        height = height.min(f64::from(size.height));
-        let left = f64::from(origin.x);
-        let top = f64::from(origin.y);
-        x = x.clamp(left, left + (f64::from(size.width) - width).max(0.0));
-        y = y.clamp(top, top + (f64::from(size.height) - height).max(0.0));
-    }
-    Ok((x, y, width, height))
 }

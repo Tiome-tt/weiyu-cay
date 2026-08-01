@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-temporary"
+description = "Enables the create_temporary command without any pre-configured scope."
+commands.allow = ["create_temporary"]
+
+[[permission]]
+identifier = "deny-create-temporary"
+description = "Denies the create_temporary command without any pre-configured scope."
+commands.deny = ["create_temporary"]

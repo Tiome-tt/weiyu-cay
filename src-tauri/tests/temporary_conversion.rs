@@ -10,7 +10,10 @@ use simple_notes_lib::{
         repository::NoteRepository,
     },
     windows::sticky::{
-        InMemoryTemporaryWindowBackend, TemporaryRepository, TemporaryWindowService,
+        authorize_asset_caller, authorize_temporary_caller, clamp_to_available_monitors,
+        close_event_target, physical_bounds_for_restore, reduce_shutdown_lifecycle,
+        AppLifecycleEvent, InMemoryTemporaryWindowBackend, MonitorGeometry, PhysicalWindowBounds,
+        TemporaryCommandOperation, TemporaryRepository, TemporaryWindowService,
         DEFAULT_WINDOW_STATE,
     },
 };
@@ -329,4 +332,334 @@ fn labels_and_non_finite_or_non_positive_bounds_are_rejected() {
             CommandErrorCode::Validation
         );
     }
+}
+
+fn close_store_for_rebuild(store: &mut TestStore) {
+    store.close_database();
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = store.paths.root().join(format!("index.sqlite{suffix}"));
+        if sidecar.exists() {
+            fs::remove_file(sidecar).unwrap();
+        }
+    }
+}
+
+#[test]
+fn corrupt_old_index_does_not_block_temporary_markdown_rebuild() {
+    let mut store = TestStore::new();
+    let capture = TemporaryRepository::new(store.paths.clone())
+        .create()
+        .unwrap();
+    close_store_for_rebuild(&mut store);
+    fs::write(store.paths.database(), b"not sqlite").unwrap();
+
+    let report = rebuild_index(&store.paths).unwrap();
+
+    assert_eq!(report.notes_recovered, 1);
+    assert_eq!(
+        TemporaryRepository::new(store.paths.clone())
+            .list()
+            .unwrap()[0]
+            .id,
+        capture.id
+    );
+}
+
+#[test]
+fn missing_window_table_does_not_block_temporary_markdown_rebuild() {
+    let mut store = TestStore::new();
+    TemporaryRepository::new(store.paths.clone())
+        .create()
+        .unwrap();
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection
+        .execute_batch("DROP TABLE temporary_windows;")
+        .unwrap();
+    drop(connection);
+    close_store_for_rebuild(&mut store);
+
+    assert_eq!(rebuild_index(&store.paths).unwrap().notes_recovered, 1);
+}
+
+#[test]
+fn rebuild_skips_invalid_window_rows_but_preserves_valid_rows() {
+    let mut store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let valid = temporary.create().unwrap();
+    let invalid = temporary.create().unwrap();
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE temporary_windows; CREATE TABLE temporary_windows (note_id BLOB, visible INTEGER, x REAL, y REAL, width REAL, height REAL, always_on_top INTEGER);").unwrap();
+    connection
+        .execute(
+            "INSERT INTO temporary_windows VALUES (?1, 1, 12, 18, 320, 410, 0)",
+            [uuid::Uuid::parse_str(&valid.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .as_slice()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO temporary_windows VALUES (?1, 1, 'bad', 18, -1, 410, 0)",
+            [uuid::Uuid::parse_str(&invalid.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .as_slice()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO temporary_windows VALUES (x'01', 1, 0, 0, 300, 300, 1)",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    close_store_for_rebuild(&mut store);
+
+    rebuild_index(&store.paths).unwrap();
+
+    let service = TemporaryWindowService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    );
+    assert_eq!(service.load_state(valid.id).unwrap().x, 12.0);
+    assert_eq!(service.load_state(invalid.id).unwrap().width, 360.0);
+}
+
+#[test]
+fn pin_patch_uses_latest_native_bounds_and_preserves_visibility() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let capture = temporary.create().unwrap();
+    let backend = InMemoryTemporaryWindowBackend::default();
+    let service = TemporaryWindowService::new(store.paths.clone(), backend.clone());
+    service.show(capture.id).unwrap();
+    service
+        .persist_observed_bounds(capture.id, 720.0, 180.0, 640.0, 510.0)
+        .unwrap();
+
+    let pinned = service.set_always_on_top(capture.id, false).unwrap();
+
+    assert_eq!(
+        (pinned.x, pinned.y, pinned.width, pinned.height),
+        (720.0, 180.0, 640.0, 510.0)
+    );
+    assert!(pinned.visible);
+    assert!(!pinned.always_on_top);
+    assert_eq!(backend.pin_update_count(), 1);
+    assert_eq!(backend.state_apply_count(), 1);
+}
+
+#[test]
+fn general_state_update_cannot_forge_visibility() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let capture = temporary.create().unwrap();
+    let service = TemporaryWindowService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    );
+    service.show(capture.id).unwrap();
+    let current = service.load_state(capture.id).unwrap();
+
+    let updated = service
+        .set_state(TemporaryWindowState {
+            visible: false,
+            x: 90.0,
+            ..current
+        })
+        .unwrap();
+
+    assert!(updated.visible);
+    assert!(service.load_state(capture.id).unwrap().visible);
+}
+
+#[test]
+fn close_events_have_one_canonical_window_target() {
+    let first = simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000071")
+        .unwrap();
+    let second =
+        simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000072")
+            .unwrap();
+    assert_eq!(
+        close_event_target(first, &format!("temporary-{first}")).unwrap(),
+        format!("temporary-{first}")
+    );
+    assert!(close_event_target(first, &format!("temporary-{second}")).is_err());
+}
+
+#[test]
+fn command_authorization_is_scoped_to_main_or_the_matching_sticky() {
+    let note = simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000073")
+        .unwrap();
+    let other = simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000074")
+        .unwrap();
+    assert!(authorize_temporary_caller("main", TemporaryCommandOperation::Create, None).is_ok());
+    assert!(authorize_temporary_caller(
+        "temporary-ignored",
+        TemporaryCommandOperation::Create,
+        None
+    )
+    .is_err());
+    assert!(authorize_temporary_caller(
+        &format!("temporary-{note}"),
+        TemporaryCommandOperation::Load,
+        Some(note)
+    )
+    .is_ok());
+    assert!(authorize_temporary_caller(
+        &format!("temporary-{note}"),
+        TemporaryCommandOperation::Save,
+        Some(other)
+    )
+    .is_err());
+    assert!(
+        authorize_temporary_caller("main", TemporaryCommandOperation::Save, Some(note)).is_err()
+    );
+    assert!(authorize_asset_caller("main", note).is_ok());
+    assert!(authorize_asset_caller(&format!("temporary-{note}"), note).is_ok());
+    assert!(authorize_asset_caller(&format!("temporary-{note}"), other).is_err());
+}
+
+#[test]
+fn only_app_exit_events_begin_shutdown() {
+    assert!(!reduce_shutdown_lifecycle(
+        false,
+        AppLifecycleEvent::MainWindowCloseRequested
+    ));
+    assert!(reduce_shutdown_lifecycle(
+        false,
+        AppLifecycleEvent::ExitRequested
+    ));
+    assert!(reduce_shutdown_lifecycle(false, AppLifecycleEvent::Exit));
+}
+
+#[test]
+fn geometry_preserves_secondary_monitor_bounds_and_clamps_removed_monitor() {
+    let monitors = [
+        MonitorGeometry {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+            scale_factor: 1.0,
+        },
+        MonitorGeometry {
+            x: 1920.0,
+            y: 0.0,
+            width: 2560.0,
+            height: 1440.0,
+            scale_factor: 2.0,
+        },
+    ];
+    let secondary = PhysicalWindowBounds {
+        x: 2200.0,
+        y: 160.0,
+        width: 720.0,
+        height: 840.0,
+    };
+    assert_eq!(clamp_to_available_monitors(secondary, &monitors), secondary);
+
+    let removed = PhysicalWindowBounds {
+        x: 7000.0,
+        y: 200.0,
+        width: 600.0,
+        height: 500.0,
+    };
+    let restored = clamp_to_available_monitors(removed, &monitors[..1]);
+    assert!(restored.x >= 0.0 && restored.x + restored.width <= 1920.0);
+    assert!(restored.y >= 0.0 && restored.y + restored.height <= 1080.0);
+}
+
+#[test]
+fn geometry_scale_round_trip_uses_current_monitor_dpi() {
+    let logical = PhysicalWindowBounds {
+        x: 100.0,
+        y: 80.0,
+        width: 360.0,
+        height: 420.0,
+    };
+    let physical = logical.to_physical(2.0);
+    assert_eq!(
+        physical,
+        PhysicalWindowBounds {
+            x: 200.0,
+            y: 160.0,
+            width: 720.0,
+            height: 840.0
+        }
+    );
+    assert_eq!(physical.to_logical(2.0), logical);
+
+    let monitors = [MonitorGeometry {
+        x: 1920.0,
+        y: 0.0,
+        width: 2560.0,
+        height: 1440.0,
+        scale_factor: 2.0,
+    }];
+    let restored = physical_bounds_for_restore(
+        PhysicalWindowBounds {
+            x: 2200.0,
+            y: 160.0,
+            width: 360.0,
+            height: 420.0,
+        },
+        &monitors,
+        1.0,
+    );
+    assert_eq!(restored.x, 2200.0);
+    assert_eq!(restored.width, 720.0);
+}
+
+#[test]
+fn sticky_capability_is_separate_and_minimal() {
+    let default: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let desktop: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/desktop.json")).unwrap();
+    let sticky: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/temporary.json")).unwrap();
+    assert_eq!(default["windows"], serde_json::json!(["main"]));
+    assert_eq!(desktop["windows"], serde_json::json!(["main"]));
+    assert_eq!(sticky["windows"], serde_json::json!(["temporary-*"]));
+    assert_eq!(
+        default["permissions"],
+        serde_json::json!([
+            "core:default",
+            "opener:default",
+            "allow-create-note",
+            "allow-load-note",
+            "allow-save-note",
+            "allow-list-notes",
+            "allow-move-note",
+            "allow-resolve-link",
+            "allow-backlinks",
+            "allow-rename-target-labels",
+            "allow-save-image",
+            "allow-list-folders",
+            "allow-create-folder",
+            "allow-rename-folder",
+            "allow-move-folder",
+            "allow-delete-empty-folder",
+            "allow-search-notes",
+            "allow-update-note-tags",
+            "allow-create-temporary",
+            "allow-list-temporary",
+            "allow-show-temporary-window"
+        ])
+    );
+    assert_eq!(
+        sticky["permissions"],
+        serde_json::json!([
+            "core:event:allow-listen",
+            "core:event:allow-unlisten",
+            "core:window:allow-start-dragging",
+            "allow-load-temporary",
+            "allow-save-temporary",
+            "allow-hide-temporary-window",
+            "allow-set-temporary-always-on-top",
+            "allow-save-image"
+        ])
+    );
 }

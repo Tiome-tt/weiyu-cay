@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "temporary-window-capability",
+  "description": "Minimal renderer permissions for temporary sticky windows",
+  "windows": ["temporary-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "allow-load-temporary",
+    "allow-save-temporary",
+    "allow-hide-temporary-window",
+    "allow-set-temporary-always-on-top",
+    "allow-save-image"
+  ]
+}

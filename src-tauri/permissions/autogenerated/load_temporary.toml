@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-temporary"
+description = "Enables the load_temporary command without any pre-configured scope."
+commands.allow = ["load_temporary"]
+
+[[permission]]
+identifier = "deny-load-temporary"
+description = "Denies the load_temporary command without any pre-configured scope."
+commands.deny = ["load_temporary"]

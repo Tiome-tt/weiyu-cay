@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-note"
+description = "Enables the load_note command without any pre-configured scope."
+commands.allow = ["load_note"]
+
+[[permission]]
+identifier = "deny-load-note"
+description = "Denies the load_note command without any pre-configured scope."
+commands.deny = ["load_note"]

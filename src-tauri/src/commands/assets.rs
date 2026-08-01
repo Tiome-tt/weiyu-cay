@@ -4,6 +4,7 @@ use crate::{
     error::CommandError,
     platform::{NewFilePublishState, SafeDirectory},
     storage::{paths::StoragePaths, repository::NoteRepository},
+    windows::sticky::authorize_asset_caller,
 };
 use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 use std::{
@@ -41,9 +42,11 @@ impl ValidatedImage {
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_image(
+    window: tauri::WebviewWindow,
     state: State<'_, NoteCommandState>,
     input: SaveImageInput,
 ) -> Result<SavedImage, CommandError> {
+    authorize_asset_caller(window.label(), input.note_id)?;
     save_image_to(state.paths(), input)
 }
 

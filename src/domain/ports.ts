@@ -76,9 +76,9 @@ export interface TemporaryWindowState {
 export interface TemporaryWindowPort {
   show(noteId: NoteId): Promise<TemporaryWindowState>
   hide(noteId: NoteId): Promise<void>
-  setState(state: TemporaryWindowState): Promise<TemporaryWindowState>
+  setAlwaysOnTop(noteId: NoteId, alwaysOnTop: boolean): Promise<TemporaryWindowState>
   startDragging(): Promise<void>
-  onCloseRequested?(handler: () => void): Promise<() => void>
+  onCloseRequested?(handler: (noteId: unknown) => void): Promise<() => void>
 }
 
 export interface LibraryColumnPreference {
@@ -92,6 +92,7 @@ export interface WindowPreferenceMap {
 
 export interface TemporaryPort {
   create(): Promise<NoteDocument>
+  load(noteId: NoteId): Promise<NoteDocument>
   save(document: NoteDocument): Promise<NoteDocument>
   list(): Promise<NoteDocument[]>
 }

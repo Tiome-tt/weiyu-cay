@@ -5,9 +5,11 @@ pub mod platform;
 pub mod storage;
 pub mod windows;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -38,12 +40,28 @@ pub fn run() {
             commands::search::search_notes,
             commands::search::update_note_tags,
             commands::temporary::create_temporary,
+            commands::temporary::load_temporary,
             commands::temporary::save_temporary,
             commands::temporary::list_temporary,
             commands::temporary::show_temporary_window,
             commands::temporary::hide_temporary_window,
-            commands::temporary::set_temporary_window_state,
+            commands::temporary::set_temporary_always_on_top,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app_handle, event| {
+        let lifecycle = match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                Some(windows::sticky::AppLifecycleEvent::ExitRequested)
+            }
+            tauri::RunEvent::Exit => Some(windows::sticky::AppLifecycleEvent::Exit),
+            _ => None,
+        };
+        if let (Some(lifecycle), Some(state)) = (
+            lifecycle,
+            app_handle.try_state::<commands::temporary::TemporaryCommandState>(),
+        ) {
+            state.mark_lifecycle(lifecycle);
+        }
+    });
 }

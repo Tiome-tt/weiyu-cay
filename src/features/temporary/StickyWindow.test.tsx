@@ -4,7 +4,7 @@ import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteDocument, NoteId } from '../../domain/model'
 import { pngBytes } from '../../test/fakes'
-import { StickyWindow } from './StickyWindow'
+import { shouldHandleTemporaryClose, StickyWindow } from './StickyWindow'
 
 afterEach(() => {
   cleanup()
@@ -27,7 +27,15 @@ function setup(save = vi.fn(async (document: NoteDocument) => ({ ...document, re
   const temporary = { save }
   const windows = {
     hide: vi.fn().mockResolvedValue(undefined),
-    setState: vi.fn().mockImplementation(async (state) => state),
+    setAlwaysOnTop: vi.fn().mockImplementation(async (noteId: NoteId, alwaysOnTop: boolean) => ({
+      noteId,
+      visible: true,
+      x: 40,
+      y: 40,
+      width: 360,
+      height: 420,
+      alwaysOnTop,
+    })),
     startDragging: vi.fn().mockResolvedValue(undefined),
   }
   render(
@@ -88,7 +96,7 @@ describe('StickyWindow', () => {
 
   it('updates authoritative pin state only after the native operation succeeds', async () => {
     const { windows } = setup()
-    windows.setState.mockResolvedValueOnce({
+    windows.setAlwaysOnTop.mockResolvedValueOnce({
       noteId: capture.id,
       visible: true,
       x: 40,
@@ -100,7 +108,7 @@ describe('StickyWindow', () => {
 
     await act(async () => screen.getByRole('button', { name: '钉在桌面上' }).click())
 
-    expect(windows.setState).toHaveBeenCalledWith(expect.objectContaining({ alwaysOnTop: false }))
+    expect(windows.setAlwaysOnTop).toHaveBeenCalledWith(capture.id, false)
     expect(screen.getByRole('button', { name: '钉在桌面上' })).toHaveAttribute('aria-pressed', 'false')
   })
 
@@ -108,7 +116,9 @@ describe('StickyWindow', () => {
     const temporary = { save: vi.fn(async (document: NoteDocument) => document) }
     const windows = {
       hide: vi.fn().mockResolvedValue(undefined),
-      setState: vi.fn().mockImplementation(async (state) => state),
+      setAlwaysOnTop: vi.fn().mockImplementation(async (noteId: NoteId, alwaysOnTop: boolean) => ({
+        noteId, visible: true, x: 0, y: 0, width: 360, height: 420, alwaysOnTop,
+      })),
       startDragging: vi.fn().mockResolvedValue(undefined),
     }
     const { rerender } = render(
@@ -139,7 +149,9 @@ describe('StickyWindow', () => {
     const save = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 1 }))
     const windows = {
       hide: vi.fn().mockResolvedValue(undefined),
-      setState: vi.fn().mockImplementation(async (state) => state),
+      setAlwaysOnTop: vi.fn().mockImplementation(async (noteId: NoteId, alwaysOnTop: boolean) => ({
+        noteId, visible: true, x: 0, y: 0, width: 360, height: 420, alwaysOnTop,
+      })),
       startDragging: vi.fn().mockResolvedValue(undefined),
     }
     render(
@@ -168,5 +180,14 @@ describe('StickyWindow', () => {
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ markdown: expect.stringContaining('assets/capture.png') }),
     )
+  })
+
+  it('handles only a close event carrying its own note identity', () => {
+    expect(shouldHandleTemporaryClose(capture.id, { payload: capture.id })).toBe(true)
+    expect(
+      shouldHandleTemporaryClose(capture.id, {
+        payload: '019c0000-0000-7000-8000-000000000099',
+      }),
+    ).toBe(false)
   })
 })

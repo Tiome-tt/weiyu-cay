@@ -4,17 +4,25 @@ use crate::{
     error::CommandError,
     storage::paths::StoragePaths,
     windows::sticky::{
-        parse_temporary_window_label, TauriTemporaryWindowBackend, TemporaryRepository,
-        TemporaryWindowService,
+        authorize_temporary_caller, AppLifecycleEvent, TauriTemporaryWindowBackend,
+        TemporaryCommandOperation, TemporaryRepository, TemporaryWindowService,
     },
 };
 use serde::Deserialize;
 use std::sync::{atomic::AtomicBool, Arc};
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Manager, State};
 
 pub struct TemporaryCommandState {
     paths: StoragePaths,
     backend: TauriTemporaryWindowBackend,
+}
+
+impl TemporaryCommandState {
+    pub fn mark_lifecycle(&self, event: AppLifecycleEvent) {
+        if crate::windows::sticky::reduce_shutdown_lifecycle(false, event) {
+            self.backend.mark_shutting_down();
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,71 +37,93 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let shutting_down = Arc::new(AtomicBool::new(false));
     let backend =
         TauriTemporaryWindowBackend::new(app.handle().clone(), paths.clone(), shutting_down);
-    let shutdown_backend = backend.clone();
-    if let Some(main_window) = app.get_webview_window("main") {
-        main_window.on_window_event(move |event| {
-            if matches!(event, WindowEvent::CloseRequested { .. }) {
-                shutdown_backend.mark_shutting_down();
-            }
-        });
-    } else {
-        return Err("main window is unavailable during temporary setup".into());
-    }
     app.manage(TemporaryCommandState { paths, backend });
     Ok(())
 }
 
 #[tauri::command]
 pub fn create_temporary(
+    window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
 ) -> Result<NoteDocument, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::Create, None)?;
     TemporaryRepository::new(state.paths.clone()).create()
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub fn load_temporary(
+    window: tauri::WebviewWindow,
+    state: State<'_, TemporaryCommandState>,
+    note_id: NoteId,
+) -> Result<NoteDocument, CommandError> {
+    authorize_temporary_caller(
+        window.label(),
+        TemporaryCommandOperation::Load,
+        Some(note_id),
+    )?;
+    TemporaryRepository::new(state.paths.clone()).load(note_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub fn save_temporary(
+    window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
     input: SaveTemporaryInput,
 ) -> Result<NoteDocument, CommandError> {
+    authorize_temporary_caller(
+        window.label(),
+        TemporaryCommandOperation::Save,
+        Some(input.document.id),
+    )?;
     TemporaryRepository::new(state.paths.clone()).save(input.document, input.expected_revision)
 }
 
 #[tauri::command]
 pub fn list_temporary(
+    window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
 ) -> Result<Vec<NoteDocument>, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::List, None)?;
     TemporaryRepository::new(state.paths.clone()).list()
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn show_temporary_window(
+    window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
     note_id: NoteId,
 ) -> Result<TemporaryWindowState, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::Show, None)?;
     service(&state).show(note_id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn hide_temporary_window(
+    window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
     note_id: NoteId,
 ) -> Result<(), CommandError> {
+    authorize_temporary_caller(
+        window.label(),
+        TemporaryCommandOperation::Hide,
+        Some(note_id),
+    )?;
     service(&state).hide(note_id).map(|_| ())
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn set_temporary_window_state(
+pub fn set_temporary_always_on_top(
     window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
-    window_state: TemporaryWindowState,
+    note_id: NoteId,
+    always_on_top: bool,
 ) -> Result<TemporaryWindowState, CommandError> {
-    let label_note_id = parse_temporary_window_label(window.label())?;
-    if label_note_id != window_state.note_id {
-        return Err(CommandError::validation(
-            "temporary window label does not match the requested note",
-        ));
-    }
-    service(&state).set_state(window_state)
+    authorize_temporary_caller(
+        window.label(),
+        TemporaryCommandOperation::SetPin,
+        Some(note_id),
+    )?;
+    service(&state).set_always_on_top(note_id, always_on_top)
 }
 
 fn service(state: &TemporaryCommandState) -> TemporaryWindowService<TauriTemporaryWindowBackend> {

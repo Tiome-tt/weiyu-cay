@@ -1,5 +1,4 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
-import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, WindowPreferenceMap } from '../../domain/ports'
@@ -119,6 +118,10 @@ class TauriTemporaryPort implements TemporaryPort {
     return this.client.invoke<NoteDocument>('create_temporary')
   }
 
+  load(noteId: NoteId) {
+    return this.client.invoke<NoteDocument>('load_temporary', { noteId })
+  }
+
   save(document: NoteDocument) {
     return this.client.invoke<NoteDocument>('save_temporary', {
       input: { document, expectedRevision: document.revision },
@@ -142,16 +145,21 @@ class TauriTemporaryWindowPort implements TemporaryWindowPort {
     return this.client.invoke<void>('hide_temporary_window', { noteId })
   }
 
-  setState(windowState: TemporaryWindowState) {
-    return this.client.invoke<TemporaryWindowState>('set_temporary_window_state', { windowState })
+  setAlwaysOnTop(noteId: NoteId, alwaysOnTop: boolean) {
+    return this.client.invoke<TemporaryWindowState>('set_temporary_always_on_top', {
+      noteId,
+      alwaysOnTop,
+    })
   }
 
   startDragging() {
     return getCurrentWebviewWindow().startDragging()
   }
 
-  onCloseRequested(handler: () => void) {
-    return listen<string>('temporary-close-requested', handler)
+  onCloseRequested(handler: (noteId: unknown) => void) {
+    return getCurrentWebviewWindow().listen<unknown>('temporary-close-requested', (event) => {
+      handler(event.payload)
+    })
   }
 }
 

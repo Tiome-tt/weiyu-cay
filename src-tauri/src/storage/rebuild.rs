@@ -126,7 +126,7 @@ where
         ));
     }
 
-    let window_states = read_temporary_window_states(paths, &documents)?;
+    let window_states = read_temporary_window_states(paths, &documents);
     report.notes_recovered = documents.len();
     report.folders_recovered = folders.len();
     let replacement_name = format!(".index.sqlite.{}.rebuild-new", Uuid::now_v7());
@@ -214,56 +214,71 @@ fn build_replacement_database(
 fn read_temporary_window_states(
     paths: &StoragePaths,
     documents: &[NoteDocument],
-) -> Result<Vec<TemporaryWindowState>, CommandError> {
+) -> Vec<TemporaryWindowState> {
     let temporary_ids = documents
         .iter()
         .filter(|document| document.kind == NoteKind::Temporary)
         .map(|document| document.id)
         .collect::<HashSet<_>>();
     if temporary_ids.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
-    let database = Database::open(paths.database())?;
-    database.migrate()?;
-    let mut statement = database
-        .connection()
-        .prepare(
-            "SELECT note_id, visible, x, y, width, height, always_on_top FROM temporary_windows",
-        )
-        .map_err(database_error("could not inspect temporary window state"))?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, Vec<u8>>(0)?,
-                row.get::<_, i64>(1)? != 0,
-                row.get::<_, f64>(2)?,
-                row.get::<_, f64>(3)?,
-                row.get::<_, f64>(4)?,
-                row.get::<_, f64>(5)?,
-                row.get::<_, i64>(6)? != 0,
-            ))
-        })
-        .map_err(database_error("could not read temporary window state"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(database_error("could not read temporary window state"))?;
+    let Ok(database) = Database::open(paths.database()) else {
+        return Vec::new();
+    };
+    if database.migrate().is_err() {
+        return Vec::new();
+    }
+    let Ok(mut statement) = database.connection().prepare(
+        "SELECT note_id, visible, x, y, width, height, always_on_top FROM temporary_windows",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(mut rows) = statement.query([]) else {
+        return Vec::new();
+    };
     let mut states = Vec::new();
-    for (id_bytes, visible, x, y, width, height, always_on_top) in rows {
-        let note_id = crate::storage::repository::note_id_from_blob(&id_bytes)?;
+    while let Ok(Some(row)) = rows.next() {
+        let parsed = (|| -> Result<TemporaryWindowState, CommandError> {
+            let id_bytes = row
+                .get::<_, Vec<u8>>(0)
+                .map_err(database_error("stored temporary window ID is invalid"))?;
+            let note_id = crate::storage::repository::note_id_from_blob(&id_bytes)?;
+            let state = TemporaryWindowState {
+                note_id,
+                visible: row
+                    .get::<_, i64>(1)
+                    .map_err(database_error("stored temporary visibility is invalid"))?
+                    != 0,
+                x: row
+                    .get(2)
+                    .map_err(database_error("stored temporary x coordinate is invalid"))?,
+                y: row
+                    .get(3)
+                    .map_err(database_error("stored temporary y coordinate is invalid"))?,
+                width: row
+                    .get(4)
+                    .map_err(database_error("stored temporary width is invalid"))?,
+                height: row
+                    .get(5)
+                    .map_err(database_error("stored temporary height is invalid"))?,
+                always_on_top: row
+                    .get::<_, i64>(6)
+                    .map_err(database_error("stored temporary pin state is invalid"))?
+                    != 0,
+            };
+            crate::windows::sticky::validate_and_clamp_state(state)
+        })();
+        let Ok(state) = parsed else {
+            continue;
+        };
+        let note_id = state.note_id;
         if !temporary_ids.contains(&note_id) {
             continue;
         }
-        let state = crate::windows::sticky::validate_and_clamp_state(TemporaryWindowState {
-            note_id,
-            visible,
-            x,
-            y,
-            width,
-            height,
-            always_on_top,
-        })?;
         states.push(state);
     }
-    Ok(states)
+    states
 }
 
 fn isolate_old_sidecars(
