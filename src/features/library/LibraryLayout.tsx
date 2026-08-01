@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AssetPort, FolderPort, LibraryColumnPreference, SearchPort, SystemPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
-import { SearchBar } from '../search/SearchBar'
+import { SearchBox } from '../search/SearchBox'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
@@ -57,7 +57,7 @@ export function LibraryLayout({ notes, folders, system, assets, search }: Librar
 
   return (
     <div className="library-shell">
-      {search && <SearchBar search={search} onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))} />}
+      {search && <SearchBox search={search} onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))} />}
       <SplitPane
       defaultSizes={[240, 300]}
       minimumSizes={[180, 220, 420]}

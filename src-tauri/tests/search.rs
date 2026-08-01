@@ -5,7 +5,10 @@ use simple_notes_lib::{
     commands::search::SearchRepository,
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
-    storage::{atomic_file::PublishFailure, rebuild::rebuild_index, repository::NoteRepository},
+    storage::{
+        atomic_file::PublishFailure, markdown::plain_text_from_markdown, rebuild::rebuild_index,
+        repository::NoteRepository,
+    },
 };
 use std::fs;
 use support::TestStore;
@@ -324,6 +327,227 @@ fn one_note_matching_two_tags_is_returned_once() {
     assert_eq!(results[0].title, "Deduplicated");
 }
 
+#[test]
+fn plain_text_extraction_keeps_meaning_and_discards_markup_and_raw_html() {
+    let markdown = "---\ntitle: hidden\n---\n# 登录流程\n\n- **刷新** [令牌](https://example.test)\n- ![错误截图](asset.png)\n\n`status_code`\n\n<script>alert('secret')</script>";
+
+    let plain = plain_text_from_markdown(markdown);
+
+    assert!(plain.contains("登录流程"));
+    assert!(plain.contains("刷新 令牌"));
+    assert!(plain.contains("错误截图"));
+    assert!(plain.contains("status_code"));
+    assert!(!plain.contains("---"));
+    assert!(!plain.contains("**"));
+    assert!(!plain.contains("script"));
+    assert!(!plain.contains("alert"));
+    assert!(!plain.contains("https://"));
+}
+
+#[test]
+fn text_search_matches_chinese_title_body_and_short_queries() {
+    let store = seeded_store();
+    create_note_with_markdown(
+        &store,
+        NOTE_A,
+        "登录流程",
+        NoteKind::Formal,
+        vec!["后端"],
+        "刷新令牌失败后的处理",
+        "2026-07-31T08:03:00Z",
+    );
+    let search = SearchRepository::new(store.paths.clone());
+
+    assert_eq!(search.search_text("登录", 20).unwrap().len(), 1);
+    assert_eq!(search.search_text("令牌失败", 20).unwrap().len(), 1);
+    assert_eq!(search.search_text("令", 20).unwrap().len(), 1);
+    assert_eq!(search.search_text("令牌", 20).unwrap().len(), 1);
+}
+
+#[test]
+fn text_search_is_literal_ranked_filtered_and_returns_bounded_context() {
+    let store = seeded_store();
+    create_note_with_markdown(
+        &store,
+        NOTE_A,
+        "Token failure",
+        NoteKind::Formal,
+        vec!["Backend"],
+        "ordinary body",
+        "2026-07-31T08:01:00Z",
+    );
+    create_note_with_markdown(&store, NOTE_B, "Body match", NoteKind::Formal, vec!["Ops"], "A token failure happened during refresh. This sentence provides enough context around the first match for clipping.", "2026-07-31T08:02:00Z");
+    create_note_with_markdown(
+        &store,
+        NOTE_C,
+        "Deleted",
+        NoteKind::Formal,
+        vec![],
+        "token failure",
+        "2026-07-31T08:03:00Z",
+    );
+    create_note_with_markdown(
+        &store,
+        TEMP,
+        "Temporary",
+        NoteKind::Temporary,
+        vec![],
+        "token failure",
+        "2026-07-31T08:04:00Z",
+    );
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection
+        .execute(
+            "UPDATE notes SET deleted_at = '2026-07-31T09:00:00Z' WHERE id = ?1",
+            [folder_blob(NOTE_C)],
+        )
+        .unwrap();
+    drop(connection);
+    let search = SearchRepository::new(store.paths.clone());
+
+    let results = search.search_text("token failure", 1000).unwrap();
+    assert_eq!(
+        results
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Token failure", "Body match"]
+    );
+    assert_eq!(results[1].folder_breadcrumb, vec!["Work", "Project B"]);
+    assert_eq!(results[1].tags, vec!["Ops"]);
+    assert!(results[0].score > results[1].score);
+    assert!(results[1].excerpt.chars().count() <= 180);
+
+    for literal in [
+        "%",
+        "_",
+        r"\",
+        "\"",
+        "OR",
+        "NEAR(token failure)",
+        "token*",
+        "' OR 1=1 --",
+    ] {
+        let _ = search.search_text(literal, 20).unwrap();
+    }
+}
+
+#[test]
+fn text_search_excerpt_clips_both_unicode_boundaries_within_the_limit() {
+    let store = seeded_store();
+    let body = format!("{}匹配词{}", "前".repeat(120), "后".repeat(120));
+    create_note_with_markdown(
+        &store,
+        NOTE_A,
+        "摘要",
+        NoteKind::Formal,
+        vec![],
+        &body,
+        "2026-07-31T08:00:00Z",
+    );
+
+    let excerpt = SearchRepository::new(store.paths.clone())
+        .search_text("匹配词", 20)
+        .unwrap()
+        .remove(0)
+        .excerpt;
+
+    assert!(excerpt.starts_with('…'));
+    assert!(excerpt.ends_with('…'));
+    assert!(excerpt.contains("匹配词"));
+    assert!(excerpt.chars().count() <= 160);
+}
+
+#[test]
+fn version_one_migration_preserves_notes_and_backfills_search() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = simple_notes_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
+    let connection = Connection::open(paths.database()).unwrap();
+    connection
+        .execute_batch(include_str!("../migrations/0001_initial.sql"))
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-07-31T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+    connection.execute(
+        "INSERT INTO notes(id, kind, title, folder_id, relative_path, created_at, updated_at, revision, deleted_at) VALUES (?1, 'formal', 'Legacy token', NULL, 'notes/legacy', '2026-07-31T08:00:00Z', '2026-07-31T08:00:00Z', 0, NULL)",
+        [folder_blob(NOTE_A)],
+    ).unwrap();
+    connection.execute(
+        "INSERT INTO search_documents(note_id, title, plain_text) VALUES (?1, 'Legacy token', 'migrated body')",
+        [folder_blob(NOTE_A)],
+    ).unwrap();
+    drop(connection);
+
+    let database = simple_notes_lib::storage::database::Database::open(paths.database()).unwrap();
+    database.migrate().unwrap();
+    assert_eq!(database.applied_migration_versions().unwrap(), vec![1, 2]);
+    drop(database);
+    assert_eq!(
+        SearchRepository::new(paths)
+            .search_text("Legacy", 20)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn index_failure_keeps_durable_markdown_and_rebuild_repairs_text_search() {
+    let mut store = seeded_store();
+    create_note_with_markdown(
+        &store,
+        NOTE_A,
+        "Recoverable",
+        NoteKind::Formal,
+        vec![],
+        "old searchable body",
+        "2026-07-31T08:00:00Z",
+    );
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.execute_batch(
+        "CREATE TRIGGER reject_search_update BEFORE INSERT ON search_documents BEGIN SELECT RAISE(ABORT, 'injected index failure'); END;",
+    ).unwrap();
+    drop(connection);
+    let repository = NoteRepository::new(
+        store.paths.clone(),
+        simple_notes_lib::storage::database::Database::open(store.paths.database()).unwrap(),
+    );
+    let mut document = repository.load(note_id(NOTE_A)).unwrap();
+    document.markdown = "new repaired phrase".into();
+    let error = repository.save(document, 0).unwrap_err();
+    assert_eq!(error.code(), CommandErrorCode::Database);
+    let durable = fs::read_to_string(
+        store
+            .paths
+            .note_dir(note_id(NOTE_A), NoteKind::Formal)
+            .unwrap()
+            .join("note.md"),
+    )
+    .unwrap();
+    assert!(durable.contains("new repaired phrase"));
+    drop(repository);
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection
+        .execute("DROP TRIGGER reject_search_update", [])
+        .unwrap();
+    drop(connection);
+    store.close_database();
+
+    rebuild_index(&store.paths).unwrap();
+
+    assert_eq!(
+        SearchRepository::new(store.paths.clone())
+            .search_text("repaired phrase", 20)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 fn seeded_store() -> TestStore {
     let store = TestStore::new();
     let _isolated_root = store.root.path();
@@ -357,6 +581,26 @@ fn create_note(
     tags: Vec<&str>,
     updated_at: &str,
 ) {
+    create_note_with_markdown(
+        store,
+        id,
+        title,
+        kind,
+        tags,
+        &format!("Body for {title}"),
+        updated_at,
+    )
+}
+
+fn create_note_with_markdown(
+    store: &TestStore,
+    id: &str,
+    title: &str,
+    kind: NoteKind,
+    tags: Vec<&str>,
+    markdown: &str,
+    updated_at: &str,
+) {
     NoteRepository::new(
         store.paths.clone(),
         simple_notes_lib::storage::database::Database::open(store.paths.database()).unwrap(),
@@ -367,7 +611,7 @@ fn create_note(
         title: title.into(),
         folder_id: (kind == NoteKind::Formal).then(|| folder_id(CHILD_FOLDER)),
         tags: tags.into_iter().map(str::to_owned).collect(),
-        markdown: format!("Body for {title}"),
+        markdown: markdown.into(),
         revision: 0,
         created_at: "2026-07-31T08:00:00Z".into(),
         updated_at: updated_at.into(),

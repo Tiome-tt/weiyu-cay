@@ -365,6 +365,7 @@ fn clear_rebuildable_rows(transaction: &Transaction<'_>) -> Result<(), CommandEr
             "DELETE FROM temporary_windows;\
              DELETE FROM note_links;\
              DELETE FROM note_tags;\
+             DELETE FROM search_documents_fts;\
              DELETE FROM search_documents;\
              DELETE FROM notes;\
              DELETE FROM tags;\

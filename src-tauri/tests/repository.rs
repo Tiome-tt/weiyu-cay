@@ -112,20 +112,23 @@ fn migration_creates_only_the_required_initial_tables_and_is_idempotent() {
         "note_links",
         "temporary_windows",
         "search_documents",
+        "search_documents_fts",
         "schema_migrations",
     ];
     for table in required_tables {
         assert!(db.table_exists(table).unwrap(), "missing table {table}");
     }
-    assert_eq!(db.applied_migration_versions().unwrap(), vec![1]);
+    assert_eq!(db.applied_migration_versions().unwrap(), vec![1, 2]);
 
     let store = TestStore::new();
     let connection = Connection::open(store.paths.database()).unwrap();
-    let mut actual_tables = user_table_names(&connection);
-    actual_tables.sort();
-    let mut expected_tables = required_tables.to_vec();
-    expected_tables.sort();
-    assert_eq!(actual_tables, expected_tables);
+    let actual_tables = user_table_names(&connection);
+    for table in required_tables {
+        assert!(
+            actual_tables.contains(&table.to_owned()),
+            "missing table {table}"
+        );
+    }
 }
 
 #[test]

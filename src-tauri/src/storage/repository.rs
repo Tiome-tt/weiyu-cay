@@ -4,6 +4,7 @@ use crate::{
     storage::{
         atomic_file::{PublishFailure, PublishResult, PublishState},
         database::Database,
+        markdown::plain_text_from_markdown,
         paths::StoragePaths,
     },
 };
@@ -509,6 +510,7 @@ pub(crate) fn persist_document_in_transaction(
     let id = note_id_blob(document.id);
     let folder_id = document.folder_id.map(folder_id_blob);
     let relative_path = format!("{}/{}", kind_directory(document.kind), document.id);
+    let plain_text = plain_text_from_markdown(&document.markdown);
     transaction
         .execute(
             "INSERT INTO notes (id, kind, title, folder_id, relative_path, created_at, updated_at, revision, deleted_at) \
@@ -591,9 +593,21 @@ pub(crate) fn persist_document_in_transaction(
         .execute(
             "INSERT INTO search_documents (note_id, title, plain_text) VALUES (?1, ?2, ?3) \
              ON CONFLICT(note_id) DO UPDATE SET title=excluded.title, plain_text=excluded.plain_text",
-            params![id, document.title, document.markdown],
+            params![id, document.title, plain_text],
         )
         .map_err(database_error("could not update search document"))?;
+    transaction
+        .execute(
+            "DELETE FROM search_documents_fts WHERE note_id = ?1",
+            params![id],
+        )
+        .map_err(database_error("could not clear full-text search document"))?;
+    transaction
+        .execute(
+            "INSERT INTO search_documents_fts (note_id, title, plain_text) VALUES (?1, ?2, ?3)",
+            params![id, document.title, plain_text],
+        )
+        .map_err(database_error("could not update full-text search document"))?;
     Ok(())
 }
 

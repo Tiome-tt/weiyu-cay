@@ -3,7 +3,11 @@ use rusqlite::{Connection, OptionalExtension};
 use std::{path::Path, time::Duration};
 
 const INITIAL_MIGRATION: &str = include_str!("../../migrations/0001_initial.sql");
-const INITIAL_VERSION: i64 = 1;
+const SEARCH_MIGRATION: &str = include_str!("../../migrations/0002_search_fts.sql");
+const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (1, INITIAL_MIGRATION, "initial schema"),
+    (2, SEARCH_MIGRATION, "full-text search schema"),
+];
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct Database {
@@ -49,7 +53,7 @@ impl Database {
             .connection
             .unchecked_transaction()
             .map_err(database_error("could not start schema migration"))?;
-        let applied = transaction
+        let has_migrations = transaction
             .query_row(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
                 [],
@@ -57,27 +61,31 @@ impl Database {
             )
             .optional()
             .map_err(database_error("could not inspect schema migrations"))?
-            .is_some()
-            && transaction
-                .query_row(
-                    "SELECT 1 FROM schema_migrations WHERE version = ?1",
-                    [INITIAL_VERSION],
-                    |_| Ok(()),
-                )
-                .optional()
-                .map_err(database_error("could not inspect migration version"))?
-                .is_some();
+            .is_some();
 
-        if !applied {
-            transaction
-                .execute_batch(INITIAL_MIGRATION)
-                .map_err(database_error("could not apply initial schema"))?;
+        for &(version, sql, description) in MIGRATIONS {
+            let applied = has_migrations
+                && transaction
+                    .query_row(
+                        "SELECT 1 FROM schema_migrations WHERE version = ?1",
+                        [version],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map_err(database_error("could not inspect migration version"))?
+                    .is_some();
+            if applied {
+                continue;
+            }
+            transaction.execute_batch(sql).map_err(|source| {
+                CommandError::database(format!("could not apply {description}: {source}"))
+            })?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-                    [INITIAL_VERSION],
+                    [version],
                 )
-                .map_err(database_error("could not record initial schema"))?;
+                .map_err(database_error("could not record schema migration"))?;
         }
 
         transaction

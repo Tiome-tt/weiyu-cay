@@ -15,9 +15,11 @@ use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use std::collections::HashSet;
 use tauri::State;
+use unicode_normalization::UnicodeNormalization;
 
 const MAX_QUERY_LENGTH: usize = 256;
 const MAX_RESULTS: usize = 100;
+const EXCERPT_LENGTH: usize = 160;
 
 pub struct SearchRepository {
     paths: StoragePaths,
@@ -129,6 +131,37 @@ impl SearchRepository {
             .collect()
     }
 
+    pub fn search_text(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, CommandError> {
+        let query = normalize_text_query(query)?;
+        let bounded_limit = limit.clamp(1, MAX_RESULTS);
+        let database = self.database()?;
+        let rows = if query.chars().count() >= 3 {
+            search_fts(database.connection(), &query, bounded_limit)?
+        } else {
+            search_short(database.connection(), &query, bounded_limit)?
+        };
+        rows.into_iter()
+            .map(|(id, title, folder_id, plain_text, score)| {
+                let note_id = note_id_from_blob(&id)?;
+                Ok(SearchResult {
+                    note_id,
+                    title,
+                    folder_breadcrumb: folder_breadcrumb(
+                        database.connection(),
+                        folder_id.as_deref(),
+                    )?,
+                    tags: note_tags(database.connection(), &id)?,
+                    excerpt: excerpt(&plain_text, &query, EXCERPT_LENGTH),
+                    score,
+                })
+            })
+            .collect()
+    }
+
     fn database(&self) -> Result<Database, CommandError> {
         let database = Database::open(self.paths.database())?;
         database.migrate()?;
@@ -154,10 +187,7 @@ pub fn search_notes(
             SearchRepository::new(state.paths().clone()).search_tag(&value, limit.unwrap_or(50))
         }
         SearchQuery::Text { value } => {
-            let _ = value;
-            Err(CommandError::unsupported(
-                "text search is not available yet",
-            ))
+            SearchRepository::new(state.paths().clone()).search_text(&value, limit.unwrap_or(50))
         }
     }
 }
@@ -184,6 +214,137 @@ fn escape_like(value: &str) -> String {
         escaped.push(character);
     }
     escaped
+}
+
+type TextSearchRow = (Vec<u8>, String, Option<Vec<u8>>, String, f64);
+
+fn search_fts(
+    connection: &rusqlite::Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<TextSearchRow>, CommandError> {
+    // One quoted phrase makes all FTS operators and punctuation user literals.
+    let literal_match = format!("\"{}\"", query.replace('"', "\"\""));
+    let mut statement = connection.prepare(
+        "SELECT n.id, n.title, n.folder_id, sd.plain_text, \
+         CASE WHEN lower(n.title) = lower(?2) THEN 3.0 \
+              WHEN instr(lower(n.title), lower(?2)) > 0 THEN 2.0 ELSE 1.0 END AS score, \
+         CASE WHEN lower(n.title) = lower(?2) THEN 0 \
+              WHEN instr(lower(n.title), lower(?2)) > 0 THEN 1 ELSE 2 END AS title_rank, \
+         CASE WHEN instr(lower(n.title), lower(?2)) > 0 THEN instr(lower(n.title), lower(?2)) ELSE 2147483647 END AS title_position, \
+         CASE WHEN instr(lower(sd.plain_text), lower(?2)) > 0 THEN instr(lower(sd.plain_text), lower(?2)) ELSE 2147483647 END AS body_position, \
+         bm25(search_documents_fts, 8.0, 1.0) AS relevance \
+         FROM search_documents_fts \
+         JOIN notes n ON n.id = search_documents_fts.note_id \
+         JOIN search_documents sd ON sd.note_id = n.id \
+         WHERE search_documents_fts MATCH ?1 AND n.kind = 'formal' AND n.deleted_at IS NULL \
+         ORDER BY title_rank, title_position, relevance, body_position, n.updated_at DESC, n.id ASC, n.title ASC LIMIT ?3",
+    ).map_err(database_error("could not prepare full-text search"))?;
+    let rows = statement
+        .query_map(
+            params![literal_match, query, i64::try_from(limit).unwrap_or(100)],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(database_error("could not search full text"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error("could not read full-text search"))?;
+    Ok(rows)
+}
+
+fn search_short(
+    connection: &rusqlite::Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<TextSearchRow>, CommandError> {
+    let contains = format!("%{}%", escape_like(query));
+    let mut statement = connection.prepare(
+        "SELECT n.id, n.title, n.folder_id, sd.plain_text, \
+         CASE WHEN lower(n.title) = lower(?1) THEN 3.0 \
+              WHEN n.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE THEN 2.0 ELSE 1.0 END AS score, \
+         CASE WHEN lower(n.title) = lower(?1) THEN 0 \
+              WHEN n.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE THEN 1 ELSE 2 END AS title_rank, \
+         CASE WHEN instr(lower(n.title), lower(?1)) > 0 THEN instr(lower(n.title), lower(?1)) ELSE 2147483647 END AS title_position, \
+         CASE WHEN instr(lower(sd.plain_text), lower(?1)) > 0 THEN instr(lower(sd.plain_text), lower(?1)) ELSE 2147483647 END AS body_position \
+         FROM notes n JOIN search_documents sd ON sd.note_id = n.id \
+         WHERE n.kind = 'formal' AND n.deleted_at IS NULL \
+           AND (n.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE OR sd.plain_text LIKE ?2 ESCAPE '\\' COLLATE NOCASE) \
+         ORDER BY title_rank, title_position, body_position, n.updated_at DESC, n.id ASC, n.title ASC LIMIT ?3",
+    ).map_err(database_error("could not prepare short text search"))?;
+    let rows = statement
+        .query_map(
+            params![query, contains, i64::try_from(limit).unwrap_or(100)],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(database_error("could not search short text"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error("could not read short text search"))?;
+    Ok(rows)
+}
+
+fn normalize_text_query(input: &str) -> Result<String, CommandError> {
+    let value: String = input.nfkc().collect();
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(CommandError::validation("search query is empty"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(CommandError::validation(
+            "search query contains a control character",
+        ));
+    }
+    if value.chars().count() > MAX_QUERY_LENGTH {
+        return Err(CommandError::validation("search query is too long"));
+    }
+    Ok(value.to_owned())
+}
+
+fn excerpt(plain_text: &str, query: &str, maximum: usize) -> String {
+    let characters = plain_text.chars().collect::<Vec<_>>();
+    if characters.len() <= maximum {
+        return plain_text.to_owned();
+    }
+    let content_limit = maximum.saturating_sub(2).max(1);
+    let match_character = find_match_character(plain_text, query).unwrap_or(0);
+    let query_length = query.chars().count().min(content_limit);
+    let start = match_character
+        .saturating_sub((content_limit.saturating_sub(query_length)) / 2)
+        .min(characters.len().saturating_sub(content_limit));
+    let end = (start + content_limit).min(characters.len());
+    let mut result = String::new();
+    if start > 0 {
+        result.push('…');
+    }
+    result.extend(characters[start..end].iter());
+    if end < characters.len() {
+        result.push('…');
+    }
+    result
+}
+
+fn find_match_character(text: &str, query: &str) -> Option<usize> {
+    let byte = text.find(query).or_else(|| {
+        query
+            .is_ascii()
+            .then(|| text.to_ascii_lowercase().find(&query.to_ascii_lowercase()))
+            .flatten()
+    })?;
+    Some(text[..byte].chars().count())
 }
 
 fn note_tags(
