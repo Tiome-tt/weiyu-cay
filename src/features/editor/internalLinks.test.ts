@@ -313,7 +313,7 @@ describe('CodeMirror internal link extension', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('allows a pre-barrier authorized image paste beside a link without damaging its range', async () => {
+  it('inserts a pre-barrier authorized image paste beside a link and publishes the result', async () => {
     let finish!: (value: { relativePath: string; width: number; height: number }) => void
     const assets = {
       saveImage: vi.fn(() => new Promise<{ relativePath: string; width: number; height: number }>((resolve) => {
@@ -322,12 +322,13 @@ describe('CodeMirror internal link extension', () => {
     }
     const ref = createRef<MarkdownSourceHandle>()
     const raw = `[[Target|${targetId}]]`
+    const onChange = vi.fn()
     render(createElement(MarkdownSource, {
       ref,
       markdown: `${raw} tail`,
       noteId: targetId,
       assets,
-      onChange: vi.fn(),
+      onChange,
       links: linkPort(),
     }))
     const view = editorView()
@@ -344,7 +345,9 @@ describe('CodeMirror internal link extension', () => {
     await act(async () => finish({ relativePath: 'assets/authorized.png', width: 1, height: 1 }))
     await barrier
 
-    expect(view.state.doc.toString()).toContain(raw)
+    const expected = `${raw}![截图](assets/authorized.png) tail`
+    expect(view.state.doc.toString()).toBe(expected)
+    expect(onChange).toHaveBeenLastCalledWith(expected)
     expect(parseInternalLinks(view.state.doc.toString())).toEqual([
       expect.objectContaining({ label: 'Target', targetId }),
     ])
