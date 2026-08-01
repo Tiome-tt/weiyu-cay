@@ -6,13 +6,32 @@ use simple_notes_lib::{
     error::CommandErrorCode,
     storage::{database::Database, paths::StoragePaths},
 };
-use std::path::Path;
+use std::{path::Path, time::Duration};
 use support::TestStore;
 
 const NOTE_ID: &str = "019c0000-0000-7000-8000-000000000002";
 const FOLDER_ID: &[u8; 16] = b"0123456789abcdef";
 const NOTE_UUID: &[u8; 16] = b"fedcba9876543210";
 const OTHER_NOTE_UUID: &[u8; 16] = b"abcdef0123456789";
+
+#[test]
+fn index_mutation_lock_reports_busy_and_releases_with_handle_lifetime() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let first = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let busy = simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+        paths.root(),
+        Duration::ZERO,
+    )
+    .unwrap_err();
+    assert_eq!(busy.code(), CommandErrorCode::Conflict);
+    drop(first);
+    simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+        paths.root(),
+        Duration::ZERO,
+    )
+    .unwrap();
+}
 
 #[test]
 fn storage_paths_create_the_expected_contained_layout() {

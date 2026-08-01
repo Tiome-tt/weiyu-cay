@@ -41,6 +41,15 @@ impl FolderRepository {
     }
 
     pub fn create(&self, input: CreateFolderInput) -> Result<Folder, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.create_locked(input, &guard)
+    }
+    #[doc(hidden)]
+    pub fn create_locked(
+        &self,
+        input: CreateFolderInput,
+        _guard: &crate::platform::IndexMutationLock,
+    ) -> Result<Folder, CommandError> {
         let name = validate_name(&input.name)?;
         let transaction = self
             .database
@@ -75,6 +84,16 @@ impl FolderRepository {
     }
 
     pub fn rename(&self, id: FolderId, name: String) -> Result<Folder, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.rename_locked(id, name, &guard)
+    }
+    #[doc(hidden)]
+    pub fn rename_locked(
+        &self,
+        id: FolderId,
+        name: String,
+        _guard: &crate::platform::IndexMutationLock,
+    ) -> Result<Folder, CommandError> {
         let name = validate_name(&name)?;
         let transaction = self
             .database
@@ -100,6 +119,16 @@ impl FolderRepository {
         &self,
         id: FolderId,
         parent_id: Option<FolderId>,
+    ) -> Result<Folder, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.move_folder_locked(id, parent_id, &guard)
+    }
+    #[doc(hidden)]
+    pub fn move_folder_locked(
+        &self,
+        id: FolderId,
+        parent_id: Option<FolderId>,
+        _guard: &crate::platform::IndexMutationLock,
     ) -> Result<Folder, CommandError> {
         let transaction = self
             .database
@@ -144,6 +173,15 @@ impl FolderRepository {
     }
 
     pub fn delete_empty(&self, id: FolderId) -> Result<(), CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.delete_empty_locked(id, &guard)
+    }
+    #[doc(hidden)]
+    pub fn delete_empty_locked(
+        &self,
+        id: FolderId,
+        _guard: &crate::platform::IndexMutationLock,
+    ) -> Result<(), CommandError> {
         let transaction = self
             .database
             .connection()
@@ -204,7 +242,8 @@ pub fn create_folder(
     state: State<'_, FolderCommandState>,
     input: CreateFolderInput,
 ) -> Result<Folder, CommandError> {
-    repository(&state)?.create(input)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.create_locked(input, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -213,7 +252,8 @@ pub fn rename_folder(
     folder_id: FolderId,
     name: String,
 ) -> Result<Folder, CommandError> {
-    repository(&state)?.rename(folder_id, name)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.rename_locked(folder_id, name, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -222,7 +262,8 @@ pub fn move_folder(
     folder_id: FolderId,
     parent_id: Option<FolderId>,
 ) -> Result<Folder, CommandError> {
-    repository(&state)?.move_folder(folder_id, parent_id)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.move_folder_locked(folder_id, parent_id, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -230,7 +271,8 @@ pub fn delete_empty_folder(
     state: State<'_, FolderCommandState>,
     folder_id: FolderId,
 ) -> Result<(), CommandError> {
-    repository(&state)?.delete_empty(folder_id)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.delete_empty_locked(folder_id, &guard)
 }
 
 fn repository(state: &FolderCommandState) -> Result<FolderRepository, CommandError> {

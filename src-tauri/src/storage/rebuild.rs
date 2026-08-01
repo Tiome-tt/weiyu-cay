@@ -75,6 +75,7 @@ fn rebuild_index_with_policy<F>(
 where
     F: FnOnce(&Path) -> Result<(), CommandError>,
 {
+    let _mutation_lock = platform::IndexMutationLock::acquire(paths.root())?;
     let root = platform::SafeDirectory::open(paths.root(), &[], false)?;
     // Validate the live database before creating or moving any rebuild artifact.
     root.regular_file_exists("index.sqlite")?;

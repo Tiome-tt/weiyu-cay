@@ -78,6 +78,16 @@ impl NoteRepository {
     }
 
     pub fn create(&self, document: NoteDocument) -> Result<NoteDocument, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.create_locked(document, &guard)
+    }
+
+    #[doc(hidden)]
+    pub fn create_locked(
+        &self,
+        document: NoteDocument,
+        _guard: &crate::platform::IndexMutationLock,
+    ) -> Result<NoteDocument, CommandError> {
         validate_document(&document)?;
         if document.revision != 0 {
             return Err(CommandError::validation(
@@ -148,8 +158,19 @@ impl NoteRepository {
 
     pub fn save(
         &self,
+        document: NoteDocument,
+        expected_revision: u64,
+    ) -> Result<NoteDocument, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.save_locked(document, expected_revision, &guard)
+    }
+
+    #[doc(hidden)]
+    pub fn save_locked(
+        &self,
         mut document: NoteDocument,
         expected_revision: u64,
+        _guard: &crate::platform::IndexMutationLock,
     ) -> Result<NoteDocument, CommandError> {
         validate_document(&document)?;
         let current = self.load(document.id)?;
@@ -254,6 +275,17 @@ impl NoteRepository {
         &self,
         id: NoteId,
         folder_id: Option<FolderId>,
+    ) -> Result<NoteDocument, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.move_note_locked(id, folder_id, &guard)
+    }
+
+    #[doc(hidden)]
+    pub fn move_note_locked(
+        &self,
+        id: NoteId,
+        folder_id: Option<FolderId>,
+        _guard: &crate::platform::IndexMutationLock,
     ) -> Result<NoteDocument, CommandError> {
         let mut document = self.load(id)?;
         self.validate_folder_exists(folder_id)?;

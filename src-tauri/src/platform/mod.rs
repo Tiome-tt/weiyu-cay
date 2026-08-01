@@ -4,10 +4,14 @@ mod unix;
 mod windows;
 
 #[cfg(unix)]
-pub use unix::{recover_file, replace_file, replace_file_with_backup, sync_parent, SafeDirectory};
+pub use unix::{
+    recover_file, replace_file, replace_file_with_backup, sync_parent, IndexMutationLock,
+    SafeDirectory,
+};
 #[cfg(windows)]
 pub use windows::{
-    recover_file, replace_file, replace_file_with_backup, sync_parent, SafeDirectory,
+    recover_file, replace_file, replace_file_with_backup, sync_parent, IndexMutationLock,
+    SafeDirectory,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -48,6 +48,7 @@ impl SearchRepository {
         note_id: NoteId,
         tags: Vec<String>,
     ) -> Result<NoteDocument, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         let requested = normalized_tags(&tags)?;
         let database = self.database()?;
         let mut canonical = Vec::with_capacity(requested.len());
@@ -76,7 +77,7 @@ impl SearchRepository {
         }
         let revision = document.revision;
         document.tags = canonical;
-        repository.save(document, revision)
+        repository.save_locked(document, revision, &guard)
     }
 
     pub fn search_tag(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, CommandError> {

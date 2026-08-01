@@ -6,8 +6,8 @@ use crate::{
 use rustix::{
     fd::OwnedFd,
     fs::{
-        fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode,
-        OFlags, CWD,
+        flock, fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags,
+        FileType, FlockOperation, Mode, OFlags, CWD,
     },
 };
 #[cfg(target_os = "macos")]
@@ -16,8 +16,66 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
+
+const INDEX_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub struct IndexMutationLock {
+    _file: OwnedFd,
+}
+
+impl IndexMutationLock {
+    pub fn acquire(root: &Path) -> Result<Self, CommandError> {
+        Self::acquire_with_timeout(root, INDEX_LOCK_TIMEOUT)
+    }
+
+    #[doc(hidden)]
+    pub fn acquire_with_timeout(root: &Path, timeout: Duration) -> Result<Self, CommandError> {
+        let directory = rustix::fs::open(
+            root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|source| CommandError::io(format!("could not open index lock root: {source}")))?;
+        let file = openat(
+            &directory,
+            ".index-mutation.lock",
+            OFlags::CREATE | OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|source| {
+            CommandError::io(format!("could not open index mutation lock: {source}"))
+        })?;
+        if FileType::from_raw_mode(
+            fstat(&file)
+                .map_err(|source| {
+                    CommandError::io(format!("could not inspect index mutation lock: {source}"))
+                })?
+                .st_mode,
+        ) != FileType::RegularFile
+        {
+            return Err(CommandError::validation(
+                "index mutation lock must be a regular file",
+            ));
+        }
+        let started = Instant::now();
+        loop {
+            match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(_) if started.elapsed() < timeout => thread::yield_now(),
+                Err(source) => {
+                    return Err(CommandError::conflict(format!(
+                        "index mutation lock is busy: {source}"
+                    )))
+                }
+            }
+        }
+    }
+}
 
 pub fn replace_file(source: &Path, destination: &Path) -> PublishResult {
     let backup = destination.with_file_name(format!(

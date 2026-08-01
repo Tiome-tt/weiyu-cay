@@ -14,7 +14,8 @@ use std::{
         io::AsRawHandle,
     },
     path::{Path, PathBuf},
-    ptr,
+    ptr, thread,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 
@@ -31,6 +32,60 @@ const FILE_SHARE_DELETE: u32 = 0x0000_0004;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+const INDEX_LOCK: &str = ".index-mutation.lock";
+const INDEX_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub struct IndexMutationLock {
+    _file: File,
+}
+
+impl IndexMutationLock {
+    pub fn acquire(root: &Path) -> Result<Self, CommandError> {
+        Self::acquire_with_timeout(root, INDEX_LOCK_TIMEOUT)
+    }
+
+    #[doc(hidden)]
+    pub fn acquire_with_timeout(root: &Path, timeout: Duration) -> Result<Self, CommandError> {
+        let safe_root = SafeDirectory::open(root, &[], false)?;
+        drop(safe_root);
+        let path = root.join(INDEX_LOCK);
+        let started = Instant::now();
+        loop {
+            let opened = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .share_mode(0)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&path);
+            match opened {
+                Ok(file) => {
+                    let attributes = file
+                        .metadata()
+                        .map_err(|source| {
+                            CommandError::io(format!(
+                                "could not inspect index mutation lock: {source}"
+                            ))
+                        })?
+                        .file_attributes();
+                    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                        return Err(CommandError::validation(
+                            "index mutation lock must not be a reparse point",
+                        ));
+                    }
+                    return Ok(Self { _file: file });
+                }
+                Err(_source) if started.elapsed() < timeout => thread::yield_now(),
+                Err(source) => {
+                    return Err(CommandError::conflict(format!(
+                        "index mutation lock is busy: {source}"
+                    )))
+                }
+            }
+        }
+    }
+}
 
 #[link(name = "kernel32")]
 extern "system" {

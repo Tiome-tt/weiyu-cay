@@ -38,7 +38,8 @@ pub fn create_note(
     state: State<'_, NoteCommandState>,
     document: NoteDocument,
 ) -> Result<NoteDocument, CommandError> {
-    repository(&state)?.create(document)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.create_locked(document, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -54,7 +55,8 @@ pub fn save_note(
     state: State<'_, NoteCommandState>,
     input: SaveNoteInput,
 ) -> Result<NoteDocument, CommandError> {
-    repository(&state)?.save(input.document, input.expected_revision)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.save_locked(input.document, input.expected_revision, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -71,7 +73,8 @@ pub fn move_note(
     note_id: NoteId,
     folder_id: Option<FolderId>,
 ) -> Result<NoteDocument, CommandError> {
-    repository(&state)?.move_note(note_id, folder_id)
+    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    repository(&state)?.move_note_locked(note_id, folder_id, &guard)
 }
 
 fn repository(state: &NoteCommandState) -> Result<NoteRepository, CommandError> {

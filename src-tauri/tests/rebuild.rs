@@ -6,18 +6,200 @@ use simple_notes_lib::{
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandError,
     storage::{
+        atomic_file::{atomic_replace_contained, PublishResult},
         database::Database,
         rebuild::{rebuild_index, rebuild_index_with_hook},
         repository::NoteRepository,
     },
 };
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    sync::{mpsc, Mutex, OnceLock},
+    thread,
+};
 use support::TestStore;
 
 const NOTE_ID: &str = "019c0000-0000-7000-8000-000000000211";
 const BROKEN_ID: &str = "019c0000-0000-7000-8000-000000000212";
 const TARGET_ID: &str = "019c0000-0000-7000-8000-000000000299";
 const FOLDER_ID: &str = "019c0000-0000-7000-8000-000000000220";
+
+type PauseHook = (mpsc::Sender<()>, mpsc::Receiver<()>);
+static SAVE_PAUSE: OnceLock<Mutex<Option<PauseHook>>> = OnceLock::new();
+
+fn pausing_writer(
+    paths: &simple_notes_lib::storage::paths::StoragePaths,
+    id: NoteId,
+    kind: NoteKind,
+    bytes: &[u8],
+) -> PublishResult {
+    let id_text = id.to_string();
+    let result = atomic_replace_contained(
+        paths.root(),
+        &[
+            if kind == NoteKind::Formal {
+                "notes"
+            } else {
+                "temporary"
+            },
+            id_text.as_str(),
+        ],
+        "note.md",
+        bytes,
+    );
+    if result.is_ok() {
+        let hook = SAVE_PAUSE.get().unwrap().lock().unwrap().take().unwrap();
+        hook.0.send(()).unwrap();
+        hook.1.recv().unwrap();
+    }
+    result
+}
+
+#[test]
+fn rebuild_serializes_a_save_after_its_scan_and_indexes_the_new_revision() {
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(
+        store.paths.clone(),
+        Database::open(store.paths.database()).unwrap(),
+    );
+    repository
+        .create(NoteDocument {
+            id: NoteId::parse_str(NOTE_ID).unwrap(),
+            kind: NoteKind::Formal,
+            title: "Concurrent".into(),
+            folder_id: None,
+            tags: vec![],
+            markdown: "before rebuild".into(),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".into(),
+            updated_at: "2026-07-30T00:00:00Z".into(),
+        })
+        .unwrap();
+    drop(repository);
+    store.close_database();
+
+    let (scanned_tx, scanned_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let rebuild_paths = store.paths.clone();
+    let rebuild = thread::spawn(move || {
+        rebuild_index_with_hook(&rebuild_paths, |_| {
+            scanned_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    scanned_rx.recv().unwrap();
+
+    let (saved_tx, saved_rx) = mpsc::channel();
+    let save_paths = store.paths.clone();
+    let save = thread::spawn(move || {
+        let guard =
+            simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
+        let database = Database::open(save_paths.database()).unwrap();
+        database.migrate().unwrap();
+        let repository = NoteRepository::new(save_paths, database);
+        let mut document = repository
+            .load(NoteId::parse_str(NOTE_ID).unwrap())
+            .unwrap();
+        document.markdown = "after rebuild revision".into();
+        let result = repository.save_locked(document, 0, &guard);
+        saved_tx.send(()).unwrap();
+        result
+    });
+
+    assert!(matches!(
+        saved_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    release_tx.send(()).unwrap();
+    rebuild.join().unwrap().unwrap();
+    saved_rx.recv().unwrap();
+    save.join().unwrap().unwrap();
+    let database = Connection::open(store.paths.database()).unwrap();
+    assert_eq!(
+        database
+            .query_row(
+                "SELECT plain_text FROM search_documents WHERE note_id = ?1",
+                [uuid::Uuid::parse_str(NOTE_ID).unwrap().as_bytes().to_vec()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "after rebuild revision",
+    );
+}
+
+#[test]
+fn failed_index_save_marker_survives_until_locked_rebuild_indexes_durable_content() {
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(
+        store.paths.clone(),
+        Database::open(store.paths.database()).unwrap(),
+    );
+    repository
+        .create(NoteDocument {
+            id: NoteId::parse_str(NOTE_ID).unwrap(),
+            kind: NoteKind::Formal,
+            title: "Marker race".into(),
+            folder_id: None,
+            tags: vec![],
+            markdown: "old content".into(),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".into(),
+            updated_at: "2026-07-30T00:00:00Z".into(),
+        })
+        .unwrap();
+    drop(repository);
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_search_race BEFORE INSERT ON search_documents BEGIN SELECT RAISE(ABORT, 'race failure'); END;").unwrap();
+    drop(connection);
+    store.close_database();
+
+    let (durable_tx, durable_rx) = mpsc::channel();
+    let (release_save_tx, release_save_rx) = mpsc::channel();
+    *SAVE_PAUSE.get_or_init(|| Mutex::new(None)).lock().unwrap() =
+        Some((durable_tx, release_save_rx));
+    let save_paths = store.paths.clone();
+    let save = thread::spawn(move || {
+        let guard =
+            simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
+        let database = Database::open(save_paths.database()).unwrap();
+        database.migrate().unwrap();
+        let repository = NoteRepository::new_with_writer(save_paths, database, pausing_writer);
+        let mut document = repository
+            .load(NoteId::parse_str(NOTE_ID).unwrap())
+            .unwrap();
+        document.markdown = "durable marker race content".into();
+        repository.save_locked(document, 0, &guard)
+    });
+    durable_rx.recv().unwrap();
+
+    let (rebuilt_tx, rebuilt_rx) = mpsc::channel();
+    let rebuild_paths = store.paths.clone();
+    let rebuild = thread::spawn(move || {
+        let result = rebuild_index(&rebuild_paths);
+        rebuilt_tx.send(()).unwrap();
+        result
+    });
+    assert!(matches!(
+        rebuilt_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    release_save_tx.send(()).unwrap();
+    assert!(save.join().unwrap().is_err());
+    assert!(store.paths.root().join("rebuild-needed.json").is_file());
+    rebuilt_rx.recv().unwrap();
+    rebuild.join().unwrap().unwrap();
+
+    assert!(!store.paths.root().join("rebuild-needed.json").exists());
+    let connection = Connection::open(store.paths.database()).unwrap();
+    let plain: String = connection
+        .query_row("SELECT plain_text FROM search_documents", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(plain, "durable marker race content");
+}
 
 fn note() -> NoteDocument {
     NoteDocument {
