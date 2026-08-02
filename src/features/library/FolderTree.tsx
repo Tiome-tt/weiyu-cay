@@ -4,8 +4,10 @@ import type { Folder, FolderId } from '../../domain/model'
 interface FolderTreeProps {
   folders: Folder[]
   activeId: FolderId | null
+  temporaryInboxActive?: boolean
   state: 'loading' | 'ready' | 'error'
   onSelect: (id: FolderId | null) => void
+  onTemporaryInbox?: () => void
   onCreate: (parentId: FolderId | null, name: string) => Promise<void>
   onRename: (id: FolderId, name: string) => Promise<void>
   onMove: (id: FolderId, parentId: FolderId | null) => Promise<void>
@@ -17,10 +19,10 @@ export function FolderTree(props: FolderTreeProps) {
   const [renaming, setRenaming] = useState<FolderId | null>(null)
   const [moving, setMoving] = useState<FolderId | null>(null)
   const [moveTarget, setMoveTarget] = useState<FolderId | null>(null)
-  const [focusedKey, setFocusedKey] = useState<'root' | FolderId>('root')
+  const [focusedKey, setFocusedKey] = useState<TreeItemKey>('root')
   const [name, setName] = useState('')
   const [error, setError] = useState(false)
-  const itemRefs = useRef(new Map<'root' | FolderId, HTMLButtonElement>())
+  const itemRefs = useRef(new Map<TreeItemKey, HTMLButtonElement>())
 
   const finishCreate = async (event: FormEvent) => {
     event.preventDefault()
@@ -83,9 +85,9 @@ export function FolderTree(props: FolderTreeProps) {
   }
 
   const selected = props.folders.find((folder) => folder.id === props.activeId)
-  const visibleKeys = useMemo<Array<'root' | FolderId>>(
-    () => ['root', ...flattenFolders(props.folders)],
-    [props.folders],
+  const visibleKeys = useMemo<TreeItemKey[]>(
+    () => ['root', ...(props.onTemporaryInbox ? ['temporary-inbox' as const] : []), ...flattenFolders(props.folders)],
+    [props.folders, props.onTemporaryInbox],
   )
 
   useEffect(() => {
@@ -94,23 +96,23 @@ export function FolderTree(props: FolderTreeProps) {
     }
   }, [focusedKey, props.activeId, visibleKeys])
 
-  const focusItem = (key: 'root' | FolderId) => {
+  const focusItem = (key: TreeItemKey) => {
     setFocusedKey(key)
     queueMicrotask(() => itemRefs.current.get(key)?.focus())
   }
 
   const handleTreeKey = (
     event: KeyboardEvent<HTMLButtonElement>,
-    key: 'root' | FolderId,
+    key: TreeItemKey,
   ) => {
-    if (event.ctrlKey && event.key.toLowerCase() === 'm' && key !== 'root') {
+    if (event.ctrlKey && event.key.toLowerCase() === 'm' && key !== 'root' && key !== 'temporary-inbox') {
       event.preventDefault()
       setMoving(key)
       setMoveTarget(null)
       return
     }
     const index = visibleKeys.indexOf(key)
-    let target: 'root' | FolderId | undefined
+    let target: TreeItemKey | undefined
     switch (event.key) {
       case 'ArrowDown':
         target = visibleKeys[Math.min(index + 1, visibleKeys.length - 1)]
@@ -125,12 +127,14 @@ export function FolderTree(props: FolderTreeProps) {
         target = visibleKeys[visibleKeys.length - 1]
         break
       case 'ArrowRight':
-        target = key === 'root'
+        target = key === 'root' || key === 'temporary-inbox'
           ? props.folders.find((folder) => folder.parentId === null)?.id
           : props.folders.find((folder) => folder.parentId === key)?.id
         break
       case 'ArrowLeft':
-        if (key !== 'root') {
+        if (key === 'temporary-inbox') {
+          target = 'root'
+        } else if (key !== 'root') {
           target = props.folders.find((folder) => folder.id === key)?.parentId ?? 'root'
         }
         break
@@ -142,7 +146,7 @@ export function FolderTree(props: FolderTreeProps) {
     focusItem(target)
   }
 
-  const registerItem = (key: 'root' | FolderId, node: HTMLButtonElement | null) => {
+  const registerItem = (key: TreeItemKey, node: HTMLButtonElement | null) => {
     if (node) itemRefs.current.set(key, node)
     else itemRefs.current.delete(key)
   }
@@ -265,7 +269,7 @@ export function FolderTree(props: FolderTreeProps) {
           <button
             ref={(node) => registerItem('root', node)}
             role="treeitem"
-            aria-selected={props.activeId === null}
+            aria-selected={props.activeId === null && !props.temporaryInboxActive}
             tabIndex={focusedKey === 'root' ? 0 : -1}
             className="folder-tree__item"
             type="button"
@@ -278,12 +282,31 @@ export function FolderTree(props: FolderTreeProps) {
             <span aria-hidden="true">⌂</span> 所有笔记
           </button>
         </li>
+        {props.onTemporaryInbox && (
+          <li role="none">
+            <button
+              ref={(node) => registerItem('temporary-inbox', node)}
+              role="treeitem"
+              aria-selected={props.temporaryInboxActive === true}
+              tabIndex={focusedKey === 'temporary-inbox' ? 0 : -1}
+              className="folder-tree__item"
+              type="button"
+              onFocus={() => setFocusedKey('temporary-inbox')}
+              onKeyDown={(event) => handleTreeKey(event, 'temporary-inbox')}
+              onClick={props.onTemporaryInbox}
+            >
+              <span aria-hidden="true">✦</span> 临时收集箱
+            </button>
+          </li>
+        )}
         {renderBranch(null)}
       </ul>
       {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
     </nav>
   )
 }
+
+type TreeItemKey = 'root' | 'temporary-inbox' | FolderId
 
 function flattenFolders(folders: Folder[], parentId: FolderId | null = null): FolderId[] {
   return folders

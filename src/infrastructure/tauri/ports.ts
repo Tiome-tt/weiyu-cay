@@ -132,6 +132,17 @@ class TauriTemporaryPort implements TemporaryPort {
     return this.client.invoke<NoteDocument[]>('list_temporary')
   }
 
+  convert(input: Parameters<TemporaryPort['convert']>[0]) {
+    return this.client.invoke<Awaited<ReturnType<TemporaryPort['convert']>>>('convert_temporary', input)
+  }
+
+  delete(ids: NoteId[]) {
+    return this.client.invoke<Awaited<ReturnType<TemporaryPort['delete']>>>('delete_temporary', { ids })
+  }
+
+  undoDelete(operationId: string) {
+    return this.client.invoke<Awaited<ReturnType<TemporaryPort['undoDelete']>>>('undo_delete', { operationId })
+  }
 }
 
 class TauriTemporaryWindowPort implements TemporaryWindowPort {

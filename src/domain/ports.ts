@@ -95,9 +95,24 @@ export interface TemporaryPort {
   load(noteId: NoteId): Promise<NoteDocument>
   save(document: NoteDocument): Promise<NoteDocument>
   list(): Promise<NoteDocument[]>
+  convert(input: { ids: NoteId[]; folderId: FolderId }): Promise<BatchConversionResult>
+  delete(ids: NoteId[]): Promise<TemporaryDeleteResult>
+  undoDelete(operationId: string): Promise<TemporaryUndoDeleteResult>
 }
 
 export interface BatchConversionResult {
   converted: Array<{ temporaryId: NoteId; noteId: NoteId }>
+  failed: Array<{ temporaryId: NoteId; message: string }>
+}
+
+export interface TemporaryDeleteResult {
+  operationId: string
+  deleted: NoteId[]
+  failed: Array<{ temporaryId: NoteId; message: string }>
+}
+
+export interface TemporaryUndoDeleteResult {
+  operationId: string
+  restored: NoteId[]
   failed: Array<{ temporaryId: NoteId; message: string }>
 }

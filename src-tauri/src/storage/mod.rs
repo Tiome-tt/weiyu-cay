@@ -4,3 +4,4 @@ pub mod markdown;
 pub mod paths;
 pub mod rebuild;
 pub mod repository;
+pub mod temporary_ops;

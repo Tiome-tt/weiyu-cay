@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import { commandError } from '../../domain/errors'
-import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, note } from '../../test/fakes'
+import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
 
 const folderA = '019c0000-0000-7000-8000-000000000021' as FolderId
@@ -54,6 +54,26 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('switches to the temporary inbox without changing the persisted column layout', async () => {
+    const system = fakeSystemPort({
+      getWindowPreference: vi.fn().mockResolvedValue({ folder: 0.25, noteList: 0.3 }),
+    })
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort()}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={system}
+        temporary={fakeTemporaryPort(twoCaptures())}
+      />,
+    )
+
+    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
+    expect(await screen.findByRole('region', { name: '临时收集箱' })).toBeVisible()
+    expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
+  })
+
   it('restores valid saved column proportions against the measured container width', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 700,

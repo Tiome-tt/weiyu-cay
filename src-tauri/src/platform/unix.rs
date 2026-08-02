@@ -4,9 +4,9 @@ use crate::{
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
 };
 use rustix::{
-    fd::OwnedFd,
+    fd::{AsFd, BorrowedFd, OwnedFd},
     fs::{
-        flock, fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags,
+        flock, fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, Dir,
         FileType, FlockOperation, Mode, OFlags, CWD,
     },
 };
@@ -217,6 +217,90 @@ impl SafeDirectory {
     pub fn child_path(&self, name: &str) -> Result<PathBuf, CommandError> {
         validate_child_name(name)?;
         Ok(self.path.join(name))
+    }
+
+    pub fn entry_names(&self) -> Result<Vec<String>, CommandError> {
+        let mut names = Vec::new();
+        let mut directory = Dir::read_from(&self.fd).map_err(|source| {
+            CommandError::io(format!("could not enumerate safe directory: {source}"))
+        })?;
+        while let Some(entry) = directory.read() {
+            let entry = entry.map_err(|source| {
+                CommandError::io(format!("could not enumerate safe directory: {source}"))
+            })?;
+            let name = entry
+                .file_name()
+                .to_str()
+                .map_err(|_| CommandError::validation("contained entry name is not Unicode"))?
+                .to_owned();
+            if matches!(name.as_str(), "." | "..") {
+                continue;
+            }
+            validate_child_name(&name)?;
+            names.push(name);
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Moves one validated directory between two pinned parents without replacing a destination.
+    pub fn move_directory_no_replace(
+        &self,
+        source: &str,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+    ) -> Result<(), CommandError> {
+        validate_child_name(source)?;
+        validate_child_name(destination)?;
+        validate_safe_directory_tree_at(self.fd.as_fd(), source)?;
+        #[cfg(target_os = "macos")]
+        {
+            let source = CString::new(source)
+                .map_err(|_| CommandError::validation("invalid contained source name"))?;
+            let destination = CString::new(destination)
+                .map_err(|_| CommandError::validation("invalid contained destination name"))?;
+            let result = unsafe {
+                renameatx_np(
+                    self.fd.as_raw_fd(),
+                    source.as_ptr(),
+                    destination_parent.fd.as_raw_fd(),
+                    destination.as_ptr(),
+                    RENAME_EXCL,
+                )
+            };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                return if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    Err(CommandError::conflict(
+                        "contained directory destination already exists",
+                    ))
+                } else {
+                    Err(CommandError::io(format!(
+                        "could not move contained directory: {error}"
+                    )))
+                };
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if statat(
+                &destination_parent.fd,
+                destination,
+                AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .is_ok()
+            {
+                return Err(CommandError::conflict(
+                    "contained directory destination already exists",
+                ));
+            }
+            renameat(&self.fd, source, &destination_parent.fd, destination).map_err(|error| {
+                CommandError::io(format!("could not move contained directory: {error}"))
+            })?;
+        }
+        validate_safe_directory_tree_at(destination_parent.fd.as_fd(), destination)?;
+        self.sync()?;
+        destination_parent.sync()
     }
 
     pub fn recover(&self, name: &str) -> Result<(), CommandError> {
@@ -528,6 +612,50 @@ impl SafeDirectory {
     }
 }
 
+fn validate_safe_directory_tree_at(parent: BorrowedFd<'_>, name: &str) -> Result<(), CommandError> {
+    validate_child_name(name)?;
+    let directory_fd = openat(
+        parent,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|source| {
+        CommandError::validation(format!("contained directory tree is unsafe: {source}"))
+    })?;
+    let mut directory = Dir::read_from(&directory_fd).map_err(|source| {
+        CommandError::io(format!("could not enumerate contained directory: {source}"))
+    })?;
+    while let Some(entry) = directory.read() {
+        let entry = entry.map_err(|source| {
+            CommandError::io(format!("could not enumerate contained directory: {source}"))
+        })?;
+        let child = entry
+            .file_name()
+            .to_str()
+            .map_err(|_| CommandError::validation("contained entry name is not Unicode"))?;
+        if matches!(child, "." | "..") {
+            continue;
+        }
+        validate_child_name(child)?;
+        let stat = statat(&directory_fd, child, AtFlags::SYMLINK_NOFOLLOW).map_err(|source| {
+            CommandError::io(format!(
+                "could not inspect contained directory entry: {source}"
+            ))
+        })?;
+        match FileType::from_raw_mode(stat.st_mode) {
+            FileType::Directory => validate_safe_directory_tree_at(directory_fd.as_fd(), child)?,
+            FileType::RegularFile => {}
+            _ => {
+                return Err(CommandError::validation(
+                    "contained directory tree includes an unsafe entry",
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_child_name(name: &str) -> Result<(), CommandError> {
     if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
         return Err(CommandError::validation("invalid contained path segment"));
@@ -547,4 +675,43 @@ fn regular_identity_from_file(file: &fs::File) -> Result<(u64, u64), CommandErro
         ));
     }
     Ok((stat.st_dev, stat.st_ino))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    #[test]
+    fn directory_move_remains_anchored_when_parent_paths_are_replaced() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("source")).unwrap();
+        fs::create_dir(root.path().join("destination")).unwrap();
+        fs::create_dir(root.path().join("source/capture")).unwrap();
+        fs::write(root.path().join("source/capture/note.md"), b"durable").unwrap();
+        let source = super::SafeDirectory::open(root.path(), &["source"], false).unwrap();
+        let destination = super::SafeDirectory::open(root.path(), &["destination"], false).unwrap();
+        fs::rename(
+            root.path().join("source"),
+            root.path().join("source-original"),
+        )
+        .unwrap();
+        fs::rename(
+            root.path().join("destination"),
+            root.path().join("destination-original"),
+        )
+        .unwrap();
+        fs::create_dir(root.path().join("source")).unwrap();
+        fs::create_dir(root.path().join("destination")).unwrap();
+
+        source
+            .move_directory_no_replace("capture", &destination, "capture")
+            .unwrap();
+
+        assert!(!root.path().join("source/capture").exists());
+        assert!(!root.path().join("destination/capture").exists());
+        assert_eq!(
+            fs::read(root.path().join("destination-original/capture/note.md")).unwrap(),
+            b"durable"
+        );
+    }
 }

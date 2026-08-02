@@ -24,6 +24,9 @@
     "allow-update-note-tags",
     "allow-create-temporary",
     "allow-list-temporary",
+    "allow-convert-temporary",
+    "allow-delete-temporary",
+    "allow-undo-delete",
     "allow-show-temporary-window",
     "allow-get-capture-shortcut",
     "allow-rebind-capture-shortcut"

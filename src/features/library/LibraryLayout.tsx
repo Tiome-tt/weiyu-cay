@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { SearchBox } from '../search/SearchBox'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
+import { TemporaryInbox, type TemporaryInboxHandle } from '../temporary/TemporaryInbox'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -14,13 +15,16 @@ interface LibraryLayoutProps {
   assets?: AssetPort
   search?: SearchPort
   links?: LinkPort
+  temporary?: TemporaryPort
 }
 
-export function LibraryLayout({ notes, folders, system, assets, search, links }: LibraryLayoutProps) {
+export function LibraryLayout({ notes, folders, system, assets, search, links, temporary }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
+  const [activeView, setActiveView] = useState<'library' | 'temporary'>('library')
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
+  const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
@@ -56,7 +60,8 @@ export function LibraryLayout({ notes, folders, system, assets, search, links }:
 
   const navigateAfterSave = async (navigate: () => void) => {
     const request = ++navigationRequest.current
-    const canNavigate = (await editorRef.current?.flush()) ?? true
+    const activeEditor = activeView === 'temporary' ? temporaryInboxRef.current : editorRef.current
+    const canNavigate = (await activeEditor?.flush()) ?? true
     if (canNavigate && request === navigationRequest.current) navigate()
   }
 
@@ -74,8 +79,13 @@ export function LibraryLayout({ notes, folders, system, assets, search, links }:
         <FolderTree
           folders={library.folders}
           activeId={library.activeFolderId}
+          temporaryInboxActive={activeView === 'temporary'}
           state={library.folderState}
-          onSelect={(folderId) => void navigateAfterSave(() => library.selectFolder(folderId))}
+          onSelect={(folderId) => void navigateAfterSave(() => {
+            setActiveView('library')
+            library.selectFolder(folderId)
+          })}
+          onTemporaryInbox={temporary === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('temporary'))}
           onCreate={library.createFolder}
           onRename={library.renameFolder}
           onMove={library.moveFolder}
@@ -83,23 +93,33 @@ export function LibraryLayout({ notes, folders, system, assets, search, links }:
         />
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
-        <NoteList
-          notes={library.notes}
-          activeId={library.activeNoteId}
-          state={library.noteListState}
-          onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
-        />
+        {activeView === 'temporary' ? (
+          <section className="note-list" aria-label="临时收集箱导航">
+            <header className="library-pane__header library-pane__header--compact">
+              <div><span className="library-pane__eyebrow">临时捕捉</span><h2>收集箱</h2></div>
+            </header>
+            <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>
+          </section>
+        ) : (
+          <NoteList
+            notes={library.notes}
+            activeId={library.activeNoteId}
+            state={library.noteListState}
+            onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
+          />
+        )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
-        {library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
-        {library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
-        {library.documentState === 'ready' && library.document === null && (
+        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} />}
+        {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
+        {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
+        {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
           <div className="content-placeholder">
             <span aria-hidden="true" className="content-placeholder__leaf">⌁</span>
             <p>选择一篇笔记开始阅读。</p>
           </div>
         )}
-        {library.document && (
+        {activeView === 'library' && library.document && (
           <EditorPane
             key={`${library.document.id}:${library.document.revision}`}
             ref={editorRef}

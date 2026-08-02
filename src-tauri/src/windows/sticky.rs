@@ -30,6 +30,9 @@ pub enum TemporaryCommandOperation {
     Save,
     Hide,
     SetPin,
+    Delete,
+    UndoDelete,
+    Convert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +60,9 @@ pub fn authorize_temporary_caller(
         TemporaryCommandOperation::Create
             | TemporaryCommandOperation::List
             | TemporaryCommandOperation::Show
+            | TemporaryCommandOperation::Delete
+            | TemporaryCommandOperation::UndoDelete
+            | TemporaryCommandOperation::Convert
     ) {
         return if caller_label == "main" {
             Ok(())
@@ -65,6 +71,14 @@ pub fn authorize_temporary_caller(
                 "this temporary operation requires the main window",
             ))
         };
+    }
+    if caller_label == "main"
+        && matches!(
+            operation,
+            TemporaryCommandOperation::Load | TemporaryCommandOperation::Save
+        )
+    {
+        return Ok(());
     }
     let caller_note_id = parse_temporary_window_label(caller_label)?;
     if note_id != Some(caller_note_id) {
@@ -335,6 +349,9 @@ pub trait TemporaryWindowBackend: Clone + Send + Sync + 'static {
         label: &str,
         state: TemporaryWindowState,
     ) -> Result<TemporaryWindowState, CommandError>;
+    fn retire(&self, label: &str) -> Result<(), CommandError> {
+        self.hide(label)
+    }
 }
 
 #[derive(Clone)]
@@ -632,6 +649,7 @@ struct InMemoryBackendState {
     fail_on_operation: Option<usize>,
     state_apply_count: usize,
     pin_update_count: usize,
+    retired: Vec<String>,
 }
 
 impl InMemoryTemporaryWindowBackend {
@@ -674,6 +692,14 @@ impl InMemoryTemporaryWindowBackend {
             .lock()
             .expect("backend mutex poisoned")
             .pin_update_count
+    }
+
+    pub fn retired_labels(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .retired
+            .clone()
     }
 
     fn operation(&self) -> Result<(), CommandError> {
@@ -735,6 +761,16 @@ impl TemporaryWindowBackend for InMemoryTemporaryWindowBackend {
             .expect("backend mutex poisoned")
             .state_apply_count += 1;
         Ok(state)
+    }
+
+    fn retire(&self, label: &str) -> Result<(), CommandError> {
+        self.operation()?;
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .retired
+            .push(label.to_owned());
+        Ok(())
     }
 }
 
@@ -948,6 +984,15 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
             width: actual.width,
             height: actual.height,
             ..state
+        })
+    }
+
+    fn retire(&self, label: &str) -> Result<(), CommandError> {
+        let Some(window) = self.app.get_webview_window(label) else {
+            return Ok(());
+        };
+        window.hide().map_err(|source| {
+            CommandError::io(format!("could not retire temporary window: {source}"))
         })
     }
 }

@@ -72,6 +72,9 @@ export const fakeTemporaryPort = (items: NoteDocument[]): TemporaryPort => ({
   }),
   save: vi.fn().mockImplementation(async (document: NoteDocument) => document),
   list: vi.fn().mockResolvedValue(items),
+  convert: vi.fn().mockResolvedValue({ converted: [], failed: [] }),
+  delete: vi.fn().mockResolvedValue({ operationId: 'temporary-delete', deleted: [], failed: [] }),
+  undoDelete: vi.fn().mockResolvedValue({ operationId: 'temporary-delete', restored: [], failed: [] }),
 })
 
 export const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])

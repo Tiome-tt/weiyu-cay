@@ -188,6 +188,29 @@ pub struct TrashResult {
     pub operation_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemporaryOperationFailure {
+    pub temporary_id: NoteId,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteTemporaryResult {
+    pub operation_id: String,
+    pub deleted: Vec<NoteId>,
+    pub failed: Vec<TemporaryOperationFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoTemporaryDeleteResult {
+    pub operation_id: String,
+    pub restored: Vec<NoteId>,
+    pub failed: Vec<TemporaryOperationFailure>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
