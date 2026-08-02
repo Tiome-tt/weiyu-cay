@@ -34,6 +34,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   const [error, setError] = useState<string | null>(null)
   const requestRef = useRef(0)
   const documentRequestRef = useRef(0)
+  const busyRef = useRef<'delete' | 'convert' | 'undo' | null>(null)
   const editorRef = useRef<EditorPaneHandle>(null)
 
   const refresh = useCallback(async () => {
@@ -74,12 +75,20 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     })
   }
 
-  const openCapture = (noteId: NoteId) => {
+  const openCapture = async (noteId: NoteId) => {
     const request = ++documentRequestRef.current
+    if (activeId !== null && !(await editorRef.current?.flush() ?? true)) {
+      if (request === documentRequestRef.current) {
+        setError('当前临时捕捉无法保存。请重试保存后再切换。')
+      }
+      return
+    }
+    if (request !== documentRequestRef.current) return
+    setError(null)
     setActiveId(noteId)
     setDocument(null)
     setDocumentState('loading')
-    void temporary.load(noteId).then(
+    temporary.load(noteId).then(
       (loaded) => {
         if (request !== documentRequestRef.current || loaded.id !== noteId || loaded.kind !== 'temporary') return
         setDocument(loaded)
@@ -91,8 +100,8 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     )
   }
 
-  const flushOpenSelection = async () => {
-    if (activeId === null || !selected.has(activeId)) return true
+  const flushOpenSelection = async (ids: readonly NoteId[]) => {
+    if (activeId === null || !ids.includes(activeId)) return true
     return (await editorRef.current?.flush()) ?? true
   }
 
@@ -115,36 +124,41 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   }
 
   const deleteSelected = async () => {
-    if (selectedIds.length === 0 || busy !== null) return
-    if (!(await flushOpenSelection())) {
-      setError('请先解决保存错误，再删除临时捕捉。')
-      return
-    }
+    if (selectedIds.length === 0 || busyRef.current !== null) return
+    const ids = [...selectedIds]
+    busyRef.current = 'delete'
     setBusy('delete')
     setError(null)
     try {
-      const result = await temporary.delete(selectedIds)
+      if (!(await flushOpenSelection(ids))) {
+        setError('请先解决保存错误，再删除临时捕捉。')
+        return
+      }
+      const result = await temporary.delete(ids)
       removeSuccessful(result.deleted)
-      setUndoOperationId(result.operationId)
+      setUndoOperationId(result.deleted.length > 0 ? result.operationId : null)
       showFailure(result.failed)
       void refresh()
     } catch {
       setError('无法删除临时捕捉。')
     } finally {
+      busyRef.current = null
       setBusy(null)
     }
   }
 
   const convertSelected = async (folderId: FolderId) => {
-    if (selectedIds.length === 0 || busy !== null) return
-    if (!(await flushOpenSelection())) {
-      setError('请先解决保存错误，再转换临时捕捉。')
-      return
-    }
+    if (selectedIds.length === 0 || busyRef.current !== null) return
+    const ids = [...selectedIds]
+    busyRef.current = 'convert'
     setBusy('convert')
     setError(null)
     try {
-      const result = await temporary.convert({ ids: selectedIds, folderId })
+      if (!(await flushOpenSelection(ids))) {
+        setError('请先解决保存错误，再转换临时捕捉。')
+        return
+      }
+      const result = await temporary.convert({ ids, folderId })
       removeSuccessful(result.converted.map((item) => item.temporaryId))
       showFailure(result.failed)
       setDialogOpen(false)
@@ -152,12 +166,14 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     } catch {
       setError('无法转换临时捕捉。')
     } finally {
+      busyRef.current = null
       setBusy(null)
     }
   }
 
   const undoDelete = async () => {
-    if (undoOperationId === null || busy !== null) return
+    if (undoOperationId === null || busyRef.current !== null) return
+    busyRef.current = 'undo'
     setBusy('undo')
     setError(null)
     try {
@@ -170,6 +186,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     } catch {
       setError('无法撤销删除。')
     } finally {
+      busyRef.current = null
       setBusy(null)
     }
   }
@@ -204,7 +221,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                   <input type="checkbox" aria-label={`选择 ${title}`} checked={selected.has(item.id)} disabled={busy !== null} onChange={() => toggleSelected(item.id)} />
                   <span className="sr-only">选择 {title}</span>
                 </label>
-                <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} onClick={() => openCapture(item.id)}>
+                <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} onClick={() => void openCapture(item.id)}>
                   <strong>{title}</strong>
                   <span>{preview(item.markdown)}</span>
                   <time dateTime={item.updatedAt}>{formatDate(item.updatedAt)}</time>

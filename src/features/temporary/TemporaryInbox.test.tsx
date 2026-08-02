@@ -220,6 +220,120 @@ describe('TemporaryInbox', () => {
     expect(failedDelete).not.toHaveBeenCalled()
   })
 
+  it('claims the mutation synchronously before awaiting an editor flush', async () => {
+    const capture = twoCaptures()[0]
+    const pendingSave = deferred<NoteDocument>()
+    const save = vi.fn(() => pendingSave.promise)
+    const remove = vi.fn(async () => ({ operationId: 'op', deleted: [capture.id], failed: [] }))
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={{ ...fakeTemporaryPort([capture]), save, delete: remove }} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('checkbox', { name: /选择/ }))
+    await user.click(screen.getByRole('button', { name: /发布前检查/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'pending durable edit' } }))
+    const deleteButton = screen.getByRole('button', { name: /删除所选/ })
+
+    deleteButton.click()
+    deleteButton.click()
+
+    expect(save).toHaveBeenCalledOnce()
+    expect(remove).not.toHaveBeenCalled()
+    await act(async () => pendingSave.resolve({ ...capture, markdown: 'pending durable edit', revision: 1 }))
+    await waitFor(() => expect(remove).toHaveBeenCalledOnce())
+  })
+
+  it('claims conversion synchronously and snapshots the selected captures before flushing', async () => {
+    const captures = twoCaptures()
+    const pendingSave = deferred<NoteDocument>()
+    const save = vi.fn(() => pendingSave.promise)
+    const convert = vi.fn(async ({ ids }: { ids: NoteId[]; folderId: FolderId }) => ({
+      converted: ids.map((temporaryId) => ({ temporaryId, noteId: temporaryId })),
+      failed: [],
+    }))
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={{ ...fakeTemporaryPort(captures), save, convert }} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('checkbox', { name: /选择 发布前检查/ }))
+    await user.click(screen.getByRole('button', { name: /发布前检查/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'pending conversion edit' } }))
+    await user.click(screen.getByRole('button', { name: '转为笔记' }))
+    await user.selectOptions(await screen.findByRole('combobox', { name: '目标文件夹' }), project)
+    const confirm = screen.getByRole('button', { name: '确认转换' })
+
+    confirm.click()
+    confirm.click()
+
+    expect(save).toHaveBeenCalledOnce()
+    expect(convert).not.toHaveBeenCalled()
+    await act(async () => pendingSave.resolve({ ...captures[0], markdown: 'pending conversion edit', revision: 2 }))
+    await waitFor(() => expect(convert).toHaveBeenCalledOnce())
+    expect(convert).toHaveBeenCalledWith({ ids: [captures[0].id], folderId: project })
+  })
+
+  it('keeps the current capture open when its flush fails during a switch', async () => {
+    const captures = twoCaptures()
+    const load = vi.fn(fakeTemporaryPort(captures).load)
+    const save = vi.fn().mockRejectedValue(new Error('disk full'))
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={{ ...fakeTemporaryPort(captures), load, save }} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'unsaved A' } }))
+    await user.click(screen.getByRole('button', { name: /接口异常处理/ }))
+
+    expect(await screen.findByText('当前临时捕捉无法保存。请重试保存后再切换。')).toBeVisible()
+    expect(screen.getByRole('button', { name: /发布前检查/ })).toHaveAttribute('aria-current', 'true')
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(load).not.toHaveBeenCalledWith(captures[1].id)
+    expect(EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))?.state.doc.toString()).toBe('unsaved A')
+  })
+
+  it('flushes before loading a new capture and ignores an older load result', async () => {
+    const captures = twoCaptures()
+    const third = { ...captures[0], id: '019c0000-0000-7000-8000-000000000012' as NoteId, markdown: 'third capture' }
+    const pendingSave = deferred<NoteDocument>()
+    const pendingSecond = deferred<NoteDocument>()
+    const load = vi.fn((id: NoteId) => id === captures[1].id ? pendingSecond.promise : Promise.resolve([captures[0], captures[1], third].find((item) => item.id === id)!))
+    const save = vi.fn(() => pendingSave.promise)
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={{ ...fakeTemporaryPort([captures[0], captures[1], third]), load, save }} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'durable A' } }))
+    screen.getByRole('button', { name: /接口异常处理/ }).click()
+    expect(load).not.toHaveBeenCalledWith(captures[1].id)
+    await act(async () => pendingSave.resolve({ ...captures[0], markdown: 'durable A', revision: 2 }))
+    await waitFor(() => expect(load).toHaveBeenCalledWith(captures[1].id))
+    screen.getByRole('button', { name: /third capture/ }).click()
+    await waitFor(() => expect(screen.getByRole('button', { name: /third capture/ })).toHaveAttribute('aria-current', 'true'))
+    await act(async () => pendingSecond.resolve(captures[1]))
+    expect(screen.getByRole('button', { name: /third capture/ })).toHaveAttribute('aria-current', 'true')
+    expect(EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))?.state.doc.toString()).toBe('third capture')
+  })
+
+  it('does not offer undo when every requested deletion fails', async () => {
+    const capture = twoCaptures()[0]
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={{
+      ...fakeTemporaryPort([capture]),
+      delete: vi.fn(async () => ({ operationId: 'unused-operation', deleted: [], failed: [{ temporaryId: capture.id, message: '文件正被使用' }] })),
+    }} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('checkbox', { name: /选择/ }))
+    await user.click(screen.getByRole('button', { name: '删除所选' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('文件正被使用')
+    expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
+  })
+
   it('does not select a capture created during a refresh and keeps a partial undo retryable', async () => {
     const captures = twoCaptures()
     const created = { ...captures[0], id: '019c0000-0000-7000-8000-000000000088' as NoteId, markdown: 'new shortcut capture' }
