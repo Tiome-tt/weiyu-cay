@@ -14,6 +14,7 @@ use std::{
         Arc, Mutex, MutexGuard,
     },
 };
+use tauri_plugin_global_shortcut::Shortcut;
 
 pub const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+Space";
 const MAX_ACCELERATOR_LENGTH: usize = 128;
@@ -103,7 +104,21 @@ pub struct ShortcutBindingStatus {
     pub platform: String,
 }
 
-type Binding = ShortcutBindingStatus;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Binding {
+    canonical: String,
+    platform: String,
+    identity: ShortcutIdentity,
+}
+
+impl Binding {
+    fn status(&self) -> ShortcutBindingStatus {
+        ShortcutBindingStatus {
+            canonical: self.canonical.clone(),
+            platform: self.platform.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -182,6 +197,7 @@ impl<B: ShortcutBackend> ShortcutService<B> {
     pub fn register(&self, accelerator: &str) -> Result<String, ShortcutError> {
         let canonical = normalize_accelerator(accelerator)?;
         let mapped = map_accelerator_for_platform(&canonical, self.platform)?;
+        let identity = shortcut_identity_from_accelerator(&mapped)?;
         if self.shutdown_requested.load(Ordering::Acquire) {
             return Err(ShortcutError::validation(
                 "shortcut service is shutting down",
@@ -218,6 +234,7 @@ impl<B: ShortcutBackend> ShortcutService<B> {
                 let binding = Binding {
                     canonical: canonical.clone(),
                     platform: mapped,
+                    identity,
                 };
                 self.finish_active(binding).map(|()| canonical)
             }
@@ -231,6 +248,7 @@ impl<B: ShortcutBackend> ShortcutService<B> {
     pub fn rebind(&self, accelerator: &str) -> Result<String, ShortcutError> {
         let canonical = normalize_accelerator(accelerator)?;
         let mapped = map_accelerator_for_platform(&canonical, self.platform)?;
+        let identity = shortcut_identity_from_accelerator(&mapped)?;
         if self.shutdown_requested.load(Ordering::Acquire) {
             return Err(ShortcutError::validation(
                 "shortcut service is shutting down",
@@ -277,6 +295,7 @@ impl<B: ShortcutBackend> ShortcutService<B> {
                         Binding {
                             canonical: canonical.clone(),
                             platform: mapped,
+                            identity,
                         },
                     ];
                     let reason = format!(
@@ -294,6 +313,7 @@ impl<B: ShortcutBackend> ShortcutService<B> {
         self.finish_active(Binding {
             canonical: canonical.clone(),
             platform: mapped,
+            identity,
         })
         .map(|()| canonical)
     }
@@ -323,12 +343,12 @@ impl<B: ShortcutBackend> ShortcutService<B> {
         let registration = match &state.registration {
             RegistrationState::Inactive => ShortcutRegistrationStatus::Inactive,
             RegistrationState::Active(binding) => ShortcutRegistrationStatus::Active {
-                binding: binding.clone(),
+                binding: binding.status(),
             },
             RegistrationState::InProgress => ShortcutRegistrationStatus::InProgress,
             RegistrationState::RecoveryRequired(bindings) => {
                 ShortcutRegistrationStatus::RecoveryRequired {
-                    bindings: bindings.clone(),
+                    bindings: bindings.iter().map(Binding::status).collect(),
                 }
             }
         };
@@ -338,20 +358,19 @@ impl<B: ShortcutBackend> ShortcutService<B> {
         }
     }
 
-    pub fn route_event(
+    pub fn match_event(
         &self,
-        platform_identity: &str,
+        shortcut_identity: ShortcutIdentity,
         _event: ShortcutEvent,
     ) -> Option<ActivationIdentity> {
         if self.shutdown_requested.load(Ordering::Acquire) {
             return None;
         }
-        let identity = normalize_accelerator(platform_identity).ok()?;
         let state = lock_recover(&self.state);
         match &state.registration {
-            RegistrationState::Active(binding) if binding.platform == identity => {
+            RegistrationState::Active(binding) if binding.identity == shortcut_identity => {
                 Some(ActivationIdentity {
-                    platform: binding.platform.clone(),
+                    shortcut: binding.identity,
                     generation: state.generation,
                 })
             }
@@ -360,6 +379,16 @@ impl<B: ShortcutBackend> ShortcutService<B> {
             | RegistrationState::InProgress
             | RegistrationState::RecoveryRequired(_) => None,
         }
+    }
+
+    pub fn accept_matched_event(&self, identity: &ActivationIdentity) -> bool {
+        let state = lock_recover(&self.state);
+        let binding_is_current = matches!(
+            &state.registration,
+            RegistrationState::Active(binding)
+                if binding.identity == identity.shortcut && state.generation == identity.generation
+        );
+        binding_is_current && !self.shutdown_requested.load(Ordering::Acquire)
     }
 
     fn reserve_transition<F>(&self, decide: F) -> Result<RegistrationState, TransitionDecision>
@@ -621,9 +650,27 @@ pub enum ShortcutEvent {
     Released,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShortcutIdentity(u32);
+
+impl ShortcutIdentity {
+    pub fn from_shortcut(shortcut: &Shortcut) -> Self {
+        Self(shortcut.id())
+    }
+}
+
+pub fn shortcut_identity_from_accelerator(
+    accelerator: &str,
+) -> Result<ShortcutIdentity, ShortcutError> {
+    accelerator
+        .parse::<Shortcut>()
+        .map(|shortcut| ShortcutIdentity::from_shortcut(&shortcut))
+        .map_err(|error| ShortcutError::validation(format!("shortcut is unsupported: {error}")))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivationIdentity {
-    platform: String,
+    shortcut: ShortcutIdentity,
     generation: u64,
 }
 
@@ -686,7 +733,7 @@ impl<C: CaptureBackend> CaptureTrigger<C> {
     pub fn handle_event(&self, event: ShortcutEvent) -> TriggerOutcome {
         self.handle_routed(
             ActivationIdentity {
-                platform: "standalone".to_owned(),
+                shortcut: ShortcutIdentity(0),
                 generation: 0,
             },
             event,
@@ -758,10 +805,25 @@ impl<B: ShortcutBackend + Clone, C: CaptureBackend> CaptureEventRouter<B, C> {
         Self { service, trigger }
     }
 
-    pub fn dispatch(&self, platform_identity: &str, event: ShortcutEvent) -> TriggerOutcome {
-        let Some(identity) = self.service.route_event(platform_identity, event) else {
+    pub fn dispatch(
+        &self,
+        shortcut_identity: ShortcutIdentity,
+        event: ShortcutEvent,
+    ) -> TriggerOutcome {
+        let Some(identity) = self.service.match_event(shortcut_identity, event) else {
             return TriggerOutcome::Ignored;
         };
+        self.dispatch_matched(identity, event)
+    }
+
+    pub fn dispatch_matched(
+        &self,
+        identity: ActivationIdentity,
+        event: ShortcutEvent,
+    ) -> TriggerOutcome {
+        if !self.service.accept_matched_event(&identity) {
+            return TriggerOutcome::Ignored;
+        }
         self.trigger.handle_routed(identity, event)
     }
 }

@@ -28,7 +28,7 @@ pub fn run() {
                         }
                     };
                     let _ = plugin_dispatcher.dispatch(commands::shortcuts::PluginShortcutEvent {
-                        platform_identity: shortcut.to_string(),
+                        shortcut_identity: shortcuts::ShortcutIdentity::from_shortcut(shortcut),
                         event,
                     });
                 })

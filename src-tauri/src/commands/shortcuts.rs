@@ -2,7 +2,7 @@ use crate::{
     commands::temporary::TemporaryCommandState,
     error::CommandError,
     shortcuts::{
-        CaptureEventRouter, CaptureTrigger, ShortcutError, ShortcutEvent,
+        CaptureEventRouter, CaptureTrigger, ShortcutError, ShortcutEvent, ShortcutIdentity,
         ShortcutRegistrationStatus, ShortcutService, TauriCaptureBackend, TauriShortcutBackend,
         TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
     },
@@ -64,7 +64,7 @@ impl CaptureShortcutState {
 
 #[derive(Debug, Clone)]
 pub struct PluginShortcutEvent {
-    pub platform_identity: String,
+    pub shortcut_identity: ShortcutIdentity,
     pub event: ShortcutEvent,
 }
 
@@ -139,7 +139,7 @@ fn spawn_worker(
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            let outcome = router.dispatch(&event.platform_identity, event.event);
+            let outcome = router.dispatch(event.shortcut_identity, event.event);
             if outcome != TriggerOutcome::Ignored {
                 let _ = app.emit_to("main", "capture-shortcut-outcome", outcome);
             }
@@ -147,7 +147,7 @@ fn spawn_worker(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                let outcome = router.dispatch(&event.platform_identity, event.event);
+                let outcome = router.dispatch(event.shortcut_identity, event.event);
                 if outcome != TriggerOutcome::Ignored {
                     let _ = app.emit_to("main", "capture-shortcut-outcome", outcome);
                 }

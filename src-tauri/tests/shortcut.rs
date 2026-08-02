@@ -2,9 +2,10 @@ use simple_notes_lib::{
     commands::shortcuts::{PluginEventDispatcher, PluginShortcutEvent},
     error::CommandError,
     shortcuts::{
-        map_accelerator_for_platform, AcceleratorPlatform, CaptureBackend, CaptureEventRouter,
-        CaptureTrigger, ShortcutBackend, ShortcutError, ShortcutEvent, ShortcutRegistrationStatus,
-        ShortcutService, TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
+        map_accelerator_for_platform, shortcut_identity_from_accelerator, AcceleratorPlatform,
+        CaptureBackend, CaptureEventRouter, CaptureTrigger, ShortcutBackend, ShortcutError,
+        ShortcutEvent, ShortcutIdentity, ShortcutRegistrationStatus, ShortcutService,
+        TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
     },
     storage::paths::StoragePaths,
     windows::sticky::{
@@ -21,6 +22,7 @@ use std::{
     },
     thread,
 };
+use tauri_plugin_global_shortcut::Shortcut;
 
 #[derive(Clone, Default)]
 struct ShortcutFixture {
@@ -70,6 +72,10 @@ impl ShortcutBackend for ShortcutFixture {
     }
 }
 
+fn shortcut_identity(accelerator: &str) -> ShortcutIdentity {
+    shortcut_identity_from_accelerator(accelerator).unwrap()
+}
+
 #[test]
 fn default_and_platform_mapping_are_canonical() {
     assert_eq!(DEFAULT_CAPTURE_SHORTCUT, "CommandOrControl+Shift+Space");
@@ -81,6 +87,48 @@ fn default_and_platform_mapping_are_canonical() {
     assert_eq!(
         map_accelerator_for_platform(DEFAULT_CAPTURE_SHORTCUT, AcceleratorPlatform::MacOs).unwrap(),
         "Command+Shift+Space"
+    );
+}
+
+#[test]
+fn tauri_shortcut_identity_matches_registration_for_real_plugin_keys_and_platforms() {
+    for (input, platform) in [
+        (DEFAULT_CAPTURE_SHORTCUT, AcceleratorPlatform::Windows),
+        (DEFAULT_CAPTURE_SHORTCUT, AcceleratorPlatform::MacOs),
+        ("shift+ctrl+a", AcceleratorPlatform::Windows),
+        ("command+shift+a", AcceleratorPlatform::MacOs),
+        ("alt+control+1", AcceleratorPlatform::Windows),
+        ("option+command+1", AcceleratorPlatform::MacOs),
+    ] {
+        let mapped = map_accelerator_for_platform(input, platform).unwrap();
+        let plugin_shortcut = mapped.parse::<Shortcut>().unwrap();
+        assert_eq!(
+            shortcut_identity_from_accelerator(&mapped).unwrap(),
+            ShortcutIdentity::from_shortcut(&plugin_shortcut),
+            "identity drift for {input} -> {mapped} -> {plugin_shortcut}"
+        );
+
+        let service = ShortcutService::new_for_platform(ShortcutFixture::default(), platform);
+        service.register(input).unwrap();
+        let capture_backend = FailingCaptureBackend::default();
+        let router = CaptureEventRouter::new(service, CaptureTrigger::new(capture_backend.clone()));
+        assert!(matches!(
+            router.dispatch(
+                ShortcutIdentity::from_shortcut(&plugin_shortcut),
+                ShortcutEvent::Pressed
+            ),
+            TriggerOutcome::Shown { .. }
+        ));
+        assert_eq!(*capture_backend.creates.lock().unwrap(), 1);
+    }
+
+    assert_eq!(
+        "Control+Shift+A".parse::<Shortcut>().unwrap().to_string(),
+        "shift+control+KeyA"
+    );
+    assert_eq!(
+        "Command+Shift+1".parse::<Shortcut>().unwrap().to_string(),
+        "shift+super+Digit1"
     );
 }
 
@@ -257,7 +305,10 @@ fn backend_reentry_and_simulated_plugin_lock_order_do_not_deadlock() {
     *backend.callback.lock().unwrap() = Some(Arc::new(move || {
         let _ = callback_service.status();
         assert!(callback_service
-            .route_event("Control+Shift+Space", ShortcutEvent::Pressed)
+            .match_event(
+                shortcut_identity("Control+Shift+Space"),
+                ShortcutEvent::Pressed
+            )
             .is_none());
     }));
     let (finished_tx, finished_rx) = mpsc::channel();
@@ -336,23 +387,29 @@ fn production_dispatch_seam_is_non_blocking_and_carries_identity() {
     let (sender, receiver) = mpsc::channel();
     dispatcher.attach(sender);
     assert!(dispatcher.dispatch(PluginShortcutEvent {
-        platform_identity: "Control+Shift+Space".to_owned(),
+        shortcut_identity: shortcut_identity("Control+Shift+Space"),
         event: ShortcutEvent::Pressed,
     }));
     let started = std::time::Instant::now();
     assert!(dispatcher.dispatch(PluginShortcutEvent {
-        platform_identity: "Control+Alt+Space".to_owned(),
+        shortcut_identity: shortcut_identity("Control+Alt+Space"),
         event: ShortcutEvent::Pressed,
     }));
     assert!(started.elapsed() < std::time::Duration::from_millis(50));
     let delivered = [receiver.recv().unwrap(), receiver.recv().unwrap()];
-    assert_eq!(delivered[0].platform_identity, "Control+Shift+Space");
+    assert_eq!(
+        delivered[0].shortcut_identity,
+        shortcut_identity("Control+Shift+Space")
+    );
     assert_eq!(delivered[0].event, ShortcutEvent::Pressed);
-    assert_eq!(delivered[1].platform_identity, "Control+Alt+Space");
+    assert_eq!(
+        delivered[1].shortcut_identity,
+        shortcut_identity("Control+Alt+Space")
+    );
     assert_eq!(delivered[1].event, ShortcutEvent::Pressed);
     dispatcher.detach();
     assert!(!dispatcher.dispatch(PluginShortcutEvent {
-        platform_identity: "Control+Shift+Space".to_owned(),
+        shortcut_identity: shortcut_identity("Control+Shift+Space"),
         event: ShortcutEvent::Released,
     }));
 }
@@ -518,35 +575,138 @@ fn routing_checks_platform_identity_generation_recovery_and_shutdown() {
     );
 
     assert_eq!(
-        router.dispatch("Control+Alt+Space", ShortcutEvent::Pressed),
+        router.dispatch(
+            shortcut_identity("Control+Alt+Space"),
+            ShortcutEvent::Pressed
+        ),
         TriggerOutcome::Ignored
     );
     assert!(matches!(
-        router.dispatch("Control+Shift+Space", ShortcutEvent::Pressed),
+        router.dispatch(
+            shortcut_identity("Control+Shift+Space"),
+            ShortcutEvent::Pressed
+        ),
         TriggerOutcome::Shown { .. }
     ));
 
     service.rebind("CommandOrControl+Alt+Space").unwrap();
     assert_eq!(
-        router.dispatch("Control+Shift+Space", ShortcutEvent::Pressed),
+        router.dispatch(
+            shortcut_identity("Control+Shift+Space"),
+            ShortcutEvent::Pressed
+        ),
         TriggerOutcome::Ignored
     );
     assert!(matches!(
-        router.dispatch("Control+Alt+Space", ShortcutEvent::Pressed),
+        router.dispatch(
+            shortcut_identity("Control+Alt+Space"),
+            ShortcutEvent::Pressed
+        ),
         TriggerOutcome::Shown { .. }
     ));
     assert_eq!(*capture_backend.creates.lock().unwrap(), 2);
 
     service.shutdown().unwrap();
     assert_eq!(
-        router.dispatch("Control+Alt+Space", ShortcutEvent::Released),
+        router.dispatch(
+            shortcut_identity("Control+Alt+Space"),
+            ShortcutEvent::Released
+        ),
         TriggerOutcome::Ignored
     );
     assert_eq!(
-        router.dispatch("Control+Alt+Space", ShortcutEvent::Pressed),
+        router.dispatch(
+            shortcut_identity("Control+Alt+Space"),
+            ShortcutEvent::Pressed
+        ),
         TriggerOutcome::Ignored
     );
     assert_eq!(*capture_backend.creates.lock().unwrap(), 2);
+}
+
+#[test]
+fn shutdown_between_identity_match_and_activation_acceptance_suppresses_capture() {
+    let service =
+        ShortcutService::new_for_platform(ShortcutFixture::default(), AcceleratorPlatform::Windows);
+    service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
+    let capture_backend = FailingCaptureBackend::default();
+    let router = CaptureEventRouter::new(
+        service.clone(),
+        CaptureTrigger::new(capture_backend.clone()),
+    );
+    let matched = service
+        .match_event(
+            shortcut_identity("Control+Shift+Space"),
+            ShortcutEvent::Pressed,
+        )
+        .expect("active binding should match before shutdown");
+    let pause = Arc::new(Barrier::new(2));
+    let dispatch_pause = pause.clone();
+    let dispatch = thread::spawn(move || {
+        dispatch_pause.wait();
+        dispatch_pause.wait();
+        router.dispatch_matched(matched, ShortcutEvent::Pressed)
+    });
+    pause.wait();
+
+    service.shutdown().unwrap();
+    pause.wait();
+
+    assert_eq!(dispatch.join().unwrap(), TriggerOutcome::Ignored);
+    assert_eq!(*capture_backend.creates.lock().unwrap(), 0);
+}
+
+#[test]
+fn shutdown_does_not_wait_for_a_capture_accepted_before_shutdown() {
+    #[derive(Clone)]
+    struct BlockingAcceptedCapture {
+        entered: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+        release: Arc<Mutex<mpsc::Receiver<()>>>,
+    }
+
+    impl CaptureBackend for BlockingAcceptedCapture {
+        fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                entered.send(()).unwrap();
+            }
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(simple_notes_lib::domain::NoteId::now_v7())
+        }
+
+        fn show(&self, _note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+            Ok(())
+        }
+    }
+
+    let service =
+        ShortcutService::new_for_platform(ShortcutFixture::default(), AcceleratorPlatform::Windows);
+    service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let router = CaptureEventRouter::new(
+        service.clone(),
+        CaptureTrigger::new(BlockingAcceptedCapture {
+            entered: Arc::new(Mutex::new(Some(entered_tx))),
+            release: Arc::new(Mutex::new(release_rx)),
+        }),
+    );
+    let dispatch = thread::spawn(move || {
+        router.dispatch(
+            shortcut_identity("Control+Shift+Space"),
+            ShortcutEvent::Pressed,
+        )
+    });
+    entered_rx.recv().unwrap();
+
+    let started = std::time::Instant::now();
+    service.shutdown().unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_millis(50));
+    release_tx.send(()).unwrap();
+
+    assert!(matches!(
+        dispatch.join().unwrap(),
+        TriggerOutcome::Shown { .. }
+    ));
 }
 
 #[test]
