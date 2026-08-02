@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 pub const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+Space";
@@ -93,23 +96,62 @@ pub trait ShortcutBackend: Send + Sync {
     fn unregister(&self, accelerator: &str) -> Result<(), ShortcutError>;
 }
 
-#[derive(Clone)]
-struct Binding {
-    canonical: String,
-    platform: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutBindingStatus {
+    pub canonical: String,
+    pub platform: String,
 }
 
-#[derive(Default)]
-struct RegistrationState {
-    active: Option<Binding>,
-    shutdown_requested: bool,
+type Binding = ShortcutBindingStatus;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ShortcutRegistrationStatus {
+    Inactive,
+    Active {
+        binding: ShortcutBindingStatus,
+    },
+    InProgress,
+    RecoveryRequired {
+        bindings: Vec<ShortcutBindingStatus>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutServiceStatus {
+    pub registration: ShortcutRegistrationStatus,
+    pub accepting_triggers: bool,
+}
+
+#[derive(Clone)]
+enum RegistrationState {
+    Inactive,
+    Active(Binding),
+    InProgress,
+    RecoveryRequired(Vec<Binding>),
+}
+
+struct SharedRegistrationState {
+    registration: RegistrationState,
+    generation: u64,
+}
+
+impl Default for SharedRegistrationState {
+    fn default() -> Self {
+        Self {
+            registration: RegistrationState::Inactive,
+            generation: 0,
+        }
+    }
 }
 
 pub struct ShortcutService<B> {
     backend: B,
     platform: AcceleratorPlatform,
-    state: Arc<Mutex<RegistrationState>>,
-    delivery_gate: Arc<Mutex<()>>,
+    state: Arc<Mutex<SharedRegistrationState>>,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl<B: Clone> Clone for ShortcutService<B> {
@@ -118,7 +160,7 @@ impl<B: Clone> Clone for ShortcutService<B> {
             backend: self.backend.clone(),
             platform: self.platform,
             state: self.state.clone(),
-            delivery_gate: self.delivery_gate.clone(),
+            shutdown_requested: self.shutdown_requested.clone(),
         }
     }
 }
@@ -132,117 +174,323 @@ impl<B: ShortcutBackend> ShortcutService<B> {
         Self {
             backend,
             platform,
-            state: Arc::new(Mutex::new(RegistrationState::default())),
-            delivery_gate: Arc::new(Mutex::new(())),
+            state: Arc::new(Mutex::new(SharedRegistrationState::default())),
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn register(&self, accelerator: &str) -> Result<String, ShortcutError> {
         let canonical = normalize_accelerator(accelerator)?;
         let mapped = map_accelerator_for_platform(&canonical, self.platform)?;
-        let _delivery = lock_recover(&self.delivery_gate);
-        let mut state = lock_recover(&self.state);
-        if let Some(active) = &state.active {
-            if active.canonical == canonical {
-                return Ok(canonical);
-            }
-            return Err(ShortcutError::conflict(
-                canonical,
-                "A capture shortcut is already active.",
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err(ShortcutError::validation(
+                "shortcut service is shutting down",
             ));
         }
-        self.backend
-            .register(&mapped)
-            .map_err(|error| error.with_accelerator(&canonical))?;
-        state.active = Some(Binding {
-            canonical: canonical.clone(),
-            platform: mapped,
+        let previous = self.reserve_transition(|registration| match registration {
+            RegistrationState::Inactive => Ok(()),
+            RegistrationState::Active(active) if active.canonical == canonical => {
+                Err(TransitionDecision::AlreadyActive)
+            }
+            RegistrationState::Active(_) => Err(TransitionDecision::Error(
+                ShortcutError::conflict(&canonical, "A capture shortcut is already active."),
+            )),
+            RegistrationState::InProgress => Err(TransitionDecision::Error(
+                ShortcutError::backend("shortcut transition is already in progress"),
+            )),
+            RegistrationState::RecoveryRequired(bindings) => {
+                Err(TransitionDecision::Error(recovery_error(
+                    bindings,
+                    "Shortcut recovery is required before registering.",
+                )))
+            }
         });
-        state.shutdown_requested = false;
-        Ok(canonical)
+        let previous = match previous {
+            Ok(previous) => previous,
+            Err(TransitionDecision::AlreadyActive) => return Ok(canonical),
+            Err(TransitionDecision::Error(error)) => return Err(error),
+            Err(TransitionDecision::AlreadyInactive) => unreachable!(),
+            Err(TransitionDecision::PendingCleanup) => unreachable!(),
+        };
+        let result = self.backend.register(&mapped);
+        match result {
+            Ok(()) => {
+                let binding = Binding {
+                    canonical: canonical.clone(),
+                    platform: mapped,
+                };
+                self.finish_active(binding).map(|()| canonical)
+            }
+            Err(error) => match self.restore_or_shutdown(previous) {
+                Ok(()) => Err(error.with_accelerator(&canonical)),
+                Err(cleanup) => Err(cleanup),
+            },
+        }
     }
 
     pub fn rebind(&self, accelerator: &str) -> Result<String, ShortcutError> {
         let canonical = normalize_accelerator(accelerator)?;
         let mapped = map_accelerator_for_platform(&canonical, self.platform)?;
-        let _delivery = lock_recover(&self.delivery_gate);
-        let mut state = lock_recover(&self.state);
-        let Some(previous) = state.active.clone() else {
-            self.backend
-                .register(&mapped)
-                .map_err(|error| error.with_accelerator(&canonical))?;
-            state.active = Some(Binding {
-                canonical: canonical.clone(),
-                platform: mapped,
-            });
-            state.shutdown_requested = false;
-            return Ok(canonical);
-        };
-        if previous.canonical == canonical {
-            return Ok(canonical);
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err(ShortcutError::validation(
+                "shortcut service is shutting down",
+            ));
         }
-
-        self.backend
-            .register(&mapped)
-            .map_err(|error| error.with_accelerator(&canonical))?;
-        if let Err(old_error) = self.backend.unregister(&previous.platform) {
-            if let Err(rollback_error) = self.backend.unregister(&mapped) {
-                return Err(ShortcutError::RecoveryRequired {
-                    bindings: vec![previous.canonical, canonical],
-                    reason: format!(
+        let previous = self.reserve_transition(|registration| match registration {
+            RegistrationState::Inactive => Ok(()),
+            RegistrationState::Active(active) if active.canonical == canonical => {
+                Err(TransitionDecision::AlreadyActive)
+            }
+            RegistrationState::Active(_) => Ok(()),
+            RegistrationState::InProgress => Err(TransitionDecision::Error(
+                ShortcutError::backend("shortcut transition is already in progress"),
+            )),
+            RegistrationState::RecoveryRequired(bindings) => Err(TransitionDecision::Error(
+                recovery_error(bindings, "Shortcut recovery is required before rebinding."),
+            )),
+        });
+        let previous = match previous {
+            Ok(previous) => previous,
+            Err(TransitionDecision::AlreadyActive) => return Ok(canonical),
+            Err(TransitionDecision::Error(error)) => return Err(error),
+            Err(TransitionDecision::AlreadyInactive) => unreachable!(),
+            Err(TransitionDecision::PendingCleanup) => unreachable!(),
+        };
+        let old = match &previous {
+            RegistrationState::Active(binding) => Some(binding.clone()),
+            RegistrationState::Inactive => None,
+            RegistrationState::InProgress | RegistrationState::RecoveryRequired(_) => {
+                unreachable!("only stable registrations can reserve a transition")
+            }
+        };
+        if let Err(error) = self.backend.register(&mapped) {
+            return match self.restore_or_shutdown(previous) {
+                Ok(()) => Err(error.with_accelerator(&canonical)),
+                Err(cleanup) => Err(cleanup),
+            };
+        }
+        if let Some(old) = old {
+            if let Err(old_error) = self.backend.unregister(&old.platform) {
+                if let Err(rollback_error) = self.backend.unregister(&mapped) {
+                    let bindings = vec![
+                        old.clone(),
+                        Binding {
+                            canonical: canonical.clone(),
+                            platform: mapped,
+                        },
+                    ];
+                    let reason = format!(
                         "The old shortcut and the replacement may both be active; recovery is required. {} {}",
                         old_error, rollback_error
-                    ),
-                });
+                    );
+                    return Err(self.finish_recovery(bindings, &reason));
+                }
+                return match self.restore_or_shutdown(previous) {
+                    Ok(()) => Err(old_error.with_accelerator(&old.canonical)),
+                    Err(cleanup) => Err(cleanup),
+                };
             }
-            return Err(old_error.with_accelerator(&previous.canonical));
         }
-        state.active = Some(Binding {
+        self.finish_active(Binding {
             canonical: canonical.clone(),
             platform: mapped,
-        });
-        state.shutdown_requested = false;
-        Ok(canonical)
+        })
+        .map(|()| canonical)
     }
 
     pub fn unregister(&self) -> Result<(), ShortcutError> {
-        let _delivery = lock_recover(&self.delivery_gate);
-        self.unregister_locked()
+        self.cleanup_bindings()
     }
 
     pub fn shutdown(&self) -> Result<(), ShortcutError> {
-        let _delivery = lock_recover(&self.delivery_gate);
-        {
-            let mut state = lock_recover(&self.state);
-            if state.shutdown_requested {
-                return Ok(());
-            }
-            state.shutdown_requested = true;
+        if self.shutdown_requested.swap(true, Ordering::AcqRel) {
+            return Ok(());
         }
-        self.unregister_locked()
+        self.cleanup_bindings()
     }
 
     pub fn current(&self) -> Option<String> {
-        lock_recover(&self.state)
-            .active
-            .as_ref()
-            .map(|binding| binding.canonical.clone())
+        match &lock_recover(&self.state).registration {
+            RegistrationState::Active(binding) => Some(binding.canonical.clone()),
+            RegistrationState::Inactive
+            | RegistrationState::InProgress
+            | RegistrationState::RecoveryRequired(_) => None,
+        }
     }
 
-    pub fn delivery_gate(&self) -> Arc<Mutex<()>> {
-        self.delivery_gate.clone()
-    }
-
-    fn unregister_locked(&self) -> Result<(), ShortcutError> {
-        let mut state = lock_recover(&self.state);
-        let Some(active) = state.active.clone() else {
-            return Ok(());
+    pub fn status(&self) -> ShortcutServiceStatus {
+        let state = lock_recover(&self.state);
+        let registration = match &state.registration {
+            RegistrationState::Inactive => ShortcutRegistrationStatus::Inactive,
+            RegistrationState::Active(binding) => ShortcutRegistrationStatus::Active {
+                binding: binding.clone(),
+            },
+            RegistrationState::InProgress => ShortcutRegistrationStatus::InProgress,
+            RegistrationState::RecoveryRequired(bindings) => {
+                ShortcutRegistrationStatus::RecoveryRequired {
+                    bindings: bindings.clone(),
+                }
+            }
         };
-        self.backend
-            .unregister(&active.platform)
-            .map_err(|error| error.with_accelerator(&active.canonical))?;
-        state.active = None;
-        Ok(())
+        ShortcutServiceStatus {
+            registration,
+            accepting_triggers: !self.shutdown_requested.load(Ordering::Acquire),
+        }
+    }
+
+    pub fn route_event(
+        &self,
+        platform_identity: &str,
+        _event: ShortcutEvent,
+    ) -> Option<ActivationIdentity> {
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return None;
+        }
+        let identity = normalize_accelerator(platform_identity).ok()?;
+        let state = lock_recover(&self.state);
+        match &state.registration {
+            RegistrationState::Active(binding) if binding.platform == identity => {
+                Some(ActivationIdentity {
+                    platform: binding.platform.clone(),
+                    generation: state.generation,
+                })
+            }
+            RegistrationState::Inactive
+            | RegistrationState::Active(_)
+            | RegistrationState::InProgress
+            | RegistrationState::RecoveryRequired(_) => None,
+        }
+    }
+
+    fn reserve_transition<F>(&self, decide: F) -> Result<RegistrationState, TransitionDecision>
+    where
+        F: FnOnce(&RegistrationState) -> Result<(), TransitionDecision>,
+    {
+        let mut state = lock_recover(&self.state);
+        decide(&state.registration)?;
+        let previous = state.registration.clone();
+        state.registration = RegistrationState::InProgress;
+        Ok(previous)
+    }
+
+    fn restore_or_shutdown(&self, previous: RegistrationState) -> Result<(), ShortcutError> {
+        {
+            let mut state = lock_recover(&self.state);
+            if !self.shutdown_requested.load(Ordering::Acquire) {
+                state.registration = previous;
+                return Ok(());
+            }
+        }
+        let bindings = match previous {
+            RegistrationState::Inactive => {
+                self.commit_transition(RegistrationState::Inactive, true);
+                return Ok(());
+            }
+            RegistrationState::Active(binding) => vec![binding],
+            RegistrationState::RecoveryRequired(bindings) => bindings,
+            RegistrationState::InProgress => unreachable!(),
+        };
+        self.cleanup_reserved(bindings)
+    }
+
+    fn finish_active(&self, binding: Binding) -> Result<(), ShortcutError> {
+        {
+            let mut state = lock_recover(&self.state);
+            if !self.shutdown_requested.load(Ordering::Acquire) {
+                state.registration = RegistrationState::Active(binding);
+                state.generation = state.generation.wrapping_add(1);
+                return Ok(());
+            }
+        }
+        self.cleanup_reserved(vec![binding])?;
+        Err(ShortcutError::validation(
+            "shortcut service is shutting down",
+        ))
+    }
+
+    fn finish_recovery(&self, bindings: Vec<Binding>, reason: &str) -> ShortcutError {
+        {
+            let mut state = lock_recover(&self.state);
+            if !self.shutdown_requested.load(Ordering::Acquire) {
+                state.registration = RegistrationState::RecoveryRequired(bindings.clone());
+                state.generation = state.generation.wrapping_add(1);
+                return recovery_error(&bindings, reason);
+            }
+        }
+        match self.cleanup_reserved(bindings) {
+            Ok(()) => ShortcutError::validation("shortcut service is shutting down"),
+            Err(error) => error,
+        }
+    }
+
+    fn commit_transition(&self, registration: RegistrationState, advance_generation: bool) {
+        let mut state = lock_recover(&self.state);
+        state.registration = registration;
+        if advance_generation {
+            state.generation = state.generation.wrapping_add(1);
+        }
+    }
+
+    fn cleanup_bindings(&self) -> Result<(), ShortcutError> {
+        let previous = self.reserve_transition(|registration| match registration {
+            RegistrationState::Inactive => Err(TransitionDecision::AlreadyInactive),
+            RegistrationState::Active(_) | RegistrationState::RecoveryRequired(_) => Ok(()),
+            RegistrationState::InProgress if self.shutdown_requested.load(Ordering::Acquire) => {
+                Err(TransitionDecision::PendingCleanup)
+            }
+            RegistrationState::InProgress => Err(TransitionDecision::Error(
+                ShortcutError::backend("shortcut transition is already in progress"),
+            )),
+        });
+        let previous = match previous {
+            Ok(previous) => previous,
+            Err(TransitionDecision::AlreadyInactive) => return Ok(()),
+            Err(TransitionDecision::PendingCleanup) => return Ok(()),
+            Err(TransitionDecision::Error(error)) => return Err(error),
+            Err(TransitionDecision::AlreadyActive) => unreachable!(),
+        };
+        let bindings = match &previous {
+            RegistrationState::Active(binding) => vec![binding.clone()],
+            RegistrationState::RecoveryRequired(bindings) => bindings.clone(),
+            RegistrationState::Inactive | RegistrationState::InProgress => unreachable!(),
+        };
+        self.cleanup_reserved(bindings)
+    }
+
+    fn cleanup_reserved(&self, bindings: Vec<Binding>) -> Result<(), ShortcutError> {
+        let mut failed = Vec::new();
+        for binding in &bindings {
+            if self.backend.unregister(&binding.platform).is_err() {
+                failed.push(binding.clone());
+            }
+        }
+        if failed.is_empty() {
+            self.commit_transition(RegistrationState::Inactive, true);
+            Ok(())
+        } else {
+            self.commit_transition(RegistrationState::RecoveryRequired(failed.clone()), true);
+            Err(recovery_error(
+                &failed,
+                "One or more shortcut bindings still require cleanup.",
+            ))
+        }
+    }
+}
+
+enum TransitionDecision {
+    AlreadyActive,
+    AlreadyInactive,
+    PendingCleanup,
+    Error(ShortcutError),
+}
+
+fn recovery_error(bindings: &[Binding], reason: &str) -> ShortcutError {
+    ShortcutError::RecoveryRequired {
+        bindings: bindings
+            .iter()
+            .map(|binding| binding.canonical.clone())
+            .collect(),
+        reason: reason.to_owned(),
     }
 }
 
@@ -373,6 +621,12 @@ pub enum ShortcutEvent {
     Released,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivationIdentity {
+    platform: String,
+    generation: u64,
+}
+
 pub trait CaptureBackend: Clone + Send + Sync + 'static {
     fn create(&self) -> Result<NoteId, CommandError>;
     fn show(&self, note_id: NoteId) -> Result<(), CommandError>;
@@ -409,8 +663,7 @@ impl TriggerOutcome {
 
 pub struct CaptureTrigger<C> {
     backend: C,
-    pressed: Arc<Mutex<bool>>,
-    delivery_gate: Arc<Mutex<()>>,
+    pressed: Arc<Mutex<Option<ActivationIdentity>>>,
 }
 
 impl<C: Clone> Clone for CaptureTrigger<C> {
@@ -418,35 +671,46 @@ impl<C: Clone> Clone for CaptureTrigger<C> {
         Self {
             backend: self.backend.clone(),
             pressed: self.pressed.clone(),
-            delivery_gate: self.delivery_gate.clone(),
         }
     }
 }
 
 impl<C: CaptureBackend> CaptureTrigger<C> {
     pub fn new(backend: C) -> Self {
-        Self::with_gate(backend, Arc::new(Mutex::new(())))
-    }
-
-    pub fn with_gate(backend: C, delivery_gate: Arc<Mutex<()>>) -> Self {
         Self {
             backend,
-            pressed: Arc::new(Mutex::new(false)),
-            delivery_gate,
+            pressed: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn handle_event(&self, event: ShortcutEvent) -> TriggerOutcome {
+        self.handle_routed(
+            ActivationIdentity {
+                platform: "standalone".to_owned(),
+                generation: 0,
+            },
+            event,
+        )
+    }
+
+    pub fn handle_routed(
+        &self,
+        identity: ActivationIdentity,
+        event: ShortcutEvent,
+    ) -> TriggerOutcome {
         {
-            let _delivery = lock_recover(&self.delivery_gate);
             let mut pressed = lock_recover(&self.pressed);
             match event {
                 ShortcutEvent::Released => {
-                    *pressed = false;
+                    if pressed.as_ref() == Some(&identity) {
+                        *pressed = None;
+                    }
                     return TriggerOutcome::Ignored;
                 }
-                ShortcutEvent::Pressed if *pressed => return TriggerOutcome::Ignored,
-                ShortcutEvent::Pressed => *pressed = true,
+                ShortcutEvent::Pressed if pressed.as_ref() == Some(&identity) => {
+                    return TriggerOutcome::Ignored
+                }
+                ShortcutEvent::Pressed => *pressed = Some(identity),
             }
         }
         self.activate()
@@ -480,6 +744,25 @@ impl<C: CaptureBackend> CaptureTrigger<C> {
                 error: CommandError::io("capture handler panicked while showing a window"),
             },
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct CaptureEventRouter<B, C> {
+    service: ShortcutService<B>,
+    trigger: CaptureTrigger<C>,
+}
+
+impl<B: ShortcutBackend + Clone, C: CaptureBackend> CaptureEventRouter<B, C> {
+    pub fn new(service: ShortcutService<B>, trigger: CaptureTrigger<C>) -> Self {
+        Self { service, trigger }
+    }
+
+    pub fn dispatch(&self, platform_identity: &str, event: ShortcutEvent) -> TriggerOutcome {
+        let Some(identity) = self.service.route_event(platform_identity, event) else {
+            return TriggerOutcome::Ignored;
+        };
+        self.trigger.handle_routed(identity, event)
     }
 }
 

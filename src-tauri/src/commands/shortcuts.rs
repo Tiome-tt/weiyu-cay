@@ -2,17 +2,28 @@ use crate::{
     commands::temporary::TemporaryCommandState,
     error::CommandError,
     shortcuts::{
-        CaptureTrigger, ShortcutError, ShortcutEvent, ShortcutService, TauriCaptureBackend,
-        TauriShortcutBackend, TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
+        CaptureEventRouter, CaptureTrigger, ShortcutError, ShortcutEvent,
+        ShortcutRegistrationStatus, ShortcutService, TauriCaptureBackend, TauriShortcutBackend,
+        TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
     },
 };
 use serde::Serialize;
-use std::sync::{Mutex, MutexGuard};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex, MutexGuard,
+    },
+    thread,
+    time::Duration,
+};
 use tauri::{Emitter, Manager, State};
 
 pub struct CaptureShortcutState {
     service: ShortcutService<TauriShortcutBackend>,
-    trigger: CaptureTrigger<TauriCaptureBackend>,
+    dispatcher: PluginEventDispatcher,
+    worker_stop: Arc<AtomicBool>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
     startup_error: Mutex<Option<ShortcutError>>,
 }
 
@@ -20,51 +31,128 @@ pub struct CaptureShortcutState {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureShortcutStatus {
     current: Option<String>,
+    registration: ShortcutRegistrationStatus,
+    accepting_triggers: bool,
     startup_error: Option<ShortcutError>,
 }
 
 impl CaptureShortcutState {
-    pub fn handle_plugin_event(
-        &self,
-        app: &tauri::AppHandle,
-        event: tauri_plugin_global_shortcut::ShortcutState,
-    ) {
-        let event = match event {
-            tauri_plugin_global_shortcut::ShortcutState::Pressed => ShortcutEvent::Pressed,
-            tauri_plugin_global_shortcut::ShortcutState::Released => ShortcutEvent::Released,
-        };
-        let outcome = self.trigger.handle_event(event);
-        if outcome != TriggerOutcome::Ignored {
-            let _ = app.emit_to("main", "capture-shortcut-outcome", outcome);
+    pub fn shutdown(&self) {
+        let _ = self.service.shutdown();
+        self.worker_stop.store(true, Ordering::Release);
+        self.dispatcher.detach();
+        if let Some(worker) = lock_recover(&self.worker).take() {
+            // Joining away from Tauri's event-loop thread avoids blocking native window teardown.
+            let _ = thread::Builder::new()
+                .name("capture-shortcut-worker-reaper".to_owned())
+                .spawn(move || {
+                    let _ = worker.join();
+                });
         }
     }
 
-    pub fn shutdown(&self) {
-        let _ = self.service.shutdown();
-    }
-
     fn status(&self) -> CaptureShortcutStatus {
+        let service = self.service.status();
         CaptureShortcutStatus {
             current: self.service.current(),
+            registration: service.registration,
+            accepting_triggers: service.accepting_triggers,
             startup_error: lock_recover(&self.startup_error).clone(),
         }
     }
 }
 
-pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, Clone)]
+pub struct PluginShortcutEvent {
+    pub platform_identity: String,
+    pub event: ShortcutEvent,
+}
+
+#[derive(Clone, Default)]
+pub struct PluginEventDispatcher {
+    sender: Arc<Mutex<Option<Sender<PluginShortcutEvent>>>>,
+}
+
+impl PluginEventDispatcher {
+    pub fn dispatch(&self, event: PluginShortcutEvent) -> bool {
+        let Ok(sender) = self.sender.try_lock() else {
+            return false;
+        };
+        let Some(sender) = sender.as_ref() else {
+            return false;
+        };
+        sender.send(event).is_ok()
+    }
+
+    pub fn attach(&self, sender: Sender<PluginShortcutEvent>) {
+        *lock_recover(&self.sender) = Some(sender);
+    }
+
+    pub fn detach(&self) {
+        *lock_recover(&self.sender) = None;
+    }
+}
+
+pub fn setup(
+    app: &mut tauri::App,
+    dispatcher: PluginEventDispatcher,
+) -> Result<(), Box<dyn std::error::Error>> {
     let temporary = app.state::<TemporaryCommandState>();
     let service = ShortcutService::new(TauriShortcutBackend::new(app.handle().clone()));
-    let trigger = CaptureTrigger::with_gate(
-        TauriCaptureBackend::new(temporary.paths().clone(), temporary.backend().clone()),
-        service.delivery_gate(),
-    );
+    let trigger = CaptureTrigger::new(TauriCaptureBackend::new(
+        temporary.paths().clone(),
+        temporary.backend().clone(),
+    ));
+    let router = CaptureEventRouter::new(service.clone(), trigger);
+    let (sender, receiver) = mpsc::channel();
+    dispatcher.attach(sender);
+    let worker_stop = Arc::new(AtomicBool::new(false));
+    let worker = spawn_worker(app.handle().clone(), router, receiver, worker_stop.clone())?;
     let startup_error = service.register(DEFAULT_CAPTURE_SHORTCUT).err();
     app.manage(CaptureShortcutState {
         service,
-        trigger,
+        dispatcher,
+        worker_stop,
+        worker: Mutex::new(Some(worker)),
         startup_error: Mutex::new(startup_error),
     });
     Ok(())
+}
+
+fn spawn_worker(
+    app: tauri::AppHandle,
+    router: CaptureEventRouter<TauriShortcutBackend, TauriCaptureBackend>,
+    receiver: Receiver<PluginShortcutEvent>,
+    stop: Arc<AtomicBool>,
+) -> Result<thread::JoinHandle<()>, std::io::Error> {
+    thread::Builder::new()
+        .name("capture-shortcut-worker".to_owned())
+        .spawn(move || loop {
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            let event = match receiver.recv_timeout(Duration::from_millis(25)) {
+                Ok(event) => event,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            let outcome = router.dispatch(&event.platform_identity, event.event);
+            if outcome != TriggerOutcome::Ignored {
+                let _ = app.emit_to("main", "capture-shortcut-outcome", outcome);
+            }
+            while let Ok(event) = receiver.try_recv() {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                let outcome = router.dispatch(&event.platform_identity, event.event);
+                if outcome != TriggerOutcome::Ignored {
+                    let _ = app.emit_to("main", "capture-shortcut-outcome", outcome);
+                }
+            }
+        })
 }
 
 #[tauri::command]

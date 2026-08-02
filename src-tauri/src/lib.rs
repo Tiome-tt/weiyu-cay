@@ -10,28 +10,37 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let shortcut_dispatcher = commands::shortcuts::PluginEventDispatcher::default();
+    let plugin_dispatcher = shortcut_dispatcher.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if let Some(state) =
-                        app.try_state::<commands::shortcuts::CaptureShortcutState>()
-                    {
-                        state.handle_plugin_event(app, event.state);
-                    }
+                .with_handler(move |_app, shortcut, event| {
+                    let event = match event.state {
+                        tauri_plugin_global_shortcut::ShortcutState::Pressed => {
+                            shortcuts::ShortcutEvent::Pressed
+                        }
+                        tauri_plugin_global_shortcut::ShortcutState::Released => {
+                            shortcuts::ShortcutEvent::Released
+                        }
+                    };
+                    let _ = plugin_dispatcher.dispatch(commands::shortcuts::PluginShortcutEvent {
+                        platform_identity: shortcut.to_string(),
+                        event,
+                    });
                 })
                 .build(),
         )
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             commands::notes::setup(app)?;
             commands::folders::setup(app)?;
             commands::temporary::setup(app)?;
-            commands::shortcuts::setup(app)?;
+            commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -71,12 +80,6 @@ pub fn run() {
             tauri::RunEvent::Exit => Some(windows::sticky::AppLifecycleEvent::Exit),
             _ => None,
         };
-        if let (Some(lifecycle), Some(state)) = (
-            lifecycle,
-            app_handle.try_state::<commands::temporary::TemporaryCommandState>(),
-        ) {
-            state.mark_lifecycle(lifecycle);
-        }
         if matches!(
             event,
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
@@ -85,6 +88,12 @@ pub fn run() {
             {
                 state.shutdown();
             }
+        }
+        if let (Some(lifecycle), Some(state)) = (
+            lifecycle,
+            app_handle.try_state::<commands::temporary::TemporaryCommandState>(),
+        ) {
+            state.mark_lifecycle(lifecycle);
         }
     });
 }

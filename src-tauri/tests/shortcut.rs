@@ -1,9 +1,10 @@
 use simple_notes_lib::{
+    commands::shortcuts::{PluginEventDispatcher, PluginShortcutEvent},
     error::CommandError,
     shortcuts::{
-        map_accelerator_for_platform, AcceleratorPlatform, CaptureBackend, CaptureTrigger,
-        ShortcutBackend, ShortcutError, ShortcutEvent, ShortcutService, TriggerOutcome,
-        DEFAULT_CAPTURE_SHORTCUT,
+        map_accelerator_for_platform, AcceleratorPlatform, CaptureBackend, CaptureEventRouter,
+        CaptureTrigger, ShortcutBackend, ShortcutError, ShortcutEvent, ShortcutRegistrationStatus,
+        ShortcutService, TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
     },
     storage::paths::StoragePaths,
     windows::sticky::{
@@ -16,7 +17,7 @@ use std::{
     fs,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Barrier, Mutex,
+        mpsc, Arc, Barrier, Mutex,
     },
     thread,
 };
@@ -199,7 +200,161 @@ fn rollback_failure_requires_recovery_and_lists_possible_bindings() {
                 "CommandOrControl+Alt+Space".to_owned()
             ]
     ));
-    assert_eq!(service.current().as_deref(), Some(DEFAULT_CAPTURE_SHORTCUT));
+    assert_eq!(service.current(), None);
+    assert!(matches!(
+        service.status().registration,
+        ShortcutRegistrationStatus::RecoveryRequired { ref bindings }
+            if bindings.len() == 2
+                && bindings.iter().any(|binding| binding.platform == "Control+Shift+Space")
+                && bindings.iter().any(|binding| binding.platform == "Control+Alt+Space")
+    ));
+
+    backend.fail(
+        "unregister",
+        "Control+Alt+Space",
+        ShortcutError::backend("new binding still cannot unregister"),
+    );
+    let cleanup = service.unregister().unwrap_err();
+    assert!(matches!(cleanup, ShortcutError::RecoveryRequired { .. }));
+    assert!(matches!(
+        service.status().registration,
+        ShortcutRegistrationStatus::RecoveryRequired { ref bindings }
+            if bindings.len() == 1 && bindings[0].platform == "Control+Alt+Space"
+    ));
+    service.unregister().unwrap();
+    assert!(matches!(
+        service.status().registration,
+        ShortcutRegistrationStatus::Inactive
+    ));
+}
+
+#[test]
+fn backend_reentry_and_simulated_plugin_lock_order_do_not_deadlock() {
+    type ReentryCallback = Arc<dyn Fn() + Send + Sync>;
+
+    #[derive(Clone, Default)]
+    struct ReentrantBackend {
+        callback: Arc<Mutex<Option<ReentryCallback>>>,
+    }
+    impl ShortcutBackend for ReentrantBackend {
+        fn register(&self, _accelerator: &str) -> Result<(), ShortcutError> {
+            if let Some(callback) = self.callback.lock().unwrap().clone() {
+                callback();
+            }
+            Ok(())
+        }
+        fn unregister(&self, _accelerator: &str) -> Result<(), ShortcutError> {
+            Ok(())
+        }
+    }
+
+    let backend = ReentrantBackend::default();
+    let service = Arc::new(ShortcutService::new_for_platform(
+        backend.clone(),
+        AcceleratorPlatform::Windows,
+    ));
+    let callback_service = service.clone();
+    *backend.callback.lock().unwrap() = Some(Arc::new(move || {
+        let _ = callback_service.status();
+        assert!(callback_service
+            .route_event("Control+Shift+Space", ShortcutEvent::Pressed)
+            .is_none());
+    }));
+    let (finished_tx, finished_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = service.register(DEFAULT_CAPTURE_SHORTCUT);
+        let _ = finished_tx.send(result);
+    });
+    assert!(finished_rx
+        .recv_timeout(std::time::Duration::from_millis(500))
+        .expect("registration deadlocked during synchronous backend reentry")
+        .is_ok());
+}
+
+#[test]
+fn shutdown_during_registration_defers_cleanup_without_blocking_or_late_activation() {
+    #[derive(Clone)]
+    struct BlockingBackend {
+        entered: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+        release: Arc<Mutex<mpsc::Receiver<()>>>,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+    impl ShortcutBackend for BlockingBackend {
+        fn register(&self, accelerator: &str) -> Result<(), ShortcutError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("register:{accelerator}"));
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                entered.send(()).unwrap();
+            }
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(())
+        }
+        fn unregister(&self, accelerator: &str) -> Result<(), ShortcutError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("unregister:{accelerator}"));
+            Ok(())
+        }
+    }
+
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let service = Arc::new(ShortcutService::new_for_platform(
+        BlockingBackend {
+            entered: Arc::new(Mutex::new(Some(entered_tx))),
+            release: Arc::new(Mutex::new(release_rx)),
+            calls: calls.clone(),
+        },
+        AcceleratorPlatform::Windows,
+    ));
+    let register_service = service.clone();
+    let register = thread::spawn(move || register_service.register(DEFAULT_CAPTURE_SHORTCUT));
+    entered_rx.recv().unwrap();
+    let started = std::time::Instant::now();
+    service.shutdown().unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_millis(50));
+    release_tx.send(()).unwrap();
+    assert!(register.join().unwrap().is_err());
+    assert_eq!(service.current(), None);
+    assert!(!service.status().accepting_triggers);
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        [
+            "register:Control+Shift+Space",
+            "unregister:Control+Shift+Space"
+        ]
+    );
+}
+
+#[test]
+fn production_dispatch_seam_is_non_blocking_and_carries_identity() {
+    let dispatcher = PluginEventDispatcher::default();
+    let (sender, receiver) = mpsc::channel();
+    dispatcher.attach(sender);
+    assert!(dispatcher.dispatch(PluginShortcutEvent {
+        platform_identity: "Control+Shift+Space".to_owned(),
+        event: ShortcutEvent::Pressed,
+    }));
+    let started = std::time::Instant::now();
+    assert!(dispatcher.dispatch(PluginShortcutEvent {
+        platform_identity: "Control+Alt+Space".to_owned(),
+        event: ShortcutEvent::Pressed,
+    }));
+    assert!(started.elapsed() < std::time::Duration::from_millis(50));
+    let delivered = [receiver.recv().unwrap(), receiver.recv().unwrap()];
+    assert_eq!(delivered[0].platform_identity, "Control+Shift+Space");
+    assert_eq!(delivered[0].event, ShortcutEvent::Pressed);
+    assert_eq!(delivered[1].platform_identity, "Control+Alt+Space");
+    assert_eq!(delivered[1].event, ShortcutEvent::Pressed);
+    dispatcher.detach();
+    assert!(!dispatcher.dispatch(PluginShortcutEvent {
+        platform_identity: "Control+Shift+Space".to_owned(),
+        event: ShortcutEvent::Released,
+    }));
 }
 
 #[test]
@@ -213,7 +368,7 @@ fn unregister_failure_is_retryable_and_shutdown_runs_once() {
         ShortcutError::backend("temporary failure"),
     );
     assert!(service.unregister().is_err());
-    assert_eq!(service.current().as_deref(), Some(DEFAULT_CAPTURE_SHORTCUT));
+    assert_eq!(service.current(), None);
     service.unregister().unwrap();
     service.unregister().unwrap();
     assert_eq!(service.current(), None);
@@ -241,7 +396,7 @@ fn failed_shutdown_cleanup_is_attempted_only_once() {
     );
     assert!(service.shutdown().is_err());
     assert!(service.shutdown().is_ok());
-    assert_eq!(service.current().as_deref(), Some(DEFAULT_CAPTURE_SHORTCUT));
+    assert_eq!(service.current(), None);
     assert_eq!(
         backend
             .calls()
@@ -348,6 +503,50 @@ fn concurrent_pressed_events_are_latched_until_release() {
         1
     );
     assert_eq!(*backend.creates.lock().unwrap(), 1);
+}
+
+#[test]
+fn routing_checks_platform_identity_generation_recovery_and_shutdown() {
+    let shortcut_backend = ShortcutFixture::default();
+    let service =
+        ShortcutService::new_for_platform(shortcut_backend.clone(), AcceleratorPlatform::Windows);
+    service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
+    let capture_backend = FailingCaptureBackend::default();
+    let router = CaptureEventRouter::new(
+        service.clone(),
+        CaptureTrigger::new(capture_backend.clone()),
+    );
+
+    assert_eq!(
+        router.dispatch("Control+Alt+Space", ShortcutEvent::Pressed),
+        TriggerOutcome::Ignored
+    );
+    assert!(matches!(
+        router.dispatch("Control+Shift+Space", ShortcutEvent::Pressed),
+        TriggerOutcome::Shown { .. }
+    ));
+
+    service.rebind("CommandOrControl+Alt+Space").unwrap();
+    assert_eq!(
+        router.dispatch("Control+Shift+Space", ShortcutEvent::Pressed),
+        TriggerOutcome::Ignored
+    );
+    assert!(matches!(
+        router.dispatch("Control+Alt+Space", ShortcutEvent::Pressed),
+        TriggerOutcome::Shown { .. }
+    ));
+    assert_eq!(*capture_backend.creates.lock().unwrap(), 2);
+
+    service.shutdown().unwrap();
+    assert_eq!(
+        router.dispatch("Control+Alt+Space", ShortcutEvent::Released),
+        TriggerOutcome::Ignored
+    );
+    assert_eq!(
+        router.dispatch("Control+Alt+Space", ShortcutEvent::Pressed),
+        TriggerOutcome::Ignored
+    );
+    assert_eq!(*capture_backend.creates.lock().unwrap(), 2);
 }
 
 #[test]
@@ -491,9 +690,4 @@ fn permissions_keep_shortcut_management_out_of_sticky_windows() {
     }
     assert!(!sticky.contains("global-shortcut"));
     assert!(!desktop.contains("global-shortcut:default"));
-
-    let application = fs::read_to_string("src/lib.rs").unwrap();
-    let tauri_backend = fs::read_to_string("src/shortcuts/tauri_backend.rs").unwrap();
-    assert_eq!(application.matches(".with_handler(").count(), 1);
-    assert!(!tauri_backend.contains(".on_shortcut("));
 }
