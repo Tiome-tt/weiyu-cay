@@ -13,6 +13,7 @@ function settingsPort(overrides: Partial<SettingsPort> = {}): SettingsPort {
     reset: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
     getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 1024, assetBytes: 2048, trashBytes: 0 }),
     moveStorageRoot: vi.fn().mockResolvedValue(undefined),
+    restartApplication: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
 }
@@ -20,7 +21,7 @@ function settingsPort(overrides: Partial<SettingsPort> = {}): SettingsPort {
 describe('SettingsView', () => {
   afterEach(cleanup)
   it('exposes the complete accessible settings surface and loads storage information', async () => {
-    render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} />)
+    render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
     expect(screen.getByRole('heading', { name: '设置' })).toBeVisible()
     expect(screen.getByLabelText('主题')).toHaveValue('forest')
     expect(screen.getByLabelText('正文字体')).toBeVisible()
@@ -43,7 +44,7 @@ describe('SettingsView', () => {
       .mockRejectedValueOnce(new Error('shortcut conflict'))
     const onChange = vi.fn()
     const user = userEvent.setup()
-    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={onChange} onClose={vi.fn()} />)
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={onChange} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
 
     await user.selectOptions(screen.getByLabelText('主题'), 'sand')
     await user.selectOptions(screen.getByLabelText('主题'), 'system')
@@ -66,7 +67,12 @@ describe('SettingsView', () => {
     const reset = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, theme: 'sand' })
     const onChange = vi.fn()
     const user = userEvent.setup()
-    render(<SettingsView settings={settingsPort({ moveStorageRoot, reset })} value={DEFAULT_APP_SETTINGS} onChange={onChange} onClose={vi.fn()} />)
+    render(<SettingsView settings={settingsPort({ moveStorageRoot, reset })} value={DEFAULT_APP_SETTINGS} onChange={onChange} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+
+    await user.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    expect(reset).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ theme: 'sand' }))
+    expect(screen.getByText('笔记数据不会被删除。')).toBeVisible()
 
     await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
     const moveButton = screen.getByRole('button', { name: '移动数据' })
@@ -74,13 +80,48 @@ describe('SettingsView', () => {
     expect(moveButton).toBeDisabled()
     expect(moveStorageRoot).toHaveBeenCalledTimes(1)
     move.resolve()
-    await waitFor(() => expect(screen.getByRole('button', { name: '恢复默认设置' })).toBeEnabled())
-    expect(screen.getByLabelText('新的数据位置')).toHaveValue('')
+    expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
+  })
 
-    await user.click(screen.getByRole('button', { name: '恢复默认设置' }))
-    expect(reset).toHaveBeenCalledTimes(1)
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ theme: 'sand' }))
-    expect(screen.getByText('笔记数据不会被删除。')).toBeVisible()
+  it('flushes behind edit barriers before moving and releases them when the move fails', async () => {
+    const events: string[] = []
+    const release = vi.fn(() => events.push('release'))
+    const prepareStorageMove = vi.fn(async () => { events.push('prepare'); return release })
+    const moveStorageRoot = vi.fn(async () => { events.push('move'); throw new Error('copy failed') })
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ moveStorageRoot })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={prepareStorageMove} />)
+    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('button', { name: '移动数据' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('原数据位置仍然有效')
+    expect(events).toEqual(['prepare', 'move', 'release'])
+  })
+
+  it('retains barriers after a move and exposes only the required restart action', async () => {
+    const release = vi.fn()
+    const restartApplication = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ restartApplication })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={onClose} prepareStorageMove={async () => release} />)
+    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('button', { name: '移动数据' }))
+    expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
+    expect(release).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '关闭设置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '完成' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: '立即重启' }))
+    expect(restartApplication).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('does not start relocation when held drafts cannot be flushed', async () => {
+    const moveStorageRoot = vi.fn()
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ moveStorageRoot })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => null} />)
+    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('button', { name: '移动数据' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('请先解决保存错误')
+    expect(moveStorageRoot).not.toHaveBeenCalled()
   })
 })
 

@@ -44,4 +44,19 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '打开设置' }))
     expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible()
   })
+
+  it('removes library navigation from interaction after storage relocation requires restart', async () => {
+    const user = userEvent.setup()
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
+    }} />)
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('button', { name: '移动数据' }))
+    expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
+    expect(screen.queryByRole('navigation', { name: '文件夹' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+  })
 })

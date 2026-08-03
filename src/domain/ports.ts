@@ -176,6 +176,8 @@ export interface StorageInfo {
   noteBytes: number
   assetBytes: number
   trashBytes: number
+  previousRoot: string | null
+  previousRootCleanupReady: boolean
 }
 
 export interface SettingsPort {
@@ -184,4 +186,5 @@ export interface SettingsPort {
   reset(): Promise<AppSettings>
   getStorageInfo(): Promise<StorageInfo>
   moveStorageRoot(destination: string): Promise<void>
+  restartApplication(): Promise<void>
 }

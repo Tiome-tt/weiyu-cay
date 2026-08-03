@@ -13,6 +13,8 @@ interface TemporaryInboxProps {
 
 export interface TemporaryInboxHandle {
   flush(): Promise<boolean>
+  beginEditBarrier(): Promise<void>
+  endEditBarrier(): void
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -110,6 +112,8 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     flush: () => busyRef.current === null
       ? editorRef.current?.flush() ?? Promise.resolve(true)
       : Promise.resolve(false),
+    beginEditBarrier: () => editorRef.current?.beginEditBarrier() ?? Promise.resolve(),
+    endEditBarrier: () => editorRef.current?.endEditBarrier(),
   }), [])
 
   const showFailure = (failures: Array<{ message: string }>) => {

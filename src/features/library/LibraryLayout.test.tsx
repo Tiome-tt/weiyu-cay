@@ -8,6 +8,8 @@ import type { TrashPort } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
 import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
+import { createRef } from 'react'
+import type { LibraryLayoutHandle } from './LibraryLayout'
 
 const folderA = '019c0000-0000-7000-8000-000000000021' as FolderId
 const folderB = '019c0000-0000-7000-8000-000000000022' as FolderId
@@ -56,6 +58,28 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('holds the active editor behind a barrier while flushing for a storage move', async () => {
+    const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('old'), id: noteA, title: 'Note A' }),
+      saveNote,
+    })
+    const ref = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'pending move' } }))
+
+    const release = await ref.current?.prepareStorageMove()
+    expect(saveNote).toHaveBeenCalledOnce()
+    expect(release).toEqual(expect.any(Function))
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    release?.()
+    expect(editor.state.facet(EditorView.editable)).toBe(true)
+  })
   it('flushes the active editor before deleting a formal note and exposes immediate undo', async () => {
     const pendingSave = deferred<NoteDocument>()
     const listNotes = vi.fn()

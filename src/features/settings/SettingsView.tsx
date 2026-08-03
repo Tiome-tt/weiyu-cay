@@ -7,14 +7,18 @@ interface SettingsViewProps {
   value: AppSettings
   onChange(value: AppSettings): void
   onClose(): void
+  prepareStorageMove(): Promise<(() => void) | null>
+  onRestartRequired?(): void
 }
 
-export function SettingsView({ settings, value, onChange, onClose }: SettingsViewProps) {
+export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired }: SettingsViewProps) {
   const [draft, setDraft] = useState(value)
   const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [destination, setDestination] = useState('')
   const [busy, setBusy] = useState<'update' | 'reset' | 'move' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [restartRequired, setRestartRequired] = useState(false)
+  const [restarting, setRestarting] = useState(false)
   const requestRef = useRef(0)
   const busyRef = useRef(false)
 
@@ -79,13 +83,20 @@ export function SettingsView({ settings, value, onChange, onClose }: SettingsVie
     const request = ++requestRef.current
     setBusy('move')
     setError(null)
+    let release: (() => void) | null = null
     try {
+      release = await prepareStorageMove()
+      if (release === null) {
+        setError('请先解决保存错误，再移动数据位置。')
+        return
+      }
       await settings.moveStorageRoot(target)
-      const info = await settings.getStorageInfo()
       if (requestRef.current !== request) return
-      setStorage(info)
-      setDestination('')
+      setRestartRequired(true)
+      onRestartRequired?.()
+      release = null
     } catch {
+      release?.()
       if (requestRef.current === request) setError('移动失败，原数据位置仍然有效。')
     } finally {
       busyRef.current = false
@@ -93,10 +104,36 @@ export function SettingsView({ settings, value, onChange, onClose }: SettingsVie
     }
   }
 
+  const restart = async () => {
+    if (restarting) return
+    setRestarting(true)
+    setError(null)
+    try {
+      await settings.restartApplication()
+    } catch {
+      setError('无法重新启动应用，请手动退出后重新打开。')
+      setRestarting(false)
+    }
+  }
+
+  if (restartRequired) {
+    return (
+      <div className="settings-backdrop settings-backdrop--required" role="presentation">
+        <section className="settings-restart" role="alertdialog" aria-modal="true" aria-labelledby="restart-heading">
+          <span aria-hidden="true" className="content-placeholder__leaf">↻</span>
+          <h1 id="restart-heading">需要重新启动</h1>
+          <p>数据已安全移动。重新启动后，Simple Notes 将从新的位置继续工作。</p>
+          {error && <p className="settings-view__error" role="alert">{error}</p>}
+          <button type="button" disabled={restarting} onClick={() => void restart()}>立即重启</button>
+        </section>
+      </div>
+    )
+  }
+
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
-        <header><div><span className="library-pane__eyebrow">Simple Notes</span><h1 id="settings-heading">设置</h1></div><button type="button" onClick={onClose} aria-label="关闭设置">×</button></header>
+        <header><div><span className="library-pane__eyebrow">Simple Notes</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={busy !== null} onClick={onClose} aria-label="关闭设置">×</button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
         <div className="settings-view__body">
           <fieldset disabled={busy === 'reset' || busy === 'move'}>
@@ -120,7 +157,7 @@ export function SettingsView({ settings, value, onChange, onClose }: SettingsVie
             <label className="settings-view__shortcut">新的数据位置<input aria-label="新的数据位置" value={destination} onChange={(event) => setDestination(event.target.value)} /><button type="button" disabled={destination.trim().length === 0 || busy === 'move'} onClick={() => void moveStorage()}>移动数据</button></label>
           </fieldset>
         </div>
-        <footer><div><button type="button" disabled={busy !== null} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" onClick={onClose}>完成</button></footer>
+        <footer><div><button type="button" disabled={busy !== null} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={busy !== null} onClick={onClose}>完成</button></footer>
       </section>
     </div>
   )

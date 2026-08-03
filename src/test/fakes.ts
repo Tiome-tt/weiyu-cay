@@ -55,8 +55,9 @@ export const fakeSettingsPort = (overrides: Partial<SettingsPort> = {}): Setting
   load: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
   update: vi.fn().mockImplementation(async (patch) => ({ ...DEFAULT_APP_SETTINGS, ...patch })),
   reset: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
-  getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 0, assetBytes: 0, trashBytes: 0 }),
+  getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 0, assetBytes: 0, trashBytes: 0, previousRoot: null, previousRootCleanupReady: false }),
   moveStorageRoot: vi.fn().mockResolvedValue(undefined),
+  restartApplication: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 })
 

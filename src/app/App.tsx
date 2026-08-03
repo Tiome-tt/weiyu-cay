@@ -1,8 +1,8 @@
 import '../styles/tokens.css'
 import '../styles/app.css'
-import { LibraryLayout } from '../features/library/LibraryLayout'
+import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/LibraryLayout'
 import { createAppServices, type AppServices } from './services'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../domain/model'
 import type { TemporaryWindowState } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
@@ -16,6 +16,8 @@ const defaultServices = createAppServices()
 export function App({ services = defaultServices }: { services?: AppServices }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [restartRequired, setRestartRequired] = useState(false)
+  const libraryRef = useRef<LibraryLayoutHandle>(null)
   useEffect(() => {
     let active = true
     if (services.settings === undefined) return
@@ -30,9 +32,11 @@ export function App({ services = defaultServices }: { services?: AppServices }) 
   }
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings)}>
-      <LibraryLayout notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
-      {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" onClick={() => setSettingsOpen(true)}>⚙</button>}
-      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => setSettingsOpen(false)} />}
+      <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
+        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
+        {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
+      </div>
+      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} />}
     </main>
   )
 }

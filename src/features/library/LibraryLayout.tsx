@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { EditorMode, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
@@ -23,7 +23,11 @@ interface LibraryLayoutProps {
   autosaveDelayMs?: number
 }
 
-export function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash, defaultEditorMode, autosaveDelayMs }: LibraryLayoutProps) {
+export interface LibraryLayoutHandle {
+  prepareStorageMove(): Promise<(() => void) | null>
+}
+
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash, defaultEditorMode, autosaveDelayMs }, ref) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
@@ -38,6 +42,7 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
   const navigationRequest = useRef(0)
   const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
   const trashMutationRef = useRef(0)
+  const storageMoveLockedRef = useRef(false)
   const mountedRef = useRef(false)
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
@@ -81,12 +86,51 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
   }
 
   const navigateAfterSave = async (navigate: () => void) => {
-    if (trashBusyRef.current === 'delete') return
+    if (trashBusyRef.current === 'delete' || storageMoveLockedRef.current) return
     const request = ++navigationRequest.current
     const activeEditor = activeView === 'temporary' ? temporaryInboxRef.current : editorRef.current
     const canNavigate = (await activeEditor?.flush()) ?? true
     if (mountedRef.current && canNavigate && request === navigationRequest.current) navigate()
   }
+
+  useImperativeHandle(ref, () => ({
+    prepareStorageMove: async () => {
+      if (storageMoveLockedRef.current) return null
+      storageMoveLockedRef.current = true
+      const formal = editorRef.current
+      const temporaryEditor = temporaryInboxRef.current
+      const releases: Array<() => void> = []
+      const releaseAll = () => {
+        while (releases.length > 0) releases.pop()?.()
+        storageMoveLockedRef.current = false
+      }
+      try {
+        if (formal !== null) {
+          await formal.beginEditBarrier()
+          releases.push(() => formal.endEditBarrier())
+        }
+        if (temporaryEditor !== null) {
+          await temporaryEditor.beginEditBarrier()
+          releases.push(() => temporaryEditor.endEditBarrier())
+        }
+        const formalSaved = (await formal?.flush()) ?? true
+        const temporarySaved = (await temporaryEditor?.flush()) ?? true
+        if (!formalSaved || !temporarySaved) {
+          releaseAll()
+          return null
+        }
+        let released = false
+        return () => {
+          if (released) return
+          released = true
+          releaseAll()
+        }
+      } catch {
+        releaseAll()
+        return null
+      }
+    },
+  }), [])
 
   const deleteFormalNote = async (noteId: NoteId, title: string) => {
     if (!mountedRef.current || trash === undefined || trashBusyRef.current !== null) return
@@ -266,7 +310,7 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
       </SplitPane>
     </div>
   )
-}
+})
 
 function isColumnPreference(value: unknown): value is LibraryColumnPreference {
   if (typeof value !== 'object' || value === null) return false

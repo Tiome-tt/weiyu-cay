@@ -220,6 +220,10 @@ class TauriSettingsPort implements SettingsPort {
   moveStorageRoot(destination: string) {
     return this.client.invoke<void>('move_storage_root', { destination })
   }
+
+  restartApplication() {
+    return this.client.invoke<void>('restart_application')
+  }
 }
 
 export function createTauriPorts(): {
