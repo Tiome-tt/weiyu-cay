@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
 import { normalizeSettings } from './theme'
 
@@ -24,6 +24,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const requestRef = useRef(0)
   const busyRef = useRef(false)
   const draftRef = useRef(value)
+  const shortcutStatusRequest = useRef(0)
 
   useEffect(() => {
     if (busyRef.current) return
@@ -42,16 +43,20 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     })
     return () => { requestRef.current += 1 }
   }, [settings])
-  useEffect(() => {
-    let active = true
-    void settings.getShortcutStatus().then((status) => {
-      if (!active) return
+  const refreshShortcutStatus = useCallback(async () => {
+    const request = ++shortcutStatusRequest.current
+    try {
+      const status = await settings.getShortcutStatus()
+      if (shortcutStatusRequest.current !== request) return
       setShortcutWarning(status.startupError !== null || !status.acceptingTriggers ? '全局快捷键未能启用；本地笔记仍可正常使用。请更换快捷键后重试。' : null)
-    }).catch(() => {
-      if (active) setShortcutWarning('无法确认全局快捷键状态；本地笔记仍可正常使用。')
-    })
-    return () => { active = false }
+    } catch {
+      if (shortcutStatusRequest.current === request) setShortcutWarning('无法确认全局快捷键状态；本地笔记仍可正常使用。')
+    }
   }, [settings])
+  useEffect(() => {
+    void refreshShortcutStatus()
+    return () => { shortcutStatusRequest.current += 1 }
+  }, [refreshShortcutStatus])
 
   const update = async (patch: Partial<AppSettings>, kind: 'shortcut' | 'general' = 'general') => {
     if (busyRef.current) return
@@ -69,6 +74,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
       draftRef.current = normalized
       setDraft(normalized)
       onChange(normalized)
+      if (kind === 'shortcut') await refreshShortcutStatus()
     } catch {
       if (requestRef.current !== request) return
       setDraft(value)

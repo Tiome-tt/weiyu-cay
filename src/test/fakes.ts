@@ -1,7 +1,7 @@
 import { vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../domain/model'
-import type { AssetPort, FolderPort, LinkPort, NotePort, SearchPort, SettingsPort, SystemPort, TemporaryPort } from '../domain/ports'
-import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
+import type { AssetPort, FolderPort, LinkPort, NotePort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, SystemPort, TemporaryPort } from '../domain/ports'
+import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS } from '../features/settings/theme'
 
 export const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
 export const projectB = '019c0000-0000-7000-8000-000000000001' as FolderId
@@ -60,6 +60,14 @@ export const fakeSettingsPort = (overrides: Partial<SettingsPort> = {}): Setting
   restartApplication: vi.fn().mockResolvedValue(undefined),
   onChanged: vi.fn().mockResolvedValue(() => undefined),
   getShortcutStatus: vi.fn().mockResolvedValue({ current: DEFAULT_APP_SETTINGS.shortcut, registration: { state: 'active' }, acceptingTriggers: true, startupError: null }),
+  ...overrides,
+})
+
+export const defaultStickySettings: StickySettings = { ...DEFAULT_STICKY_SETTINGS }
+
+export const fakeStickySettingsPort = (overrides: Partial<StickySettingsPort> = {}): StickySettingsPort => ({
+  load: vi.fn().mockResolvedValue(defaultStickySettings),
+  onChanged: vi.fn().mockResolvedValue(() => undefined),
   ...overrides,
 })
 

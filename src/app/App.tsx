@@ -4,16 +4,23 @@ import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/Lib
 import { createAppServices, type AppServices } from './services'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../domain/model'
-import type { TemporaryWindowState } from '../domain/ports'
+import type { StickySettings, TemporaryWindowState } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
 import { StickyWindow } from '../features/temporary/StickyWindow'
 import type { AppSettings } from '../domain/ports'
 import { SettingsView } from '../features/settings/SettingsView'
-import { DEFAULT_APP_SETTINGS, normalizeSettings, themeStyle } from '../features/settings/theme'
+import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeStyle } from '../features/settings/theme'
 
 const defaultServices = createAppServices()
 
 export function App({ services = defaultServices }: { services?: AppServices }) {
+  const sticky = stickyRoute()
+  return sticky === null
+    ? <MainApplication services={services} />
+    : <StickyApplication services={services} route={sticky} />
+}
+
+function MainApplication({ services }: { services: AppServices }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
@@ -50,10 +57,6 @@ export function App({ services = defaultServices }: { services?: AppServices }) 
     }).catch(() => void loadSettings())
     return () => { active = false; unlisten?.() }
   }, [loadSettings, services.settings])
-  const sticky = stickyRoute()
-  if (sticky !== null) {
-    return <div className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>{settingsError && <SettingsLoadError onRetry={loadSettings} />}<StickyWindowEntry services={services} route={sticky} autosaveDelayMs={settings.autosaveDelayMs} /></div>
-  }
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
@@ -63,6 +66,67 @@ export function App({ services = defaultServices }: { services?: AppServices }) 
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} />}
     </main>
+  )
+}
+
+function StickyApplication({ services, route }: { services: AppServices; route: StickyRoute }) {
+  const [appearance, setAppearance] = useState<StickySettings>(DEFAULT_STICKY_SETTINGS)
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState(false)
+  const requestRef = useRef(0)
+  const systemScheme = useSystemColorScheme()
+  const loadAppearance = useCallback(async () => {
+    const request = ++requestRef.current
+    setError(false)
+    if (services.stickySettings === undefined) {
+      if (requestRef.current === request) setError(true)
+      return
+    }
+    try {
+      const loaded = normalizeStickySettings(await services.stickySettings.load())
+      if (requestRef.current !== request) return
+      setAppearance(loaded)
+      setReady(true)
+    } catch {
+      if (requestRef.current === request) setError(true)
+    }
+  }, [services.stickySettings])
+
+  useEffect(() => {
+    let active = true
+    let unlisten: (() => void) | undefined
+    if (services.stickySettings === undefined) {
+      void loadAppearance()
+      return () => { active = false; requestRef.current += 1 }
+    }
+    void services.stickySettings.onChanged((changed) => {
+      if (!active) return
+      requestRef.current += 1
+      setAppearance(normalizeStickySettings(changed))
+      setReady(true)
+      setError(false)
+    }).then((stop) => {
+      if (!active) stop()
+      else {
+        unlisten = stop
+        void loadAppearance()
+      }
+    }).catch(() => void loadAppearance())
+    return () => {
+      active = false
+      requestRef.current += 1
+      unlisten?.()
+    }
+  }, [loadAppearance, services.stickySettings])
+
+  return (
+    <div className="app-shell" data-theme={appearance.theme} style={themeStyle(appearance, systemScheme)}>
+      {error
+        ? <StickyAppearanceLoadError onRetry={loadAppearance} />
+        : ready
+          ? <StickyWindowEntry services={services} route={route} autosaveDelayMs={appearance.autosaveDelayMs} />
+          : <main className="sticky-window"><p role="status">正在加载便签外观…</p></main>}
+    </div>
   )
 }
 
@@ -134,6 +198,10 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
 
 function SettingsLoadError({ onRetry }: { onRetry(): Promise<void> }) {
   return <p className="settings-load-error" role="alert">无法加载设置，当前编辑内容保持不变。<button type="button" onClick={() => void onRetry()}>重试加载设置</button></p>
+}
+
+function StickyAppearanceLoadError({ onRetry }: { onRetry(): Promise<void> }) {
+  return <main className="sticky-window"><p role="alert">无法加载便签外观。<button type="button" onClick={() => void onRetry()}>重试加载便签外观</button></p></main>
 }
 
 function useSystemColorScheme(): 'light' | 'dark' {

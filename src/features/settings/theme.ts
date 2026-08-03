@@ -1,8 +1,17 @@
 import type { CSSProperties } from 'react'
-import type { AppSettings } from '../../domain/ports'
+import type { AppSettings, StickySettings } from '../../domain/ports'
 import settingsDefaults from '../../shared/settings-defaults.json'
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = settingsDefaults as AppSettings
+export const DEFAULT_STICKY_SETTINGS: Readonly<StickySettings> = {
+  theme: DEFAULT_APP_SETTINGS.theme,
+  stickyColorMode: DEFAULT_APP_SETTINGS.stickyColorMode,
+  bodyFont: DEFAULT_APP_SETTINGS.bodyFont,
+  codeFont: DEFAULT_APP_SETTINGS.codeFont,
+  fontSize: DEFAULT_APP_SETTINGS.fontSize,
+  lineHeight: DEFAULT_APP_SETTINGS.lineHeight,
+  autosaveDelayMs: DEFAULT_APP_SETTINGS.autosaveDelayMs,
+}
 
 const palettes = {
   forest: {
@@ -67,8 +76,18 @@ export function normalizeSettings(value: AppSettings): AppSettings {
   }
 }
 
-export function themeVariables(settings: AppSettings, systemScheme: 'light' | 'dark' = 'light'): ThemeVariables {
-  const normalized = normalizeSettings(settings)
+export function normalizeStickySettings(value: StickySettings): StickySettings {
+  return {
+    ...value,
+    stickyColorMode: 'follow-theme',
+    fontSize: clamp(value.fontSize, 12, 28),
+    lineHeight: clamp(value.lineHeight, 1.2, 2.2),
+    autosaveDelayMs: clamp(value.autosaveDelayMs, 150, 2_000),
+  }
+}
+
+export function themeVariables(settings: StickySettings, systemScheme: 'light' | 'dark' = 'light'): ThemeVariables {
+  const normalized = normalizeStickySettings(settings)
   const palette = normalized.theme === 'system' && systemScheme === 'dark' ? systemDarkPalette : palettes[normalized.theme]
   return {
     ...palette,
@@ -80,7 +99,7 @@ export function themeVariables(settings: AppSettings, systemScheme: 'light' | 'd
   }
 }
 
-export function themeStyle(settings: AppSettings, systemScheme: 'light' | 'dark' = 'light'): CSSProperties {
+export function themeStyle(settings: StickySettings, systemScheme: 'light' | 'dark' = 'light'): CSSProperties {
   return themeVariables(settings, systemScheme) as CSSProperties
 }
 

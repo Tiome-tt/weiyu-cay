@@ -91,4 +91,16 @@ describe('TauriClient', () => {
       ['purge_expired_trash', undefined],
     ])
   })
+
+  it('loads sticky appearance through its least-privilege command', async () => {
+    invokeMock.mockResolvedValue({
+      theme: 'forest', stickyColorMode: 'follow-theme', bodyFont: 'system-ui', codeFont: 'monospace',
+      fontSize: 16, lineHeight: 1.6, autosaveDelayMs: 500,
+    })
+    const { stickySettings } = createTauriPorts()
+
+    await stickySettings.load()
+
+    expect(invokeMock).toHaveBeenCalledWith('load_sticky_settings', undefined)
+  })
 })

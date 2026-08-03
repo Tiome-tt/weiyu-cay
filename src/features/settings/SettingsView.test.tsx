@@ -59,6 +59,28 @@ describe('SettingsView', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('快捷键已被占用')
   })
 
+  it('refreshes shortcut startup status after a successful deferred shortcut update', async () => {
+    const updated = deferred<AppSettings>()
+    const refreshed = deferred<Awaited<ReturnType<SettingsPort['getShortcutStatus']>>>()
+    const getShortcutStatus = vi.fn()
+      .mockResolvedValueOnce({ current: null, registration: { state: 'inactive' }, acceptingTriggers: false, startupError: { kind: 'conflict', reason: 'occupied' } })
+      .mockReturnValueOnce(refreshed.promise)
+    const update = vi.fn().mockReturnValue(updated.promise)
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ update, getShortcutStatus })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    expect(await screen.findByRole('status', { name: '快捷键状态警告' })).toBeVisible()
+    const shortcut = screen.getByLabelText('全局快捷键')
+    await user.clear(shortcut)
+    await user.type(shortcut, 'Ctrl+Alt+N')
+    await user.click(screen.getByRole('button', { name: '应用快捷键' }))
+    expect(getShortcutStatus).toHaveBeenCalledOnce()
+    updated.resolve({ ...DEFAULT_APP_SETTINGS, shortcut: 'Ctrl+Alt+N' })
+    await waitFor(() => expect(getShortcutStatus).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('status', { name: '快捷键状态警告' })).toBeVisible()
+    refreshed.resolve({ current: 'Ctrl+Alt+N', registration: { state: 'active' }, acceptingTriggers: true, startupError: null })
+    await waitFor(() => expect(screen.queryByRole('status', { name: '快捷键状态警告' })).not.toBeInTheDocument())
+  })
+
   it('serializes every settings mutation while an update is pending', async () => {
     const pending = deferred<AppSettings>()
     const update = vi.fn().mockReturnValue(pending.promise)

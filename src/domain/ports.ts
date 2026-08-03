@@ -177,6 +177,21 @@ export interface AppSettings {
   dataRoot: { mode: 'default' } | { mode: 'custom'; path: string }
 }
 
+export interface StickySettings {
+  theme: AppSettings['theme']
+  stickyColorMode: AppSettings['stickyColorMode']
+  bodyFont: string
+  codeFont: string
+  fontSize: number
+  lineHeight: number
+  autosaveDelayMs: number
+}
+
+export interface StickySettingsPort {
+  load(): Promise<StickySettings>
+  onChanged(handler: (settings: StickySettings) => void): Promise<() => void>
+}
+
 export interface StorageInfo {
   root: string
   noteBytes: number

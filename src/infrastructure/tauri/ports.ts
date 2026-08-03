@@ -1,7 +1,7 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppSettings, AssetPort, FolderPort, LinkPort, SearchPort, SettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppSettings, AssetPort, FolderPort, LinkPort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -234,6 +234,18 @@ class TauriSettingsPort implements SettingsPort {
   }
 }
 
+class TauriStickySettingsPort implements StickySettingsPort {
+  constructor(private readonly client: TauriClient) {}
+
+  load() {
+    return this.client.invoke<StickySettings>('load_sticky_settings')
+  }
+
+  onChanged(handler: (settings: StickySettings) => void) {
+    return getCurrentWebviewWindow().listen<StickySettings>('sticky-settings-updated', (event) => handler(event.payload))
+  }
+}
+
 export function createTauriPorts(): {
   notes: LibraryNotePort
   folders: FolderPort
@@ -245,6 +257,7 @@ export function createTauriPorts(): {
   temporaryWindows: TemporaryWindowPort
   trash: TrashPort
   settings: SettingsPort
+  stickySettings: StickySettingsPort
 } {
   const client = new TauriClient()
   return {
@@ -258,5 +271,6 @@ export function createTauriPorts(): {
     temporaryWindows: new TauriTemporaryWindowPort(client),
     trash: new TauriTrashPort(client),
     settings: new TauriSettingsPort(client),
+    stickySettings: new TauriStickySettingsPort(client),
   }
 }

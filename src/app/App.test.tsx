@@ -3,8 +3,8 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import userEvent from '@testing-library/user-event'
-import { fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeSystemPort } from '../test/fakes'
-import type { AppSettings, SettingsPort } from '../domain/ports'
+import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort } from '../test/fakes'
+import type { AppSettings, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
 import type { NoteDocument, NoteId } from '../domain/model'
@@ -118,17 +118,26 @@ describe('App', () => {
       createdAt: '2026-07-30T08:00:00Z', updatedAt: '2026-07-30T08:00:00Z',
     }
     const save = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 1 }))
+    const fullSettingsLoad = vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS)
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
       temporary: { load: vi.fn().mockResolvedValue(capture), save, create: vi.fn(), list: vi.fn(), convert: vi.fn(), delete: vi.fn(), undoDelete: vi.fn() },
       temporaryWindows: { hide: vi.fn(), show: vi.fn(), setAlwaysOnTop: vi.fn(), startDragging: vi.fn() },
-      settings: fakeSettingsPort({ load: vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, autosaveDelayMs: 150 }) }),
+      settings: fakeSettingsPort({ load: fullSettingsLoad }),
+      stickySettings: fakeStickySettingsPort({ load: vi.fn().mockResolvedValue({ ...defaultStickySettings, theme: 'sand', bodyFont: 'Sticky Serif', codeFont: 'Sticky Mono', fontSize: 19, lineHeight: 1.8, autosaveDelayMs: 150 }) }),
     }} />)
     await act(async () => undefined)
     await act(async () => undefined)
     const editor = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
+    const shell = screen.getByTestId('sticky-window').parentElement
+    expect(shell).toHaveAttribute('data-theme', 'sand')
+    expect(shell?.style.getPropertyValue('--body-font')).toBe('Sticky Serif')
+    expect(shell?.style.getPropertyValue('--code-font')).toBe('Sticky Mono')
+    expect(shell?.style.getPropertyValue('--body-font-size')).toBe('19px')
+    expect(shell?.style.getPropertyValue('--body-line-height')).toBe('1.8')
+    expect(fullSettingsLoad).not.toHaveBeenCalled()
     expect(screen.getByTestId('sticky-window')).not.toHaveAttribute('style')
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'new' } })
     await vi.advanceTimersByTimeAsync(149)
@@ -137,6 +146,57 @@ describe('App', () => {
     expect(save).toHaveBeenCalledOnce()
     window.history.replaceState(null, '', previousUrl)
     vi.useRealTimers()
+  })
+
+  it('adopts narrowed sticky events, ignores a stale sticky load, and removes its listener', async () => {
+    const temporaryId = '019c0000-0000-7000-8000-000000000031' as NoteId
+    window.history.replaceState(null, '', `?sticky=${temporaryId}`)
+    const pending = deferred<StickySettings>()
+    let publish!: (value: StickySettings) => void
+    const unlisten = vi.fn()
+    const stickySettings = {
+      ...fakeStickySettingsPort({ load: vi.fn(() => pending.promise) }),
+      onChanged: vi.fn(async (handler: (value: StickySettings) => void) => { publish = handler; return unlisten }),
+    } as StickySettingsPort
+    const temporary = {
+      load: vi.fn().mockResolvedValue({ id: temporaryId, kind: 'temporary', title: 'Capture', folderId: null, tags: [], markdown: '', revision: 0, createdAt: '', updatedAt: '' }),
+      save: vi.fn(), create: vi.fn(), list: vi.fn(), convert: vi.fn(), delete: vi.fn(), undoDelete: vi.fn(),
+    }
+    const rendered = render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      temporary, temporaryWindows: { hide: vi.fn(), show: vi.fn(), setAlwaysOnTop: vi.fn(), startDragging: vi.fn() }, stickySettings,
+    }} />)
+    await waitFor(() => expect(stickySettings.onChanged).toHaveBeenCalledOnce())
+    expect(screen.queryByTestId('sticky-window')).not.toBeInTheDocument()
+    act(() => publish({ ...defaultStickySettings, theme: 'sand', fontSize: 20 }))
+    const sticky = await screen.findByTestId('sticky-window')
+    expect(sticky.parentElement).toHaveAttribute('data-theme', 'sand')
+    pending.resolve({ ...defaultStickySettings, theme: 'forest', fontSize: 14 })
+    await act(async () => pending.promise)
+    expect(sticky.parentElement).toHaveAttribute('data-theme', 'sand')
+    rendered.unmount()
+    expect(unlisten).toHaveBeenCalledOnce()
+  })
+
+  it('shows sticky appearance load failure and retries without adopting an unmounted completion', async () => {
+    const temporaryId = '019c0000-0000-7000-8000-000000000031' as NoteId
+    window.history.replaceState(null, '', `?sticky=${temporaryId}`)
+    const retry = deferred<StickySettings>()
+    const unlisten = vi.fn()
+    const load = vi.fn().mockRejectedValueOnce(new Error('denied')).mockReturnValueOnce(retry.promise)
+    const stickySettings = fakeStickySettingsPort({ load, onChanged: vi.fn().mockResolvedValue(unlisten) })
+    const rendered = render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(), stickySettings,
+    }} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法加载便签外观')
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试加载便签外观' }))
+    expect(load).toHaveBeenCalledTimes(2)
+    rendered.unmount()
+    retry.resolve({ ...defaultStickySettings, theme: 'sand' })
+    await retry.promise
+    expect(unlisten).toHaveBeenCalledOnce()
   })
 
   it('tracks system color-scheme changes and cleans up the media listener', async () => {
