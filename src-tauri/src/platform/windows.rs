@@ -14,7 +14,9 @@ use std::{
         io::AsRawHandle,
     },
     path::{Path, PathBuf},
-    ptr, thread,
+    ptr,
+    sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -640,7 +642,7 @@ pub fn sync_parent(_parent: &Path) -> Result<(), CommandError> {
 #[derive(Debug)]
 pub struct SafeDirectory {
     path: PathBuf,
-    _pins: Vec<File>,
+    _pins: Vec<Arc<File>>,
 }
 
 impl SafeDirectory {
@@ -660,18 +662,36 @@ impl SafeDirectory {
     }
 
     pub(crate) fn open_child(&self, name: &str, create: bool) -> Result<Self, CommandError> {
+        self.open_child_using(name, create, || {})
+    }
+
+    #[cfg(test)]
+    fn open_child_with_hook<F: FnOnce()>(
+        &self,
+        name: &str,
+        create: bool,
+        hook: F,
+    ) -> Result<Self, CommandError> {
+        self.open_child_using(name, create, hook)
+    }
+
+    fn open_child_using<F: FnOnce()>(
+        &self,
+        name: &str,
+        create: bool,
+        hook: F,
+    ) -> Result<Self, CommandError> {
         let path = self.child_path(name)?;
+        hook();
         if create && !path.exists() {
             fs::create_dir(&path).map_err(|source| {
                 CommandError::io(format!("could not create contained directory: {source}"))
             })?;
             self.sync()?;
         }
-        let pin = open_pinned_directory(&path)?;
-        Ok(Self {
-            path,
-            _pins: vec![pin],
-        })
+        let mut pins = self._pins.clone();
+        pins.push(Arc::new(open_pinned_directory(&path)?));
+        Ok(Self { path, _pins: pins })
     }
 
     pub(crate) fn create_child_no_replace(&self, name: &str) -> Result<Self, CommandError> {
@@ -684,11 +704,9 @@ impl SafeDirectory {
             }
         })?;
         self.sync()?;
-        let pin = open_pinned_directory(&path)?;
-        Ok(Self {
-            path,
-            _pins: vec![pin],
-        })
+        let mut pins = self._pins.clone();
+        pins.push(Arc::new(open_pinned_directory(&path)?));
+        Ok(Self { path, _pins: pins })
     }
 
     pub(crate) fn move_self_no_replace(
@@ -830,7 +848,7 @@ impl SafeDirectory {
             ));
         }
         let mut path = root;
-        let mut pins = vec![root_pin];
+        let mut pins = vec![Arc::new(root_pin)];
         for segment in segments {
             validate_child_name(segment)?;
             path.push(segment);
@@ -840,7 +858,7 @@ impl SafeDirectory {
                 })?;
                 sync_parent(path.parent().expect("created directory has parent"))?;
             }
-            pins.push(open_pinned_directory(&path)?);
+            pins.push(Arc::new(open_pinned_directory(&path)?));
         }
         Ok(Self { path, _pins: pins })
     }
@@ -1348,7 +1366,7 @@ mod tests {
         FileIdentity, ReplaceFailureAction, ReplaceOperations,
     };
     use crate::storage::atomic_file::PublishState;
-    use std::{collections::VecDeque, fs, path::Path};
+    use std::{collections::VecDeque, fs, io::Write, path::Path};
 
     #[test]
     fn index_mutation_lock_keeps_the_validated_root_pinned_while_opening_the_lock_file() {
@@ -1437,6 +1455,52 @@ mod tests {
             fs::read(root.path().join("source/original/note.md")).unwrap(),
             b"original"
         );
+    }
+
+    #[test]
+    fn child_directory_retains_parent_pins_during_intermediate_junction_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("anchor/parent/child")).unwrap();
+        fs::create_dir_all(outside.path().join("parent/child")).unwrap();
+        let anchor = super::SafeDirectory::open(root.path(), &["anchor"], false).unwrap();
+        let parent = anchor.open_child("parent", false).unwrap();
+        drop(anchor);
+        let attack_succeeded = std::cell::Cell::new(false);
+        let displaced = root.path().join("displaced");
+        let anchor_path = root.path().join("anchor");
+
+        let child = parent
+            .open_child_with_hook("child", false, || {
+                if fs::rename(&anchor_path, &displaced).is_err() {
+                    return;
+                }
+                let output = std::process::Command::new("cmd")
+                    .args(["/C", "mklink", "/J"])
+                    .arg(&anchor_path)
+                    .arg(outside.path())
+                    .output()
+                    .expect("launch junction fixture command");
+                assert!(
+                    output.status.success(),
+                    "junction fixture does not require Developer Mode: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                attack_succeeded.set(true);
+            })
+            .unwrap();
+        child
+            .create_new("proof.txt")
+            .unwrap()
+            .write_all(b"contained")
+            .unwrap();
+
+        assert!(!attack_succeeded.get());
+        assert_eq!(
+            fs::read(root.path().join("anchor/parent/child/proof.txt")).unwrap(),
+            b"contained"
+        );
+        assert!(!outside.path().join("parent/child/proof.txt").exists());
     }
 
     struct FakeReplaceOperations {
