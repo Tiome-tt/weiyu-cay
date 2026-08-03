@@ -434,12 +434,27 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
                 return Err(error);
             }
         }
+        if let Err(error) = crate::storage::trash::catalog_moved_temporary(
+            &self.paths,
+            &descriptor.operation_id,
+            &document,
+            &descriptor.deleted_at,
+        ) {
+            self.rollback_delete_move(descriptor, id)?;
+            return Err(error);
+        }
         self.fail(TemporaryFailurePoint::CrashAfterMove)?;
         if let Err(error) = self
             .fail(TemporaryFailurePoint::AfterMove)
             .and_then(|()| mark_deleted(&self.paths, id, &descriptor.deleted_at))
         {
             self.fail(TemporaryFailurePoint::BeforeRollback)?;
+            self.rollback_delete_move(descriptor, id)?;
+            return Err(error);
+        }
+        if let Err(error) =
+            crate::storage::trash::mark_catalog_deleted(&self.paths, &descriptor.operation_id, id)
+        {
             self.rollback_delete_move(descriptor, id)?;
             return Err(error);
         }
@@ -485,6 +500,11 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
             &descriptor.items[item_index].original,
             descriptor.items[item_index].window_state,
         )?;
+        let _ = crate::storage::trash::remove_catalog_manifest(
+            &self.paths,
+            &descriptor.operation_id,
+            id,
+        );
         descriptor.items.remove(item_index);
         write_delete_descriptor(&self.paths, descriptor)
     }
@@ -561,6 +581,7 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
             self.rollback_restore_move(&mut descriptor, item_index, operation_id, id)?;
             return Err(error);
         }
+        crate::storage::trash::remove_catalog_manifest(&self.paths, operation_id, id)?;
         Ok(())
     }
 
@@ -737,6 +758,8 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         match (item.state, temporary, trashed) {
             (DeleteItemState::Prepared | DeleteItemState::RollingBack, true, false) => {
                 validate_temporary_document(&self.paths, &item)?;
+                let _ =
+                    crate::storage::trash::remove_catalog_manifest(&self.paths, operation_id, id);
                 return Ok(None);
             }
             (DeleteItemState::Prepared | DeleteItemState::RollingBack, false, true) => {
@@ -744,16 +767,27 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
                 require_synced_move(move_trash_to_temporary(&self.paths, operation_id, id))?;
                 validate_temporary_document(&self.paths, &item)?;
                 persist_temporary_restore(&self.paths, &item.original, item.window_state)?;
+                let _ =
+                    crate::storage::trash::remove_catalog_manifest(&self.paths, operation_id, id);
                 return Ok(None);
             }
             (DeleteItemState::Deleted, false, true) => {
                 validate_trashed_document(&self.paths, operation_id, &item)?;
+                crate::storage::trash::catalog_moved_temporary(
+                    &self.paths,
+                    operation_id,
+                    &item.original,
+                    deleted_at,
+                )?;
                 mark_deleted(&self.paths, id, deleted_at)?;
+                crate::storage::trash::mark_catalog_deleted(&self.paths, operation_id, id)?;
                 let _ = self.backend.retire(&temporary_window_label(id));
             }
             (DeleteItemState::Restored, true, false) => {
                 validate_temporary_document(&self.paths, &item)?;
                 persist_temporary_restore(&self.paths, &item.original, item.window_state)?;
+                let _ =
+                    crate::storage::trash::remove_catalog_manifest(&self.paths, operation_id, id);
             }
             (DeleteItemState::Restoring | DeleteItemState::RestoreRollingBack, true, false) => {
                 validate_temporary_document(&self.paths, &item)?;

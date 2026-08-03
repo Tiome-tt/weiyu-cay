@@ -50,6 +50,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let backend =
         TauriTemporaryWindowBackend::new(app.handle().clone(), paths.clone(), shutting_down);
     TemporaryInboxService::new(paths.clone(), backend.clone()).recover_pending()?;
+    crate::storage::trash::TrashService::new(paths.clone()).recover_pending()?;
     app.manage(TemporaryCommandState { paths, backend });
     Ok(())
 }

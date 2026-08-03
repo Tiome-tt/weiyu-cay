@@ -1,11 +1,16 @@
 use crate::{
-    domain::{FolderId, LinkRepairResult, NoteDocument, NoteId, NoteSummary},
+    domain::{
+        FolderId, LinkRepairResult, NoteDocument, NoteId, NoteSummary, PurgeTrashResult,
+        RestoreTrashResult, TrashBatchResult, TrashEntry,
+    },
     error::CommandError,
     storage::{
         database::Database,
         paths::StoragePaths,
         repository::{LinkRepository, NoteRepository},
+        trash::TrashService,
     },
+    windows::sticky::{authorize_temporary_caller, TemporaryCommandOperation},
 };
 use serde::Deserialize;
 use tauri::{Manager, State};
@@ -30,10 +35,12 @@ pub struct SaveNoteInput {
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let root = app.path().app_data_dir()?;
     let paths = StoragePaths::open(root)?;
-    let _guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
-    let database = Database::open(paths.database())?;
-    database.migrate()?;
-    database.close()?;
+    {
+        let _guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
+        let database = Database::open(paths.database())?;
+        database.migrate()?;
+        database.close()?;
+    }
     app.manage(NoteCommandState { paths });
     Ok(())
 }
@@ -80,6 +87,54 @@ pub fn move_note(
 ) -> Result<NoteDocument, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
     repository(&state)?.move_note_locked(note_id, folder_id, &guard)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn trash_notes(
+    window: tauri::WebviewWindow,
+    state: State<'_, NoteCommandState>,
+    note_ids: Vec<NoteId>,
+) -> Result<TrashBatchResult, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
+    TrashService::new(state.paths.clone()).trash(note_ids, &chrono::Utc::now().to_rfc3339())
+}
+
+#[tauri::command]
+pub fn list_trash(
+    window: tauri::WebviewWindow,
+    state: State<'_, NoteCommandState>,
+) -> Result<Vec<TrashEntry>, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::List, None)?;
+    TrashService::new(state.paths.clone()).list()
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn restore_trash(
+    window: tauri::WebviewWindow,
+    state: State<'_, NoteCommandState>,
+    note_ids: Vec<NoteId>,
+) -> Result<RestoreTrashResult, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
+    TrashService::new(state.paths.clone()).restore(note_ids)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn undo_trash(
+    window: tauri::WebviewWindow,
+    state: State<'_, NoteCommandState>,
+    operation_id: String,
+) -> Result<RestoreTrashResult, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
+    TrashService::new(state.paths.clone()).undo(&operation_id)
+}
+
+#[tauri::command]
+pub fn purge_expired_trash(
+    window: tauri::WebviewWindow,
+    state: State<'_, NoteCommandState>,
+) -> Result<PurgeTrashResult, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
+    TrashService::new(state.paths.clone()).purge_expired(&chrono::Utc::now().to_rfc3339())
 }
 
 #[tauri::command(rename_all = "camelCase")]

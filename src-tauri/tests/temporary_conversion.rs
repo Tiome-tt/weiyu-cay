@@ -10,6 +10,7 @@ use simple_notes_lib::{
         rebuild::rebuild_index,
         repository::NoteRepository,
         temporary_ops::{derive_temporary_title, TemporaryFailurePoint, TemporaryInboxService},
+        trash::TrashService,
     },
     windows::sticky::{
         authorize_asset_caller, authorize_temporary_caller, clamp_to_available_monitors,
@@ -136,6 +137,10 @@ fn recoverable_delete_moves_whole_capture_and_undo_is_idempotent() {
         .join(capture.id.to_string())
         .join("assets/shot.png")
         .is_file());
+    let catalog = TrashService::new(store.paths.clone()).list().unwrap();
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].note_id, capture.id);
+    assert_eq!(catalog[0].assets, vec!["assets/shot.png"]);
 
     let restored = service.undo_delete(&deleted.operation_id).unwrap();
     assert_eq!(restored.restored, vec![capture.id]);
@@ -145,6 +150,10 @@ fn recoverable_delete_moves_whole_capture_and_undo_is_idempotent() {
         .note_dir(capture.id, NoteKind::Temporary)
         .unwrap()
         .exists());
+    assert!(TrashService::new(store.paths.clone())
+        .list()
+        .unwrap()
+        .is_empty());
     let again = service.undo_delete(&deleted.operation_id).unwrap();
     assert_eq!(again.restored, vec![capture.id]);
     assert!(again.failed.is_empty());
@@ -1694,6 +1703,11 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-save-note",
             "allow-list-notes",
             "allow-move-note",
+            "allow-trash-notes",
+            "allow-list-trash",
+            "allow-restore-trash",
+            "allow-undo-trash",
+            "allow-purge-expired-trash",
             "allow-resolve-link",
             "allow-backlinks",
             "allow-rename-target-labels",

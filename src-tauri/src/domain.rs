@@ -190,6 +190,48 @@ pub struct TrashResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TrashEntry {
+    pub note_id: NoteId,
+    pub kind: NoteKind,
+    pub title: String,
+    pub previous_folder_id: Option<FolderId>,
+    pub previous_relative_path: String,
+    pub deleted_at: String,
+    pub assets: Vec<String>,
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashFailure {
+    pub note_id: NoteId,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashBatchResult {
+    pub operation_id: String,
+    pub trashed: Vec<NoteId>,
+    pub failed: Vec<TrashFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreTrashResult {
+    pub restored: Vec<NoteDocument>,
+    pub failed: Vec<TrashFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgeTrashResult {
+    pub purged: Vec<NoteId>,
+    pub failed: Vec<TrashFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TemporaryOperationFailure {
     pub temporary_id: NoteId,
     pub message: String,

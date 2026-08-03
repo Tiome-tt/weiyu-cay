@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-purge-expired-trash"
+description = "Enables the purge_expired_trash command without any pre-configured scope."
+commands.allow = ["purge_expired_trash"]
+
+[[permission]]
+identifier = "deny-purge-expired-trash"
+description = "Denies the purge_expired_trash command without any pre-configured scope."
+commands.deny = ["purge_expired_trash"]
