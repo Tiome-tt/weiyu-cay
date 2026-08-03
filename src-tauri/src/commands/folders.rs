@@ -44,6 +44,70 @@ impl FolderRepository {
         let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         self.create_locked(input, &guard)
     }
+
+    pub(crate) fn ensure_system_root_locked(
+        &self,
+        id: FolderId,
+        preferred_name: &str,
+        _guard: &crate::platform::IndexMutationLock,
+    ) -> Result<Folder, CommandError> {
+        let database = self.database()?;
+        let transaction = database
+            .connection()
+            .unchecked_transaction()
+            .map_err(database_error("could not start system folder creation"))?;
+        if let Some(existing) = transaction
+            .query_row(
+                "SELECT id, parent_id, name, sort_order FROM folders WHERE id=?1",
+                [folder_id_blob(id)],
+                folder_from_row,
+            )
+            .optional()
+            .map_err(database_error("could not inspect system folder"))?
+        {
+            return Ok(existing);
+        }
+        let preferred_name = validate_name(preferred_name)?;
+        let mut name = preferred_name.clone();
+        let mut suffix = 1_u32;
+        while transaction
+            .query_row(
+                "SELECT 1 FROM folders WHERE parent_id IS NULL AND name=?1",
+                [&name],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(database_error("could not inspect system folder name"))?
+            .is_some()
+        {
+            name = if suffix == 1 {
+                format!("{preferred_name} (系统)")
+            } else {
+                format!("{preferred_name} (系统 {suffix})")
+            };
+            suffix = suffix
+                .checked_add(1)
+                .ok_or_else(|| CommandError::validation("system folder suffix overflow"))?;
+        }
+        let sort_order = next_sort_order(&transaction, None)?;
+        transaction
+            .execute(
+                "INSERT INTO folders (id, parent_id, name, sort_order, created_at, updated_at) \
+                 VALUES (?1, NULL, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![folder_id_blob(id), name, sort_order],
+            )
+            .map_err(database_error("could not create system folder"))?;
+        write_manifest(&transaction, &self.paths)?;
+        transaction
+            .commit()
+            .map_err(database_error("could not commit system folder creation"))?;
+        Ok(Folder {
+            id,
+            parent_id: None,
+            name,
+            sort_order,
+        })
+    }
     #[doc(hidden)]
     pub fn create_locked(
         &self,

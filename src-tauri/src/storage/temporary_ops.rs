@@ -1384,6 +1384,49 @@ fn validate_operation_id(value: &str) -> Result<(), CommandError> {
     Ok(())
 }
 
+pub(crate) fn finalize_purged_delete(
+    paths: &StoragePaths,
+    operation_id: &str,
+    id: NoteId,
+) -> Result<(), CommandError> {
+    validate_operation_id(operation_id)?;
+    let operation = SafeDirectory::open(paths.root(), &["trash", operation_id], false)?;
+    if !operation.entry_is_regular_file(DESCRIPTOR_NAME)? {
+        return Ok(());
+    }
+    let mut descriptor = read_delete_descriptor(paths, operation_id)?;
+    descriptor.items.retain(|item| item.temporary_id != id);
+    if descriptor.items.is_empty() {
+        operation.remove_checked(DESCRIPTOR_NAME)?;
+        operation.sync()
+    } else {
+        write_delete_descriptor(paths, &descriptor)
+    }
+}
+
+pub(crate) fn finalize_restored_delete(
+    paths: &StoragePaths,
+    operation_id: &str,
+    id: NoteId,
+) -> Result<(), CommandError> {
+    validate_operation_id(operation_id)?;
+    let operation = SafeDirectory::open(paths.root(), &["trash", operation_id], false)?;
+    if !operation.entry_is_regular_file(DESCRIPTOR_NAME)? {
+        return Ok(());
+    }
+    let mut descriptor = read_delete_descriptor(paths, operation_id)?;
+    if let Some(item) = descriptor.items.iter().find(|item| item.temporary_id == id) {
+        persist_temporary_restore(paths, &item.original, item.window_state)?;
+    }
+    descriptor.items.retain(|item| item.temporary_id != id);
+    if descriptor.items.is_empty() {
+        operation.remove_checked(DESCRIPTOR_NAME)?;
+        operation.sync()
+    } else {
+        write_delete_descriptor(paths, &descriptor)
+    }
+}
+
 fn open_database(paths: &StoragePaths) -> Result<Database, CommandError> {
     let database = Database::open(paths.database())?;
     database.migrate()?;

@@ -1,8 +1,8 @@
 use crate::{
     commands::folders::FolderRepository,
     domain::{
-        CreateFolderInput, FolderId, NoteDocument, NoteId, NoteKind, PurgeTrashResult,
-        RestoreTrashResult, TrashBatchResult, TrashEntry, TrashFailure,
+        FolderId, NoteDocument, NoteId, NoteKind, PurgeTrashResult, RestoreTrashResult,
+        TrashBatchResult, TrashEntry, TrashFailure,
     },
     error::CommandError,
     platform::{IndexMutationLock, SafeDirectory},
@@ -11,7 +11,8 @@ use crate::{
         database::Database,
         paths::StoragePaths,
         repository::{
-            folder_id_blob, note_id_blob, persist_document, serialize_document, NoteRepository,
+            folder_id_blob, note_id_blob, parse_document, persist_document, serialize_document,
+            NoteRepository,
         },
     },
 };
@@ -23,6 +24,7 @@ use uuid::Uuid;
 
 const MANIFEST_SUFFIX: &str = ".trash.json";
 const RECOVERED_FOLDER_NAME: &str = "已恢复";
+const RECOVERED_FOLDER_ID: &str = "019c0000-0000-7000-8000-00000000fffe";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +40,8 @@ pub struct TrashManifest {
     pub deleted_at: String,
     pub assets: Vec<String>,
     pub original: NoteDocument,
+    #[serde(default)]
+    pub restore_document: Option<NoteDocument>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +59,8 @@ pub enum TrashFailurePoint {
     Purge(NoteId),
     CrashAfterMove(NoteId),
     CrashAfterDatabase(NoteId),
+    CrashRestoreAfterMove(NoteId),
+    CrashRestoreAfterDocument(NoteId),
 }
 
 #[derive(Clone)]
@@ -80,12 +86,12 @@ impl TrashService {
     }
 
     pub fn recover_pending(&self) -> Result<(), CommandError> {
-        let _guard = IndexMutationLock::acquire(self.paths.root())?;
+        let guard = IndexMutationLock::acquire(self.paths.root())?;
         for mut manifest in self.read_all_manifests()? {
             match manifest.state {
                 TrashItemState::Prepared => self.recover_prepared(&mut manifest)?,
                 TrashItemState::Deleted => {}
-                TrashItemState::Restoring => self.recover_restoring(&manifest)?,
+                TrashItemState::Restoring => self.recover_restoring(&manifest, &guard)?,
                 TrashItemState::Purging => self.recover_purging(&manifest)?,
             }
         }
@@ -178,6 +184,11 @@ impl TrashService {
     ) -> Result<(), CommandError> {
         let guard = IndexMutationLock::acquire(self.paths.root())?;
         let document = NoteRepository::new(self.paths.clone()).load_locked(id, &guard)?;
+        if document.kind != NoteKind::Formal {
+            return Err(CommandError::validation(
+                "temporary captures must be deleted through the temporary inbox",
+            ));
+        }
         let assets = asset_inventory(&self.paths, &document)?;
         let manifest = TrashManifest {
             version: 1,
@@ -191,6 +202,7 @@ impl TrashService {
             deleted_at: deleted_at.to_owned(),
             assets,
             original: document.clone(),
+            restore_document: None,
         };
         write_manifest(&self.paths, &manifest)?;
         let source = SafeDirectory::open(self.paths.root(), &[collection(document.kind)], false)?;
@@ -277,17 +289,12 @@ impl TrashService {
         if manifest.state != TrashItemState::Deleted {
             return Err(CommandError::conflict("trash entry is not restorable"));
         }
+        let durable = read_trashed_document(&self.paths, manifest)?;
+        let document = derive_restore_document(&self.paths, manifest, durable.clone(), guard)?;
         let mut restoring = manifest.clone();
         restoring.state = TrashItemState::Restoring;
+        restoring.restore_document = Some(document.clone());
         write_manifest(&self.paths, &restoring)?;
-        let mut document = manifest.original.clone();
-        if document.kind == NoteKind::Formal && !folder_exists(&self.paths, document.folder_id)? {
-            document.folder_id = Some(recovered_folder(&self.paths, guard)?);
-            document.revision = document
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| CommandError::validation("note revision overflow"))?;
-        }
         let destination =
             SafeDirectory::open(self.paths.root(), &[collection(document.kind)], false)?;
         let operation =
@@ -300,6 +307,9 @@ impl TrashService {
             let _ = write_manifest(&self.paths, manifest);
             return Err(error);
         }
+        if self.failure == Some(TrashFailurePoint::CrashRestoreAfterMove(manifest.note_id)) {
+            return Err(CommandError::io("injected crash after trash restore move"));
+        }
         let rollback = || -> Result<(), CommandError> {
             move_published(destination.move_directory_no_replace(
                 &manifest.note_id.to_string(),
@@ -308,17 +318,33 @@ impl TrashService {
             ))?;
             write_manifest(&self.paths, manifest)
         };
-        if document != manifest.original {
+        if document != durable {
             let bytes = serialize_document(&document)?;
             if let Err(error) = publish_document(&self.paths, &document, bytes.as_bytes()) {
                 let _ = rollback();
                 return Err(error);
             }
         }
+        if self.failure
+            == Some(TrashFailurePoint::CrashRestoreAfterDocument(
+                manifest.note_id,
+            ))
+        {
+            return Err(CommandError::io(
+                "injected crash after restored document publication",
+            ));
+        }
         let database = open_database(&self.paths)?;
         if let Err(error) = persist_document(&database, &document) {
             let _ = rollback();
             return Err(error);
+        }
+        if document.kind == NoteKind::Temporary {
+            crate::storage::temporary_ops::finalize_restored_delete(
+                &self.paths,
+                &manifest.operation_id,
+                manifest.note_id,
+            )?;
         }
         operation.remove_checked(&manifest_name(manifest.note_id))?;
         Ok(document)
@@ -349,6 +375,13 @@ impl TrashService {
                 CommandError::io(format!("could not purge trash content: {source}"))
             })?;
             operation.sync()?;
+        }
+        if manifest.kind == NoteKind::Temporary {
+            crate::storage::temporary_ops::finalize_purged_delete(
+                &self.paths,
+                &manifest.operation_id,
+                manifest.note_id,
+            )?;
         }
         delete_metadata(&self.paths, manifest.note_id)?;
         remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
@@ -395,14 +428,41 @@ impl TrashService {
         }
     }
 
-    fn recover_restoring(&self, manifest: &TrashManifest) -> Result<(), CommandError> {
+    fn recover_restoring(
+        &self,
+        manifest: &TrashManifest,
+        guard: &IndexMutationLock,
+    ) -> Result<(), CommandError> {
         let active = contained_note_exists(&self.paths, manifest.kind, manifest.note_id)?;
         let trashed =
             contained_trash_exists(&self.paths, &manifest.operation_id, manifest.note_id)?;
         match (active, trashed) {
             (true, false) => {
-                let document = NoteRepository::new(self.paths.clone()).load(manifest.note_id)?;
+                let expected = manifest
+                    .restore_document
+                    .as_ref()
+                    .ok_or_else(|| CommandError::validation("trash restore target is missing"))?;
+                let durable =
+                    NoteRepository::new(self.paths.clone()).load_locked(manifest.note_id, guard)?;
+                let document =
+                    derive_restore_document(&self.paths, manifest, durable.clone(), guard)?;
+                if &document != expected {
+                    return Err(CommandError::validation(
+                        "trash restore target does not match durable content",
+                    ));
+                }
+                if document != durable {
+                    let bytes = serialize_document(&document)?;
+                    publish_document(&self.paths, &document, bytes.as_bytes())?;
+                }
                 persist_document(&open_database(&self.paths)?, &document)?;
+                if document.kind == NoteKind::Temporary {
+                    crate::storage::temporary_ops::finalize_restored_delete(
+                        &self.paths,
+                        &manifest.operation_id,
+                        manifest.note_id,
+                    )?;
+                }
                 remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
             }
             (false, true) => {
@@ -439,20 +499,53 @@ impl TrashService {
             else {
                 continue;
             };
-            for name in operation.entry_names()? {
-                if !name.ends_with(MANIFEST_SUFFIX) || !operation.entry_is_regular_file(&name)? {
+            let Ok(names) = operation.entry_names() else {
+                continue;
+            };
+            for name in names {
+                if !name.ends_with(MANIFEST_SUFFIX) {
                     continue;
                 }
-                let bytes = operation.read(&name, 4 * 1024 * 1024)?;
-                let manifest: TrashManifest = serde_json::from_slice(&bytes).map_err(|source| {
-                    CommandError::validation(format!("trash manifest is invalid: {source}"))
-                })?;
-                validate_manifest_path(&operation_id, &name, &manifest)?;
-                manifests.push(manifest);
+                match operation.entry_is_regular_file(&name) {
+                    Ok(true) => {}
+                    Ok(false) | Err(_) => continue,
+                }
+                let bytes = match operation.read(&name, 4 * 1024 * 1024) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        if error.code() == crate::error::CommandErrorCode::Validation {
+                            let _ = quarantine_manifest(&operation, &name);
+                        }
+                        continue;
+                    }
+                };
+                let parsed = serde_json::from_slice::<TrashManifest>(&bytes)
+                    .map_err(|source| {
+                        CommandError::validation(format!("trash manifest is invalid: {source}"))
+                    })
+                    .and_then(|manifest| {
+                        validate_manifest_path(&operation_id, &name, &manifest)?;
+                        Ok(manifest)
+                    });
+                match parsed {
+                    Ok(manifest) => manifests.push(manifest),
+                    Err(_) => {
+                        let _ = quarantine_manifest(&operation, &name);
+                    }
+                }
             }
         }
         Ok(manifests)
     }
+}
+
+pub fn run_startup_trash_maintenance(paths: StoragePaths, now: &str) -> Result<(), CommandError> {
+    let service = TrashService::new(paths);
+    service.recover_pending()?;
+    // Expiration is opportunistic maintenance. Per-item and top-level cleanup
+    // failures remain retryable and must never prevent the application opening.
+    let _ = service.purge_expired(now);
+    Ok(())
 }
 
 fn unique_ids(ids: Vec<NoteId>) -> Vec<NoteId> {
@@ -540,6 +633,7 @@ pub(crate) fn catalog_moved_temporary(
             deleted_at: deleted_at.to_owned(),
             assets,
             original: document.clone(),
+            restore_document: None,
         },
     )
 }
@@ -605,6 +699,11 @@ fn validate_manifest(manifest: &TrashManifest) -> Result<(), CommandError> {
         || manifest.original.title != manifest.title
         || manifest.previous_relative_path != expected_path
         || manifest.assets.iter().any(|path| !valid_asset_path(path))
+        || manifest.restore_document.as_ref().is_some_and(|document| {
+            document.id != manifest.note_id
+                || document.kind != manifest.kind
+                || document.revision < manifest.original.revision
+        })
     {
         return Err(CommandError::validation("trash manifest is inconsistent"));
     }
@@ -620,6 +719,12 @@ fn validate_operation_id(value: &str) -> Result<(), CommandError> {
         return Err(CommandError::validation("trash operation ID is invalid"));
     }
     Ok(())
+}
+
+fn quarantine_manifest(directory: &SafeDirectory, name: &str) -> Result<(), CommandError> {
+    let destination = format!("quarantined-{name}-{}", Uuid::now_v7());
+    directory.move_file(name, &destination)?;
+    directory.sync()
 }
 
 fn parse_timestamp(value: &str) -> Result<DateTime<Utc>, CommandError> {
@@ -657,6 +762,55 @@ fn asset_inventory_in(parent: &SafeDirectory, child: &str) -> Result<Vec<String>
     collect_assets(&root, &root, &mut assets)?;
     assets.sort();
     Ok(assets)
+}
+
+fn read_trashed_document(
+    paths: &StoragePaths,
+    manifest: &TrashManifest,
+) -> Result<NoteDocument, CommandError> {
+    let operation = SafeDirectory::open(paths.root(), &["trash", &manifest.operation_id], false)?;
+    let id = manifest.note_id.to_string();
+    operation.validate_directory_tree(&id)?;
+    let directory =
+        SafeDirectory::open(paths.root(), &["trash", &manifest.operation_id, &id], false)?;
+    let bytes = directory.read("note.md", 64 * 1024 * 1024)?;
+    let text = String::from_utf8(bytes).map_err(|source| {
+        CommandError::validation(format!("trashed note is not UTF-8: {source}"))
+    })?;
+    let document = parse_document(&text)?;
+    if document.id != manifest.note_id
+        || document.kind != manifest.kind
+        || document.revision != manifest.original.revision
+    {
+        return Err(CommandError::validation(
+            "trashed durable document does not match manifest identity or revision",
+        ));
+    }
+    Ok(document)
+}
+
+fn derive_restore_document(
+    paths: &StoragePaths,
+    manifest: &TrashManifest,
+    mut document: NoteDocument,
+    guard: &IndexMutationLock,
+) -> Result<NoteDocument, CommandError> {
+    if document.kind != NoteKind::Formal {
+        return Ok(document);
+    }
+    let target = if folder_exists(paths, manifest.previous_folder_id)? {
+        manifest.previous_folder_id
+    } else {
+        Some(recovered_folder(paths, guard)?)
+    };
+    if document.folder_id != target {
+        document.folder_id = target;
+        document.revision = document
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| CommandError::validation("note revision overflow"))?;
+    }
+    Ok(document)
 }
 
 fn collect_assets(
@@ -700,7 +854,7 @@ fn mark_deleted(paths: &StoragePaths, id: NoteId, deleted_at: &str) -> Result<()
     let changed = database
         .connection()
         .execute(
-            "UPDATE notes SET deleted_at=?1 WHERE id=?2 AND deleted_at IS NULL",
+            "UPDATE notes SET deleted_at=?1, folder_id=NULL WHERE id=?2 AND deleted_at IS NULL",
             params![deleted_at, note_id_blob(id)],
         )
         .map_err(database_error("could not mark note deleted"))?;
@@ -783,32 +937,11 @@ fn recovered_folder(
     paths: &StoragePaths,
     guard: &IndexMutationLock,
 ) -> Result<FolderId, CommandError> {
-    let database = open_database(paths)?;
-    let existing: Option<Vec<u8>> = database
-        .connection()
-        .query_row(
-            "SELECT id FROM folders WHERE parent_id IS NULL AND name=?1",
-            [RECOVERED_FOLDER_NAME],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(database_error("could not find recovered folder"))?;
-    if let Some(bytes) = existing {
-        let uuid = Uuid::from_slice(&bytes).map_err(|source| {
-            CommandError::database(format!("recovered folder ID is invalid: {source}"))
-        })?;
-        return FolderId::parse_str(&uuid.hyphenated().to_string()).map_err(|source| {
-            CommandError::database(format!("recovered folder ID is invalid: {source}"))
-        });
-    }
+    let id = FolderId::parse_str(RECOVERED_FOLDER_ID).map_err(|source| {
+        CommandError::database(format!("recovered folder ID is invalid: {source}"))
+    })?;
     FolderRepository::new(paths.clone())
-        .create_locked(
-            CreateFolderInput {
-                parent_id: None,
-                name: RECOVERED_FOLDER_NAME.to_owned(),
-            },
-            guard,
-        )
+        .ensure_system_root_locked(id, RECOVERED_FOLDER_NAME, guard)
         .map(|folder| folder.id)
 }
 

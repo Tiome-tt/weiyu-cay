@@ -2,10 +2,11 @@ mod support;
 
 use rusqlite::{params, Connection};
 use simple_notes_lib::{
+    commands::folders::FolderRepository,
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     storage::{
         repository::NoteRepository,
-        trash::{TrashFailurePoint, TrashService},
+        trash::{run_startup_trash_maintenance, TrashFailurePoint, TrashService},
     },
 };
 use std::fs;
@@ -15,6 +16,12 @@ use uuid::Uuid;
 const FORMAL_ID: &str = "019c0000-0000-7000-8000-000000000141";
 const TEMPORARY_ID: &str = "019c0000-0000-7000-8000-000000000142";
 const FOLDER_ID: &str = "019c0000-0000-7000-8000-000000000143";
+const THIRD_ID: &str = "019c0000-0000-7000-8000-000000000144";
+const RECOVERED_FOLDER_ID: &str = "019c0000-0000-7000-8000-00000000fffe";
+const FOURTH_ID: &str = "019c0000-0000-7000-8000-000000000145";
+const FIFTH_ID: &str = "019c0000-0000-7000-8000-000000000146";
+const SIXTH_ID: &str = "019c0000-0000-7000-8000-000000000147";
+const SEVENTH_ID: &str = "019c0000-0000-7000-8000-000000000148";
 
 fn folder_id(value: &str) -> FolderId {
     FolderId::parse_str(value).unwrap()
@@ -117,21 +124,15 @@ fn restore_uses_one_stable_recovered_folder_when_previous_folder_is_missing() {
     service
         .trash(vec![first.id, second.id], "2026-07-02T00:00:00Z")
         .unwrap();
-    let connection = Connection::open(store.paths.database()).unwrap();
-    connection
-        .execute(
-            "UPDATE notes SET folder_id=NULL WHERE folder_id=?1",
-            [uuid_blob(FOLDER_ID)],
-        )
-        .unwrap();
-    connection
-        .execute("DELETE FROM folders WHERE id=?1", [uuid_blob(FOLDER_ID)])
+    FolderRepository::new(store.paths.clone())
+        .delete_empty(folder)
         .unwrap();
 
     let restored = service.restore(vec![first.id, second.id]).unwrap();
     let recovered = restored.restored[0].folder_id.unwrap();
     assert_eq!(restored.restored[1].folder_id, Some(recovered));
-    let names: Vec<String> = connection
+    let names: Vec<String> = Connection::open(store.paths.database())
+        .unwrap()
         .prepare("SELECT name FROM folders WHERE id=?1")
         .unwrap()
         .query_map([uuid_blob(&recovered.to_string())], |row| row.get(0))
@@ -142,7 +143,7 @@ fn restore_uses_one_stable_recovered_folder_when_previous_folder_is_missing() {
 }
 
 #[test]
-fn trash_and_immediate_undo_support_temporary_notes() {
+fn generic_trash_rejects_temporary_notes_without_moving_the_capture() {
     let store = TestStore::new();
     let note = create_document(
         &store,
@@ -155,10 +156,14 @@ fn trash_and_immediate_undo_support_temporary_notes() {
     let deletion = service
         .trash(vec![note.id], "2026-07-02T00:00:00Z")
         .unwrap();
-
-    let undone = service.undo(&deletion.operation_id).unwrap();
-    assert_eq!(undone.restored[0].id, note.id);
-    assert_eq!(undone.restored[0].kind, NoteKind::Temporary);
+    assert!(deletion.trashed.is_empty());
+    assert_eq!(deletion.failed[0].note_id, note.id);
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(note.id)
+            .unwrap(),
+        note
+    );
     assert!(service.list().unwrap().is_empty());
 }
 
@@ -166,23 +171,34 @@ fn trash_and_immediate_undo_support_temporary_notes() {
 fn purge_keeps_29_day_entries_and_removes_31_day_entries() {
     let store = TestStore::new();
     let young = create_document(&store, note_id(FORMAL_ID), NoteKind::Formal, None, "Young");
-    let old = create_document(
+    let old = create_document(&store, note_id(TEMPORARY_ID), NoteKind::Formal, None, "Old");
+    let boundary = create_document(
         &store,
-        note_id(TEMPORARY_ID),
-        NoteKind::Temporary,
+        note_id(THIRD_ID),
+        NoteKind::Formal,
         None,
-        "Old",
+        "Boundary",
     );
     let service = TrashService::new(store.paths.clone());
     service
         .trash(vec![young.id], "2026-07-03T00:00:00Z")
+        .unwrap();
+    service
+        .trash(vec![boundary.id], "2026-07-02T00:00:00Z")
         .unwrap();
     service.trash(vec![old.id], "2026-07-01T00:00:00Z").unwrap();
 
     let result = service.purge_expired("2026-08-01T00:00:00Z").unwrap();
     assert_eq!(result.purged, vec![old.id]);
     assert!(result.failed.is_empty());
-    assert_eq!(service.list().unwrap()[0].note_id, young.id);
+    let retained: Vec<_> = service
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.note_id)
+        .collect();
+    assert!(retained.contains(&young.id));
+    assert!(retained.contains(&boundary.id));
 }
 
 #[test]
@@ -192,7 +208,7 @@ fn purge_reports_one_failed_entry_and_continues_with_other_expired_entries() {
     let second = create_document(
         &store,
         note_id(TEMPORARY_ID),
-        NoteKind::Temporary,
+        NoteKind::Formal,
         None,
         "Second",
     );
@@ -263,4 +279,335 @@ fn recovery_finishes_a_delete_committed_before_its_final_state_publish() {
         .note_dir(note.id, NoteKind::Formal)
         .unwrap()
         .is_dir());
+}
+
+#[test]
+fn malformed_manifest_is_quarantined_without_blocking_a_valid_sibling() {
+    let store = TestStore::new();
+    let bad = create_document(&store, note_id(FORMAL_ID), NoteKind::Formal, None, "Bad");
+    let good = create_document(
+        &store,
+        note_id(TEMPORARY_ID),
+        NoteKind::Formal,
+        None,
+        "Good",
+    );
+    let identity = create_document(
+        &store,
+        note_id(FOURTH_ID),
+        NoteKind::Formal,
+        None,
+        "Identity",
+    );
+    let version = create_document(&store, note_id(FIFTH_ID), NoteKind::Formal, None, "Version");
+    let state = create_document(&store, note_id(SIXTH_ID), NoteKind::Formal, None, "State");
+    let timestamp = create_document(
+        &store,
+        note_id(SEVENTH_ID),
+        NoteKind::Formal,
+        None,
+        "Timestamp",
+    );
+    let service = TrashService::new(store.paths.clone());
+    let deletion = service
+        .trash(
+            vec![
+                bad.id,
+                good.id,
+                identity.id,
+                version.id,
+                state.id,
+                timestamp.id,
+            ],
+            "2026-07-02T00:00:00Z",
+        )
+        .unwrap();
+    let operation = store.paths.trash().join(&deletion.operation_id);
+    fs::write(operation.join(format!("{}.trash.json", bad.id)), b"{broken").unwrap();
+    mutate_manifest(&operation, identity.id, |manifest| {
+        manifest["noteId"] = serde_json::json!(bad.id.to_string());
+    });
+    mutate_manifest(&operation, version.id, |manifest| {
+        manifest["version"] = serde_json::json!(255);
+    });
+    mutate_manifest(&operation, state.id, |manifest| {
+        manifest["state"] = serde_json::json!("unknown");
+    });
+    mutate_manifest(&operation, timestamp.id, |manifest| {
+        manifest["deletedAt"] = serde_json::json!("not-a-timestamp");
+    });
+
+    service.recover_pending().unwrap();
+    let listed = service.list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].note_id, good.id);
+    let quarantined = fs::read_dir(operation)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("quarantined-")
+        })
+        .count();
+    assert_eq!(quarantined, 5);
+}
+
+fn mutate_manifest(
+    operation: &std::path::Path,
+    id: NoteId,
+    mutation: impl FnOnce(&mut serde_json::Value),
+) {
+    let path = operation.join(format!("{id}.trash.json"));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    mutation(&mut manifest);
+    fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+}
+
+#[test]
+fn restore_indexes_durable_markdown_instead_of_a_divergent_catalog_snapshot() {
+    let store = TestStore::new();
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        None,
+        "Durable",
+    );
+    let service = TrashService::new(store.paths.clone());
+    let deletion = service
+        .trash(vec![note.id], "2026-07-02T00:00:00Z")
+        .unwrap();
+    let manifest_path = store
+        .paths
+        .trash()
+        .join(&deletion.operation_id)
+        .join(format!("{}.trash.json", note.id));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["original"]["markdown"] = serde_json::json!("catalog injection");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let restored = service.restore(vec![note.id]).unwrap();
+    assert_eq!(restored.restored[0].markdown, note.markdown);
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(note.id)
+            .unwrap()
+            .markdown,
+        note.markdown
+    );
+}
+
+#[test]
+fn recovery_finishes_missing_folder_restore_after_move_before_document_rewrite() {
+    let store = TestStore::new();
+    let folder = folder_id(FOLDER_ID);
+    seed_folder(&store, FOLDER_ID, "Removed");
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(folder),
+        "Crash restore",
+    );
+    let service = TrashService::new(store.paths.clone());
+    service
+        .trash(vec![note.id], "2026-07-02T00:00:00Z")
+        .unwrap();
+    FolderRepository::new(store.paths.clone())
+        .delete_empty(folder)
+        .unwrap();
+
+    let crashing = TrashService::new_with_failure(
+        store.paths.clone(),
+        TrashFailurePoint::CrashRestoreAfterMove(note.id),
+    );
+    assert_eq!(crashing.restore(vec![note.id]).unwrap().failed.len(), 1);
+
+    let recovered = TrashService::new(store.paths.clone());
+    recovered.recover_pending().unwrap();
+    let restored = NoteRepository::new(store.paths.clone())
+        .load(note.id)
+        .unwrap();
+    assert_ne!(restored.folder_id, Some(folder));
+    assert!(restored.folder_id.is_some());
+    assert!(recovered.list().unwrap().is_empty());
+}
+
+#[test]
+fn recovery_finishes_missing_folder_restore_after_frontmatter_before_database() {
+    let store = TestStore::new();
+    let folder = folder_id(FOLDER_ID);
+    seed_folder(&store, FOLDER_ID, "Removed");
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(folder),
+        "Crash database",
+    );
+    let service = TrashService::new(store.paths.clone());
+    service
+        .trash(vec![note.id], "2026-07-02T00:00:00Z")
+        .unwrap();
+    FolderRepository::new(store.paths.clone())
+        .delete_empty(folder)
+        .unwrap();
+
+    let crashing = TrashService::new_with_failure(
+        store.paths.clone(),
+        TrashFailurePoint::CrashRestoreAfterDocument(note.id),
+    );
+    assert_eq!(crashing.restore(vec![note.id]).unwrap().failed.len(), 1);
+
+    let recovered = TrashService::new(store.paths.clone());
+    recovered.recover_pending().unwrap();
+    let restored = NoteRepository::new(store.paths.clone())
+        .load(note.id)
+        .unwrap();
+    assert_eq!(restored.folder_id.unwrap().to_string(), RECOVERED_FOLDER_ID);
+    assert!(recovered.list().unwrap().is_empty());
+}
+
+#[test]
+fn purge_rejects_a_link_added_inside_trashed_content_without_touching_its_target() {
+    let store = TestStore::new();
+    let note = create_document(&store, note_id(FORMAL_ID), NoteKind::Formal, None, "Linked");
+    let service = TrashService::new(store.paths.clone());
+    let deletion = service
+        .trash(vec![note.id], "2026-06-01T00:00:00Z")
+        .unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("sentinel"), b"keep").unwrap();
+    let link = store
+        .paths
+        .trash()
+        .join(&deletion.operation_id)
+        .join(note.id.to_string())
+        .join("escape");
+    create_directory_link(outside.path(), &link).unwrap();
+
+    let purged = service.purge_expired("2026-08-01T00:00:00Z").unwrap();
+    assert!(purged.purged.is_empty());
+    assert_eq!(purged.failed[0].note_id, note.id);
+    assert_eq!(fs::read(outside.path().join("sentinel")).unwrap(), b"keep");
+}
+
+#[test]
+fn startup_cleanup_purges_valid_expired_siblings_and_never_fails_for_one_unsafe_entry() {
+    let store = TestStore::new();
+    let bad = create_document(&store, note_id(FORMAL_ID), NoteKind::Formal, None, "Bad");
+    let good = create_document(
+        &store,
+        note_id(TEMPORARY_ID),
+        NoteKind::Formal,
+        None,
+        "Good",
+    );
+    let service = TrashService::new(store.paths.clone());
+    let deletion = service
+        .trash(vec![bad.id, good.id], "2026-06-01T00:00:00Z")
+        .unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("sentinel"), b"keep").unwrap();
+    let link = store
+        .paths
+        .trash()
+        .join(&deletion.operation_id)
+        .join(bad.id.to_string())
+        .join("escape");
+    create_directory_link(outside.path(), &link).unwrap();
+
+    run_startup_trash_maintenance(store.paths.clone(), "2026-08-01T00:00:00Z").unwrap();
+
+    assert_eq!(fs::read(outside.path().join("sentinel")).unwrap(), b"keep");
+    assert!(!store
+        .paths
+        .trash()
+        .join(&deletion.operation_id)
+        .join(good.id.to_string())
+        .exists());
+}
+
+#[test]
+fn recovered_system_folder_uses_stable_identity_when_display_name_is_taken() {
+    let store = TestStore::new();
+    let original = folder_id(FOLDER_ID);
+    seed_folder(&store, FOLDER_ID, "Original");
+    seed_folder(&store, THIRD_ID, "已恢复");
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(original),
+        "Restore",
+    );
+    let service = TrashService::new(store.paths.clone());
+    service
+        .trash(vec![note.id], "2026-07-02T00:00:00Z")
+        .unwrap();
+    FolderRepository::new(store.paths.clone())
+        .delete_empty(original)
+        .unwrap();
+
+    let restored = service.restore(vec![note.id]).unwrap();
+    assert_eq!(
+        restored.restored[0].folder_id.unwrap().to_string(),
+        RECOVERED_FOLDER_ID
+    );
+}
+
+#[test]
+fn recovered_system_folder_reuses_its_stable_identity_after_user_rename() {
+    let store = TestStore::new();
+    let original = folder_id(FOLDER_ID);
+    seed_folder(&store, FOLDER_ID, "Original");
+    seed_folder(&store, RECOVERED_FOLDER_ID, "我的恢复笔记");
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(original),
+        "Restore",
+    );
+    let service = TrashService::new(store.paths.clone());
+    service
+        .trash(vec![note.id], "2026-07-02T00:00:00Z")
+        .unwrap();
+    FolderRepository::new(store.paths.clone())
+        .delete_empty(original)
+        .unwrap();
+
+    let restored = service.restore(vec![note.id]).unwrap();
+    assert_eq!(
+        restored.restored[0].folder_id.unwrap().to_string(),
+        RECOVERED_FOLDER_ID
+    );
+}
+
+#[cfg(windows)]
+fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("mklink /J failed"))
+    }
+}
+
+#[cfg(unix)]
+fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
 }

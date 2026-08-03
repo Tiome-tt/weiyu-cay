@@ -160,6 +160,63 @@ fn recoverable_delete_moves_whole_capture_and_undo_is_idempotent() {
 }
 
 #[test]
+fn purging_a_temporary_capture_removes_its_task13_delete_descriptor_item() {
+    let store = TestStore::new();
+    let capture = TemporaryRepository::new(store.paths.clone())
+        .create()
+        .unwrap();
+    let backend = InMemoryTemporaryWindowBackend::default();
+    let inbox = TemporaryInboxService::new(store.paths.clone(), backend.clone());
+    let deletion = inbox.delete(vec![capture.id]);
+    assert_eq!(deletion.deleted, vec![capture.id]);
+    let operation = store.paths.trash().join(&deletion.operation_id);
+    let manifest_path = operation.join(format!("{}.trash.json", capture.id));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["deletedAt"] = serde_json::json!("2026-06-01T00:00:00Z");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let purged = TrashService::new(store.paths.clone())
+        .purge_expired("2026-08-01T00:00:00Z")
+        .unwrap();
+    assert_eq!(purged.purged, vec![capture.id]);
+    assert!(!operation.join("descriptor.json").exists());
+    TemporaryInboxService::new(store.paths.clone(), backend)
+        .recover_pending()
+        .unwrap();
+}
+
+#[test]
+fn restoring_from_application_trash_consumes_the_task13_descriptor() {
+    let store = TestStore::new();
+    let capture = TemporaryRepository::new(store.paths.clone())
+        .create()
+        .unwrap();
+    let backend = InMemoryTemporaryWindowBackend::default();
+    let inbox = TemporaryInboxService::new(store.paths.clone(), backend);
+    let deletion = inbox.delete(vec![capture.id]);
+    let operation = store.paths.trash().join(&deletion.operation_id);
+
+    let restored = TrashService::new(store.paths.clone())
+        .restore(vec![capture.id])
+        .unwrap();
+
+    assert_eq!(restored.restored[0].id, capture.id);
+    assert!(!operation.join("descriptor.json").exists());
+    assert_eq!(
+        TemporaryRepository::new(store.paths.clone())
+            .load(capture.id)
+            .unwrap()
+            .id,
+        capture.id
+    );
+}
+
+#[test]
 fn conversion_db_failure_rolls_back_and_stale_save_after_success_cannot_recreate_temporary() {
     let store = TestStore::new();
     let temporary = TemporaryRepository::new(store.paths.clone());
