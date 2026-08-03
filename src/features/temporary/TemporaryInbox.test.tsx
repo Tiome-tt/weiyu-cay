@@ -228,7 +228,7 @@ describe('TemporaryInbox', () => {
     const user = userEvent.setup()
     render(<TemporaryInbox temporary={{ ...fakeTemporaryPort([capture]), save, delete: remove }} folders={folderRows} />)
 
-    await user.click(await screen.findByRole('checkbox', { name: /选择/ }))
+    await user.click(await screen.findByRole('checkbox', { name: `选择 ${capture.markdown}` }))
     await user.click(screen.getByRole('button', { name: /发布前检查/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
@@ -242,6 +242,25 @@ describe('TemporaryInbox', () => {
     expect(remove).not.toHaveBeenCalled()
     await act(async () => pendingSave.resolve({ ...capture, markdown: 'pending durable edit', revision: 1 }))
     await waitFor(() => expect(remove).toHaveBeenCalledOnce())
+  })
+
+  it('blocks capture navigation while a destructive mutation is in flight', async () => {
+    const captures = twoCaptures()
+    const pendingDelete = deferred<{ operationId: string; deleted: NoteId[]; failed: [] }>()
+    const load = vi.fn(fakeTemporaryPort(captures).load)
+    const remove = vi.fn(() => pendingDelete.promise)
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={{ ...fakeTemporaryPort(captures), load, delete: remove }} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('checkbox', { name: `选择 ${captures[0].markdown}` }))
+    await user.click(screen.getByRole('button', { name: '删除所选' }))
+    const otherCapture = screen.getByRole('button', { name: new RegExp(captures[1].markdown) })
+
+    expect(otherCapture).toBeDisabled()
+    otherCapture.click()
+    expect(load).not.toHaveBeenCalledWith(captures[1].id)
+
+    await act(async () => pendingDelete.resolve({ operationId: 'op', deleted: [captures[0].id], failed: [] }))
   })
 
   it('claims conversion synchronously and snapshots the selected captures before flushing', async () => {

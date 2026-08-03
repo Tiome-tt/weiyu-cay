@@ -349,9 +349,7 @@ pub trait TemporaryWindowBackend: Clone + Send + Sync + 'static {
         label: &str,
         state: TemporaryWindowState,
     ) -> Result<TemporaryWindowState, CommandError>;
-    fn retire(&self, label: &str) -> Result<(), CommandError> {
-        self.hide(label)
-    }
+    fn retire(&self, label: &str) -> Result<(), CommandError>;
 }
 
 #[derive(Clone)]
@@ -765,11 +763,9 @@ impl TemporaryWindowBackend for InMemoryTemporaryWindowBackend {
 
     fn retire(&self, label: &str) -> Result<(), CommandError> {
         self.operation()?;
-        self.inner
-            .lock()
-            .expect("backend mutex poisoned")
-            .retired
-            .push(label.to_owned());
+        let mut inner = self.inner.lock().expect("backend mutex poisoned");
+        inner.created.retain(|candidate| candidate != label);
+        inner.retired.push(label.to_owned());
         Ok(())
     }
 }
@@ -991,7 +987,7 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
         let Some(window) = self.app.get_webview_window(label) else {
             return Ok(());
         };
-        window.hide().map_err(|source| {
+        window.destroy().map_err(|source| {
             CommandError::io(format!("could not retire temporary window: {source}"))
         })
     }

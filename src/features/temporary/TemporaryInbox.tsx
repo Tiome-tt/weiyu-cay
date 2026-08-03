@@ -76,6 +76,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   }
 
   const openCapture = async (noteId: NoteId) => {
+    if (busyRef.current !== null) return
     const request = ++documentRequestRef.current
     if (activeId !== null && !(await editorRef.current?.flush() ?? true)) {
       if (request === documentRequestRef.current) {
@@ -83,7 +84,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       }
       return
     }
-    if (request !== documentRequestRef.current) return
+    if (request !== documentRequestRef.current || busyRef.current !== null) return
     setError(null)
     setActiveId(noteId)
     setDocument(null)
@@ -105,7 +106,11 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     return (await editorRef.current?.flush()) ?? true
   }
 
-  useImperativeHandle(ref, () => ({ flush: () => editorRef.current?.flush() ?? Promise.resolve(true) }), [])
+  useImperativeHandle(ref, () => ({
+    flush: () => busyRef.current === null
+      ? editorRef.current?.flush() ?? Promise.resolve(true)
+      : Promise.resolve(false),
+  }), [])
 
   const showFailure = (failures: Array<{ message: string }>) => {
     setError(failures.length === 0 ? null : failures.map((failure) => failure.message).join('；'))
@@ -221,7 +226,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                   <input type="checkbox" aria-label={`选择 ${title}`} checked={selected.has(item.id)} disabled={busy !== null} onChange={() => toggleSelected(item.id)} />
                   <span className="sr-only">选择 {title}</span>
                 </label>
-                <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} onClick={() => void openCapture(item.id)}>
+                <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} disabled={busy !== null} onClick={() => void openCapture(item.id)}>
                   <strong>{title}</strong>
                   <span>{preview(item.markdown)}</span>
                   <time dateTime={item.updatedAt}>{formatDate(item.updatedAt)}</time>

@@ -32,6 +32,9 @@ const FILE_SHARE_DELETE: u32 = 0x0000_0004;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+const DELETE_ACCESS: u32 = 0x0001_0000;
+const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+const FILE_RENAME_INFO_CLASS: u32 = 3;
 const ERROR_SHARING_VIOLATION: i32 = 32;
 const ERROR_LOCK_VIOLATION: i32 = 33;
 const INDEX_LOCK: &str = ".index-mutation.lock";
@@ -144,6 +147,12 @@ extern "system" {
         file: *mut core::ffi::c_void,
         information: *mut ByHandleFileInformation,
     ) -> i32;
+    fn SetFileInformationByHandle(
+        file: *mut core::ffi::c_void,
+        information_class: u32,
+        information: *const core::ffi::c_void,
+        buffer_size: u32,
+    ) -> i32;
 }
 
 #[repr(C)]
@@ -162,6 +171,50 @@ struct ByHandleFileInformation {
     number_of_links: u32,
     file_index_high: u32,
     file_index_low: u32,
+}
+
+#[repr(C)]
+struct DirectoryRenameInformation {
+    replace_if_exists: i32,
+    root_directory: *mut core::ffi::c_void,
+    file_name_length: u32,
+    file_name: [u16; 1024],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DirectoryIdentity {
+    volume: u64,
+    index: u64,
+}
+
+impl DirectoryIdentity {
+    fn from_file(file: &File) -> Result<Self, CommandError> {
+        let metadata = file.metadata().map_err(|source| {
+            CommandError::io(format!("could not inspect contained directory: {source}"))
+        })?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !metadata.is_dir() {
+            return Err(CommandError::validation(
+                "contained directory is a reparse point or not a directory",
+            ));
+        }
+        let mut info = ByHandleFileInformation::default();
+        let succeeded =
+            unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut info) };
+        if succeeded == 0 {
+            return Err(CommandError::io(format!(
+                "could not identify contained directory: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        Ok(Self {
+            volume: u64::from(info.volume_serial_number),
+            index: (u64::from(info.file_index_high) << 32) | u64::from(info.file_index_low),
+        })
+    }
+
+    fn from_path(path: &Path) -> Result<Self, CommandError> {
+        Self::from_file(&open_movable_directory(path)?)
+    }
 }
 
 trait ReplaceOperations {
@@ -616,6 +669,10 @@ impl SafeDirectory {
         Ok(self.path.join(name))
     }
 
+    pub fn validate_directory_tree(&self, name: &str) -> Result<(), CommandError> {
+        validate_safe_directory_tree(&self.child_path(name)?)
+    }
+
     pub fn entry_names(&self) -> Result<Vec<String>, CommandError> {
         let mut names = Vec::new();
         for entry in fs::read_dir(&self.path).map_err(|source| {
@@ -641,29 +698,70 @@ impl SafeDirectory {
         source: &str,
         destination_parent: &SafeDirectory,
         destination: &str,
-    ) -> Result<(), CommandError> {
-        let source_path = self.child_path(source)?;
-        let destination_path = destination_parent.child_path(destination)?;
-        validate_safe_directory_tree(&source_path)?;
+    ) -> Result<PublishState, PublishFailure> {
+        self.move_directory_no_replace_using(source, destination_parent, destination, || {})
+    }
+
+    #[cfg(test)]
+    fn move_directory_no_replace_with_hook<F: FnOnce()>(
+        &self,
+        source: &str,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+        hook: F,
+    ) -> Result<PublishState, PublishFailure> {
+        self.move_directory_no_replace_using(source, destination_parent, destination, hook)
+    }
+
+    fn move_directory_no_replace_using<F: FnOnce()>(
+        &self,
+        source: &str,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+        hook: F,
+    ) -> Result<PublishState, PublishFailure> {
+        let source_path = self
+            .child_path(source)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        let destination_path = destination_parent
+            .child_path(destination)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        let source_pin = open_movable_directory(&source_path)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        let expected = DirectoryIdentity::from_file(&source_pin)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        validate_safe_directory_tree(&source_path)
+            .map_err(PublishFailure::not_published_preserve_source)?;
         if fs::symlink_metadata(&destination_path).is_ok() {
-            return Err(CommandError::conflict(
-                "contained directory destination already exists",
+            return Err(PublishFailure::not_published_preserve_source(
+                CommandError::conflict("contained directory destination already exists"),
             ));
         }
-        SystemReplaceOperations
-            .move_new(&source_path, &destination_path)
-            .map_err(|code| {
-                if matches!(code, ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS) {
-                    CommandError::conflict("contained directory destination already exists")
-                } else {
-                    CommandError::io(format!(
-                        "could not move contained directory: Windows error {code}"
-                    ))
-                }
-            })?;
-        validate_safe_directory_tree(&destination_path)?;
-        self.sync()?;
-        destination_parent.sync()
+        hook();
+        if DirectoryIdentity::from_path(&source_path)
+            .map_err(PublishFailure::not_published_preserve_source)?
+            != expected
+        {
+            return Err(PublishFailure::not_published_preserve_source(
+                CommandError::conflict("contained directory source identity changed before move"),
+            ));
+        }
+        rename_pinned_directory_no_replace(&source_pin, &destination_path)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        if DirectoryIdentity::from_path(&destination_path)
+            .map_err(PublishFailure::recovery_required)?
+            != expected
+        {
+            return Err(PublishFailure::recovery_required(CommandError::io(
+                "moved contained directory identity does not match its pinned source",
+            )));
+        }
+        validate_safe_directory_tree(&destination_path)
+            .map_err(PublishFailure::recovery_required)?;
+        self.sync()
+            .and_then(|()| destination_parent.sync())
+            .map(|()| PublishState::Published)
+            .map_err(PublishFailure::published_but_sync_failed)
     }
 
     fn open_exclusive_lock(&self, name: &str) -> std::io::Result<File> {
@@ -746,6 +844,20 @@ impl SafeDirectory {
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(source) => Err(CommandError::io(format!(
                 "could not inspect contained file: {source}"
+            ))),
+        }
+    }
+
+    pub fn entry_is_regular_file(&self, name: &str) -> Result<bool, CommandError> {
+        let path = self.child_path(name)?;
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => Ok(
+                metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                    && metadata.is_file(),
+            ),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(CommandError::io(format!(
+                "could not inspect contained entry: {source}"
             ))),
         }
     }
@@ -976,6 +1088,67 @@ fn open_pinned_directory(path: &Path) -> Result<File, CommandError> {
     Ok(file)
 }
 
+fn open_movable_directory(path: &Path) -> Result<File, CommandError> {
+    let file = OpenOptions::new()
+        .access_mode(DELETE_ACCESS | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|source| CommandError::io(format!("could not pin movable directory: {source}")))?;
+    DirectoryIdentity::from_file(&file)?;
+    Ok(file)
+}
+
+fn rename_pinned_directory_no_replace(
+    source: &File,
+    destination: &Path,
+) -> Result<(), CommandError> {
+    let name: Vec<u16> = destination.as_os_str().encode_wide().collect();
+    if name.len() > 1024 {
+        return Err(CommandError::validation(
+            "contained destination name is too long",
+        ));
+    }
+    let mut information = DirectoryRenameInformation {
+        replace_if_exists: 0,
+        // Every ancestor of this absolute path is already held without
+        // FILE_SHARE_DELETE by `SafeDirectory`, so it cannot be renamed out
+        // from under this handle-bound operation.
+        root_directory: std::ptr::null_mut(),
+        file_name_length: u32::try_from(name.len() * 2)
+            .map_err(|_| CommandError::validation("contained destination name is too long"))?,
+        file_name: [0; 1024],
+    };
+    information.file_name[..name.len()].copy_from_slice(&name);
+    let header = std::mem::offset_of!(DirectoryRenameInformation, file_name);
+    let size = u32::try_from(header + name.len() * 2)
+        .map_err(|_| CommandError::validation("contained rename buffer is too large"))?;
+    let succeeded = unsafe {
+        SetFileInformationByHandle(
+            source.as_raw_handle().cast(),
+            FILE_RENAME_INFO_CLASS,
+            (&information as *const DirectoryRenameInformation).cast(),
+            size,
+        )
+    };
+    if succeeded == 0 {
+        let error = std::io::Error::last_os_error();
+        return if matches!(
+            error.raw_os_error(),
+            Some(ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS)
+        ) {
+            Err(CommandError::conflict(
+                "contained directory destination already exists",
+            ))
+        } else {
+            Err(CommandError::io(format!(
+                "could not rename pinned contained directory: {error}"
+            )))
+        };
+    }
+    Ok(())
+}
+
 fn validate_child_name(name: &str) -> Result<(), CommandError> {
     if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
         return Err(CommandError::validation("invalid contained path segment"));
@@ -1053,6 +1226,35 @@ mod tests {
         assert_eq!(
             fs::read(root.path().join("destination/capture/note.md")).unwrap(),
             b"durable"
+        );
+    }
+
+    #[test]
+    fn directory_move_rejects_a_source_child_replaced_after_validation() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("source")).unwrap();
+        fs::create_dir(root.path().join("destination")).unwrap();
+        fs::create_dir(root.path().join("source/capture")).unwrap();
+        fs::write(root.path().join("source/capture/note.md"), b"original").unwrap();
+        let source = super::SafeDirectory::open(root.path(), &["source"], false).unwrap();
+        let destination = super::SafeDirectory::open(root.path(), &["destination"], false).unwrap();
+
+        let result =
+            source.move_directory_no_replace_with_hook("capture", &destination, "capture", || {
+                fs::rename(
+                    root.path().join("source/capture"),
+                    root.path().join("source/original"),
+                )
+                .unwrap();
+                fs::create_dir(root.path().join("source/capture")).unwrap();
+                fs::write(root.path().join("source/capture/note.md"), b"swapped").unwrap();
+            });
+
+        assert!(result.is_err());
+        assert!(!root.path().join("destination/capture").exists());
+        assert_eq!(
+            fs::read(root.path().join("source/original/note.md")).unwrap(),
+            b"original"
         );
     }
 

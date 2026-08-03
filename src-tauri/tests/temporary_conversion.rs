@@ -164,6 +164,13 @@ fn conversion_db_failure_rolls_back_and_stale_save_after_success_cannot_recreate
     capture.markdown = "durable body".into();
     let capture = temporary.save(capture, 0).unwrap();
     let backend = InMemoryTemporaryWindowBackend::default();
+    TemporaryWindowService::new(store.paths.clone(), backend.clone())
+        .show(capture.id)
+        .unwrap();
+    assert_eq!(
+        backend.created_labels(),
+        vec![format!("temporary-{}", capture.id)]
+    );
     let failed = TemporaryInboxService::new_with_failure(
         store.paths.clone(),
         backend.clone(),
@@ -193,7 +200,12 @@ fn conversion_db_failure_rolls_back_and_stale_save_after_success_cannot_recreate
         backend.retired_labels(),
         vec![format!("temporary-{}", capture.id)]
     );
+    let capture_id = capture.id;
     assert!(temporary.save(capture, 1).is_err());
+    assert!(!backend
+        .created_labels()
+        .iter()
+        .any(|label| label == &format!("temporary-{capture_id}")));
     assert!(!store
         .paths
         .note_dir(converted.converted[0].note_id, NoteKind::Temporary)
@@ -202,7 +214,7 @@ fn conversion_db_failure_rolls_back_and_stale_save_after_success_cannot_recreate
 }
 
 #[test]
-fn restart_recovery_finishes_a_crash_after_directory_move_without_losing_content() {
+fn restart_recovery_rolls_back_a_crash_before_commit_intent_without_losing_content() {
     let store = TestStore::new();
     let temporary = TemporaryRepository::new(store.paths.clone());
     let folder = FolderRepository::new(store.paths.clone())
@@ -247,9 +259,9 @@ fn restart_recovery_finishes_a_crash_after_directory_move_without_losing_content
     let recovered = NoteRepository::new(store.paths.clone())
         .load(capture.id)
         .unwrap();
-    assert_eq!(recovered.kind, NoteKind::Formal);
+    assert_eq!(recovered.kind, NoteKind::Temporary);
     assert_eq!(recovered.markdown, "recover me");
-    assert_eq!(recovered.folder_id, Some(folder.id));
+    assert_eq!(recovered.folder_id, None);
 }
 
 #[test]
@@ -321,7 +333,7 @@ fn journal_failure_never_moves_content_and_rollback_failure_is_restart_recoverab
             .load(second.id)
             .unwrap()
             .kind,
-        NoteKind::Formal
+        NoteKind::Temporary
     );
 }
 
@@ -360,6 +372,388 @@ fn destination_collision_and_partial_delete_never_overwrite_or_retire_failures()
         backend.retired_labels(),
         vec![format!("temporary-{}", capture.id)]
     );
+}
+
+#[test]
+fn partial_delete_descriptor_does_not_poison_restart_recovery() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let capture = temporary.create().unwrap();
+    let missing = support::note_id("019c0000-0000-7000-8000-000000000179");
+
+    let deletion = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .delete(vec![capture.id, missing]);
+
+    assert_eq!(deletion.deleted, vec![capture.id]);
+    assert_eq!(deletion.failed.len(), 1);
+    let restarted = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    );
+    restarted.recover_pending().unwrap();
+    assert!(temporary.list().unwrap().is_empty());
+    let undo = restarted.undo_delete(&deletion.operation_id).unwrap();
+    assert_eq!(undo.restored, vec![capture.id]);
+    assert_eq!(
+        temporary.load(capture.id).unwrap().kind,
+        NoteKind::Temporary
+    );
+}
+
+#[test]
+fn conversion_recovery_finishes_every_durable_rollback_boundary() {
+    for crash_point in [
+        TemporaryFailurePoint::CrashAfterRollbackIntent,
+        TemporaryFailurePoint::CrashAfterRollbackMove,
+        TemporaryFailurePoint::CrashAfterRollbackDocument,
+    ] {
+        let store = TestStore::new();
+        let temporary = TemporaryRepository::new(store.paths.clone());
+        let folder = FolderRepository::new(store.paths.clone())
+            .create(CreateFolderInput {
+                parent_id: None,
+                name: format!("rollback-{crash_point:?}"),
+            })
+            .unwrap();
+        let mut capture = temporary.create().unwrap();
+        capture.markdown = "original rollback body".into();
+        let capture = temporary.save(capture, 0).unwrap();
+
+        let failed = TemporaryInboxService::new_with_failures(
+            store.paths.clone(),
+            InMemoryTemporaryWindowBackend::default(),
+            [TemporaryFailurePoint::AfterMove, crash_point],
+        )
+        .convert(
+            ConvertTemporaryInput {
+                ids: vec![capture.id],
+                folder_id: folder.id,
+            },
+            "2026-08-02T12:34:56+08:00",
+        );
+        assert_eq!(failed.failed.len(), 1);
+
+        TemporaryInboxService::new(
+            store.paths.clone(),
+            InMemoryTemporaryWindowBackend::default(),
+        )
+        .recover_pending()
+        .unwrap();
+        let recovered = temporary.load(capture.id).unwrap();
+        assert_eq!(recovered.kind, NoteKind::Temporary);
+        assert_eq!(recovered.folder_id, None);
+        assert_eq!(recovered.markdown, "original rollback body");
+    }
+}
+
+#[test]
+fn failed_restore_and_failed_move_rollback_is_replayed_with_metadata_and_window_state() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let capture = temporary.create().unwrap();
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute(
+            "INSERT INTO temporary_windows (note_id, visible, x, y, width, height, always_on_top) VALUES (?1, 1, 42, 43, 444, 333, 1)",
+            [uuid::Uuid::parse_str(&capture.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .to_vec()],
+        )
+        .unwrap();
+    let deletion = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .delete(vec![capture.id]);
+
+    let failed = TemporaryInboxService::new_with_failures(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+        [
+            TemporaryFailurePoint::RestoreBeforeDatabase,
+            TemporaryFailurePoint::RestoreBeforeRollback,
+        ],
+    )
+    .undo_delete(&deletion.operation_id)
+    .unwrap();
+    assert_eq!(failed.failed.len(), 1);
+    assert!(store
+        .paths
+        .note_dir(capture.id, NoteKind::Temporary)
+        .unwrap()
+        .exists());
+
+    let restarted = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    );
+    restarted.recover_pending().unwrap();
+    let retry = restarted.undo_delete(&deletion.operation_id).unwrap();
+    assert_eq!(retry.restored, vec![capture.id]);
+    let row: (Option<String>, i64, f64, bool) = Connection::open(store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT n.deleted_at, w.visible, w.x, w.always_on_top FROM notes n JOIN temporary_windows w ON w.note_id=n.id WHERE n.id=?1",
+            [uuid::Uuid::parse_str(&capture.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .to_vec()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (None, 1, 42.0, true));
+}
+
+#[test]
+fn corrupt_conversion_journal_is_quarantined_without_blocking_valid_recovery() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let folder = FolderRepository::new(store.paths.clone())
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "valid recovery".into(),
+        })
+        .unwrap();
+    let capture = temporary.create().unwrap();
+    let crashed = TemporaryInboxService::new_with_failure(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+        TemporaryFailurePoint::CrashAfterMove,
+    )
+    .convert(
+        ConvertTemporaryInput {
+            ids: vec![capture.id],
+            folder_id: folder.id,
+        },
+        "2026-08-02T12:34:56+08:00",
+    );
+    assert_eq!(crashed.failed.len(), 1);
+    fs::write(
+        store
+            .paths
+            .root()
+            .join(".temporary-conversion-00000000-0000-7000-8000-000000000000.json"),
+        br#"{"version":255,"document":{}}"#,
+    )
+    .unwrap();
+
+    TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .recover_pending()
+    .unwrap();
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(capture.id)
+            .unwrap()
+            .kind,
+        NoteKind::Temporary
+    );
+    assert!(fs::read_dir(store.paths.root()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("quarantined-.temporary-conversion")
+    }));
+}
+
+#[test]
+fn transient_conversion_recovery_failure_keeps_valid_journal_retryable() {
+    let mut store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let folder = FolderRepository::new(store.paths.clone())
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "retry recovery".into(),
+        })
+        .unwrap();
+    let capture = temporary.create().unwrap();
+    TemporaryInboxService::new_with_failure(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+        TemporaryFailurePoint::CrashAfterMove,
+    )
+    .convert(
+        ConvertTemporaryInput {
+            ids: vec![capture.id],
+            folder_id: folder.id,
+        },
+        "2026-08-02T12:34:56+08:00",
+    );
+    let journal_prefix = format!(".temporary-conversion-{}", capture.id);
+
+    store.close_database();
+    fs::remove_file(store.paths.database()).unwrap();
+    fs::create_dir(store.paths.database()).unwrap();
+    let recovery = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .recover_pending();
+
+    assert!(recovery.is_err());
+    assert!(fs::read_dir(store.paths.root()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&journal_prefix)
+    }));
+    assert!(!fs::read_dir(store.paths.root()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("quarantined-.temporary-conversion")
+    }));
+}
+
+#[test]
+fn non_regular_journal_entry_does_not_block_valid_recovery() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let folder = FolderRepository::new(store.paths.clone())
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "safe recovery".into(),
+        })
+        .unwrap();
+    let capture = temporary.create().unwrap();
+    TemporaryInboxService::new_with_failure(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+        TemporaryFailurePoint::CrashAfterMove,
+    )
+    .convert(
+        ConvertTemporaryInput {
+            ids: vec![capture.id],
+            folder_id: folder.id,
+        },
+        "2026-08-02T12:34:56+08:00",
+    );
+    fs::create_dir(
+        store
+            .paths
+            .root()
+            .join(".temporary-conversion-019c0000-0000-7000-8000-000000000099.json"),
+    )
+    .unwrap();
+
+    TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .recover_pending()
+    .unwrap();
+
+    assert_eq!(
+        temporary.load(capture.id).unwrap().kind,
+        NoteKind::Temporary
+    );
+}
+
+#[test]
+fn one_invalid_delete_item_does_not_block_valid_sibling_recovery() {
+    let store = TestStore::new();
+    let temporary = TemporaryRepository::new(store.paths.clone());
+    let first = temporary.create().unwrap();
+    let second = temporary.create().unwrap();
+    let deletion = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .delete(vec![first.id, second.id]);
+    assert_eq!(deletion.deleted.len(), 2);
+    fs::write(
+        store
+            .paths
+            .child(&[
+                "trash",
+                &deletion.operation_id,
+                &first.id.to_string(),
+                "note.md",
+            ])
+            .unwrap(),
+        b"not frontmatter",
+    )
+    .unwrap();
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute(
+            "UPDATE notes SET deleted_at = NULL WHERE id = ?1",
+            [uuid::Uuid::parse_str(&second.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .to_vec()],
+        )
+        .unwrap();
+
+    TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .recover_pending()
+    .unwrap();
+
+    let second_deleted: bool = Connection::open(store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT deleted_at IS NOT NULL FROM notes WHERE id = ?1",
+            [uuid::Uuid::parse_str(&second.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .to_vec()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(second_deleted);
+    assert!(store
+        .paths
+        .child(&["trash", &deletion.operation_id, "descriptor.json"])
+        .unwrap()
+        .is_file());
+}
+
+#[cfg(windows)]
+#[test]
+fn transient_delete_descriptor_read_failure_keeps_descriptor_retryable() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let store = TestStore::new();
+    let capture = TemporaryRepository::new(store.paths.clone())
+        .create()
+        .unwrap();
+    let deletion = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .delete(vec![capture.id]);
+    let descriptor = store
+        .paths
+        .child(&["trash", &deletion.operation_id, "descriptor.json"])
+        .unwrap();
+    let exclusive = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(&descriptor)
+        .unwrap();
+
+    let recovery = TemporaryInboxService::new(
+        store.paths.clone(),
+        InMemoryTemporaryWindowBackend::default(),
+    )
+    .recover_pending();
+
+    assert!(recovery.is_err());
+    assert!(descriptor.is_file());
+    drop(exclusive);
 }
 
 #[test]
@@ -439,7 +833,7 @@ fn delete_crash_recovery_uses_durable_location_and_undo_reports_conflicts_per_it
         .list()
         .unwrap()
         .iter()
-        .all(|item| item.id != first.id));
+        .any(|item| item.id == first.id));
 
     let deletion = TemporaryInboxService::new(
         store.paths.clone(),
@@ -511,7 +905,7 @@ fn rebuild_indexes_converted_notes_and_excludes_trashed_captures() {
 }
 
 #[test]
-fn recovery_rejects_a_conversion_journal_whose_path_identity_does_not_match() {
+fn recovery_quarantines_a_conversion_journal_whose_path_identity_does_not_match() {
     let store = TestStore::new();
     let target = support::create_note(
         &store,
@@ -533,12 +927,12 @@ fn recovery_rejects_a_conversion_journal_whose_path_identity_does_not_match() {
     )
     .unwrap();
 
-    assert!(TemporaryInboxService::new(
+    TemporaryInboxService::new(
         store.paths.clone(),
         InMemoryTemporaryWindowBackend::default(),
     )
     .recover_pending()
-    .is_err());
+    .unwrap();
     assert_eq!(
         NoteRepository::new(store.paths.clone())
             .load(target.id)
