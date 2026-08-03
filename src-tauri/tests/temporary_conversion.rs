@@ -10,7 +10,7 @@ use simple_notes_lib::{
         rebuild::rebuild_index,
         repository::NoteRepository,
         temporary_ops::{derive_temporary_title, TemporaryFailurePoint, TemporaryInboxService},
-        trash::TrashService,
+        trash::{TrashFailurePoint, TrashService},
     },
     windows::sticky::{
         authorize_asset_caller, authorize_temporary_caller, clamp_to_available_monitors,
@@ -185,6 +185,46 @@ fn purging_a_temporary_capture_removes_its_task13_delete_descriptor_item() {
         .unwrap();
     assert_eq!(purged.purged, vec![capture.id]);
     assert!(!operation.join("descriptor.json").exists());
+    TemporaryInboxService::new(store.paths.clone(), backend)
+        .recover_pending()
+        .unwrap();
+}
+
+#[test]
+fn purge_recovery_finalizes_task13_descriptor_after_content_was_removed() {
+    let store = TestStore::new();
+    let capture = TemporaryRepository::new(store.paths.clone())
+        .create()
+        .unwrap();
+    let backend = InMemoryTemporaryWindowBackend::default();
+    let inbox = TemporaryInboxService::new(store.paths.clone(), backend.clone());
+    let deletion = inbox.delete(vec![capture.id]);
+    let operation = store.paths.trash().join(&deletion.operation_id);
+    let manifest_path = operation.join(format!("{}.trash.json", capture.id));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["deletedAt"] = serde_json::json!("2026-06-01T00:00:00Z");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let crashing = TrashService::new_with_failure(
+        store.paths.clone(),
+        TrashFailurePoint::CrashPurgeAfterRemove(capture.id),
+    );
+    let failed = crashing.purge_expired("2026-08-01T00:00:00Z").unwrap();
+    assert_eq!(failed.failed[0].note_id, capture.id);
+    assert!(!operation.join(capture.id.to_string()).exists());
+    assert!(operation.join("descriptor.json").is_file());
+
+    TrashService::new(store.paths.clone())
+        .recover_pending()
+        .unwrap();
+
+    assert!(!operation.join("descriptor.json").exists());
+    assert!(!manifest_path.exists());
     TemporaryInboxService::new(store.paths.clone(), backend)
         .recover_pending()
         .unwrap();

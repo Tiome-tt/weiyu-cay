@@ -5,6 +5,7 @@ use simple_notes_lib::{
     commands::folders::FolderRepository,
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     storage::{
+        atomic_file::PublishState,
         repository::NoteRepository,
         trash::{run_startup_trash_maintenance, TrashFailurePoint, TrashService},
     },
@@ -253,6 +254,64 @@ fn recovery_rolls_back_a_crash_after_move_before_deleted_state_commits() {
 }
 
 #[test]
+fn failed_delete_keeps_a_recovery_manifest_until_rollback_is_trusted() {
+    for (index, rollback_state) in [
+        PublishState::Published,
+        PublishState::NotPublished,
+        PublishState::PublishedButSyncFailed,
+        PublishState::RecoveryRequired,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let store = TestStore::new();
+        let id =
+            NoteId::parse_str(&format!("019c0000-0000-7000-8000-{:012x}", 0x160 + index)).unwrap();
+        let note = create_document(&store, id, NoteKind::Formal, None, "Rollback");
+        let failing = TrashService::new_with_failure(
+            store.paths.clone(),
+            TrashFailurePoint::DeleteDatabaseThenRollback(note.id, rollback_state),
+        );
+
+        let result = failing
+            .trash(vec![note.id], "2026-07-02T00:00:00Z")
+            .unwrap();
+
+        assert_eq!(result.failed[0].note_id, note.id);
+        let manifest_count = fs::read_dir(store.paths.trash())
+            .unwrap()
+            .flat_map(|operation| fs::read_dir(operation.unwrap().path()).unwrap())
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".trash.json")
+            })
+            .count();
+        assert_eq!(
+            manifest_count,
+            usize::from(rollback_state != PublishState::Published)
+        );
+
+        TrashService::new(store.paths.clone())
+            .recover_pending()
+            .unwrap();
+        assert_eq!(
+            NoteRepository::new(store.paths.clone())
+                .load(note.id)
+                .unwrap(),
+            note
+        );
+        assert!(TrashService::new(store.paths.clone())
+            .list()
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[test]
 fn recovery_finishes_a_delete_committed_before_its_final_state_publish() {
     let store = TestStore::new();
     let note = create_document(
@@ -355,6 +414,112 @@ fn malformed_manifest_is_quarantined_without_blocking_a_valid_sibling() {
     assert_eq!(quarantined, 5);
 }
 
+#[test]
+fn quarantine_uses_a_bounded_name_for_a_maximum_length_bad_manifest() {
+    let store = TestStore::new();
+    let operation_id = Uuid::now_v7().hyphenated().to_string();
+    let operation = store.paths.trash().join(operation_id);
+    fs::create_dir(&operation).unwrap();
+    let suffix = ".trash.json";
+    let original_name = format!("{}{}", "x".repeat(255 - suffix.len()), suffix);
+    fs::write(operation.join(&original_name), b"{broken").unwrap();
+
+    let service = TrashService::new(store.paths.clone());
+    service.recover_pending().unwrap();
+    let first_quarantine: Vec<_> = fs::read_dir(&operation)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    service.recover_pending().unwrap();
+
+    let entries: Vec<_> = fs::read_dir(&operation)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !operation.join(&original_name).exists(),
+        "remaining entries: {entries:?}"
+    );
+    let quarantined: Vec<_> = entries
+        .into_iter()
+        .filter(|name| name.starts_with("quarantined-"))
+        .collect();
+    assert_eq!(quarantined.len(), 1);
+    assert!(quarantined[0].len() < 100);
+    assert_eq!(quarantined, first_quarantine);
+}
+
+#[test]
+fn one_abnormal_recovery_item_remains_retryable_without_blocking_a_valid_sibling() {
+    let store = TestStore::new();
+    let bad = create_document(&store, note_id(FORMAL_ID), NoteKind::Formal, None, "Bad");
+    let good = create_document(
+        &store,
+        note_id(TEMPORARY_ID),
+        NoteKind::Formal,
+        None,
+        "Good",
+    );
+    let bad_delete = TrashService::new_with_failure(
+        store.paths.clone(),
+        TrashFailurePoint::CrashAfterMove(bad.id),
+    )
+    .trash(vec![bad.id], "2026-07-02T00:00:00Z")
+    .unwrap();
+    let good_delete = TrashService::new_with_failure(
+        store.paths.clone(),
+        TrashFailurePoint::CrashAfterMove(good.id),
+    )
+    .trash(vec![good.id], "2026-07-02T00:00:00Z")
+    .unwrap();
+
+    let bad_trash = store
+        .paths
+        .trash()
+        .join(&bad_delete.operation_id)
+        .join(bad.id.to_string());
+    let bad_active = store.paths.note_dir(bad.id, NoteKind::Formal).unwrap();
+    copy_directory(&bad_trash, &bad_active);
+
+    TrashService::new(store.paths.clone())
+        .recover_pending()
+        .unwrap();
+
+    assert!(bad_trash.is_dir());
+    assert!(bad_active.is_dir());
+    assert!(store
+        .paths
+        .trash()
+        .join(&bad_delete.operation_id)
+        .join(format!("{}.trash.json", bad.id))
+        .is_file());
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(good.id)
+            .unwrap(),
+        good
+    );
+    assert!(!store
+        .paths
+        .trash()
+        .join(&good_delete.operation_id)
+        .join(format!("{}.trash.json", good.id))
+        .exists());
+}
+
+fn copy_directory(source: &std::path::Path, destination: &std::path::Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
 fn mutate_manifest(
     operation: &std::path::Path,
     id: NoteId,
@@ -404,6 +569,90 @@ fn restore_indexes_durable_markdown_instead_of_a_divergent_catalog_snapshot() {
             .markdown,
         note.markdown
     );
+}
+
+#[test]
+fn restore_uses_durable_folder_instead_of_a_self_consistent_catalog_override() {
+    let store = TestStore::new();
+    let trusted = folder_id(FOLDER_ID);
+    let attacker = folder_id(THIRD_ID);
+    seed_folder(&store, FOLDER_ID, "Trusted");
+    seed_folder(&store, THIRD_ID, "Attacker");
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(trusted),
+        "Durable folder",
+    );
+    let service = TrashService::new(store.paths.clone());
+    let deletion = service
+        .trash(vec![note.id], "2026-07-02T00:00:00Z")
+        .unwrap();
+    let operation = store.paths.trash().join(&deletion.operation_id);
+    mutate_manifest(&operation, note.id, |manifest| {
+        manifest["previousFolderId"] = serde_json::json!(attacker.to_string());
+        manifest["original"]["folderId"] = serde_json::json!(attacker.to_string());
+    });
+
+    let restored = service.restore(vec![note.id]).unwrap();
+
+    assert!(restored.failed.is_empty());
+    assert_eq!(restored.restored[0].folder_id, Some(trusted));
+}
+
+#[test]
+fn prepared_recovery_reindexes_active_durable_content_not_catalog_fields() {
+    let store = TestStore::new();
+    let trusted = folder_id(FOLDER_ID);
+    let attacker = folder_id(THIRD_ID);
+    seed_folder(&store, FOLDER_ID, "Trusted");
+    seed_folder(&store, THIRD_ID, "Attacker");
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(trusted),
+        "Durable title",
+    );
+    let deletion = TrashService::new_with_failure(
+        store.paths.clone(),
+        TrashFailurePoint::CrashAfterDatabase(note.id),
+    )
+    .trash(vec![note.id], "2026-07-02T00:00:00Z")
+    .unwrap();
+    let operation = store.paths.trash().join(&deletion.operation_id);
+    fs::rename(
+        operation.join(note.id.to_string()),
+        store.paths.note_dir(note.id, NoteKind::Formal).unwrap(),
+    )
+    .unwrap();
+    mutate_manifest(&operation, note.id, |manifest| {
+        manifest["title"] = serde_json::json!("Injected title");
+        manifest["previousFolderId"] = serde_json::json!(attacker.to_string());
+        manifest["original"]["title"] = serde_json::json!("Injected title");
+        manifest["original"]["folderId"] = serde_json::json!(attacker.to_string());
+        manifest["original"]["markdown"] = serde_json::json!("injected catalog body");
+    });
+
+    TrashService::new(store.paths.clone())
+        .recover_pending()
+        .unwrap();
+
+    let database = Connection::open(store.paths.database()).unwrap();
+    let (title, folder, plain_text): (String, Vec<u8>, String) = database
+        .query_row(
+            "SELECT notes.title, notes.folder_id, search_documents.plain_text \
+             FROM notes JOIN search_documents ON search_documents.note_id=notes.id \
+             WHERE notes.id=?1",
+            [uuid_blob(FORMAL_ID)],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(title, note.title);
+    assert_eq!(folder, uuid_blob(FOLDER_ID));
+    assert_eq!(plain_text, "Durable title body");
+    assert!(!operation.join(format!("{}.trash.json", note.id)).exists());
 }
 
 #[test]

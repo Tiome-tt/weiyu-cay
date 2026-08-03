@@ -23,6 +23,7 @@ use std::{collections::HashSet, fs, path::Path};
 use uuid::Uuid;
 
 const MANIFEST_SUFFIX: &str = ".trash.json";
+const MANIFEST_NAME_BYTES: usize = 36 + MANIFEST_SUFFIX.len();
 const RECOVERED_FOLDER_NAME: &str = "已恢复";
 const RECOVERED_FOLDER_ID: &str = "019c0000-0000-7000-8000-00000000fffe";
 
@@ -59,6 +60,8 @@ pub enum TrashFailurePoint {
     Purge(NoteId),
     CrashAfterMove(NoteId),
     CrashAfterDatabase(NoteId),
+    DeleteDatabaseThenRollback(NoteId, PublishState),
+    CrashPurgeAfterRemove(NoteId),
     CrashRestoreAfterMove(NoteId),
     CrashRestoreAfterDocument(NoteId),
 }
@@ -88,12 +91,16 @@ impl TrashService {
     pub fn recover_pending(&self) -> Result<(), CommandError> {
         let guard = IndexMutationLock::acquire(self.paths.root())?;
         for mut manifest in self.read_all_manifests()? {
-            match manifest.state {
-                TrashItemState::Prepared => self.recover_prepared(&mut manifest)?,
-                TrashItemState::Deleted => {}
-                TrashItemState::Restoring => self.recover_restoring(&manifest, &guard)?,
-                TrashItemState::Purging => self.recover_purging(&manifest)?,
-            }
+            let result = match manifest.state {
+                TrashItemState::Prepared => self.recover_prepared(&mut manifest, &guard),
+                TrashItemState::Deleted => Ok(()),
+                TrashItemState::Restoring => self.recover_restoring(&manifest, &guard),
+                TrashItemState::Purging => self.recover_purging(&manifest),
+            };
+            // Each manifest is an independent recovery unit. Retryable state,
+            // filesystem, or database failures must leave its journal in place
+            // without preventing valid siblings or application startup.
+            let _ = result;
         }
         Ok(())
     }
@@ -218,15 +225,52 @@ impl TrashService {
         if self.failure == Some(TrashFailurePoint::CrashAfterMove(id)) {
             return Err(CommandError::io("injected crash after trash move"));
         }
-        if let Err(error) = mark_deleted(&self.paths, id, deleted_at) {
+        let delete_result = if matches!(
+            self.failure,
+            Some(TrashFailurePoint::DeleteDatabaseThenRollback(failed_id, _))
+                if failed_id == id
+        ) {
+            Err(CommandError::database("injected delete database failure"))
+        } else {
+            mark_deleted(&self.paths, id, deleted_at)
+        };
+        if let Err(error) = delete_result {
             let destination =
                 SafeDirectory::open(self.paths.root(), &[collection(document.kind)], false)?;
-            let _ = move_published(operation.move_directory_no_replace(
-                &id.to_string(),
-                &destination,
-                &id.to_string(),
-            ));
-            let _ = operation.remove_checked(&manifest_name(id));
+            let rollback = match self.failure {
+                Some(TrashFailurePoint::DeleteDatabaseThenRollback(failed_id, state))
+                    if failed_id == id =>
+                {
+                    match state {
+                        PublishState::NotPublished => Ok(PublishState::NotPublished),
+                        PublishState::Published => operation.move_directory_no_replace(
+                            &id.to_string(),
+                            &destination,
+                            &id.to_string(),
+                        ),
+                        PublishState::PublishedButSyncFailed | PublishState::RecoveryRequired => {
+                            operation
+                                .move_directory_no_replace(
+                                    &id.to_string(),
+                                    &destination,
+                                    &id.to_string(),
+                                )
+                                .map(|_| state)
+                        }
+                    }
+                }
+                _ => operation.move_directory_no_replace(
+                    &id.to_string(),
+                    &destination,
+                    &id.to_string(),
+                ),
+            };
+            // Only a durably published rollback proves the active copy is the
+            // sole recoverable copy. All uncertain states retain Prepared so
+            // startup can reconcile the observed locations.
+            if matches!(rollback, Ok(PublishState::Published)) {
+                let _ = remove_catalog_manifest(&self.paths, operation_id, id);
+            }
             return Err(error);
         }
         if self.failure == Some(TrashFailurePoint::CrashAfterDatabase(id)) {
@@ -376,6 +420,11 @@ impl TrashService {
             })?;
             operation.sync()?;
         }
+        if self.failure == Some(TrashFailurePoint::CrashPurgeAfterRemove(manifest.note_id)) {
+            return Err(CommandError::io(
+                "injected crash after trash content removal",
+            ));
+        }
         if manifest.kind == NoteKind::Temporary {
             crate::storage::temporary_ops::finalize_purged_delete(
                 &self.paths,
@@ -387,7 +436,11 @@ impl TrashService {
         remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
     }
 
-    fn recover_prepared(&self, manifest: &mut TrashManifest) -> Result<(), CommandError> {
+    fn recover_prepared(
+        &self,
+        manifest: &mut TrashManifest,
+        guard: &IndexMutationLock,
+    ) -> Result<(), CommandError> {
         let active = contained_note_exists(&self.paths, manifest.kind, manifest.note_id)?;
         let trashed =
             contained_trash_exists(&self.paths, &manifest.operation_id, manifest.note_id)?;
@@ -416,7 +469,9 @@ impl TrashService {
                 remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
             }
             (true, false, true) => {
-                persist_document(&open_database(&self.paths)?, &manifest.original)?;
+                let durable =
+                    NoteRepository::new(self.paths.clone()).load_locked(manifest.note_id, guard)?;
+                persist_document(&open_database(&self.paths)?, &durable)?;
                 remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
             }
             (true, true, _) => Err(CommandError::conflict(
@@ -483,6 +538,13 @@ impl TrashService {
         if contained_trash_exists(&self.paths, &manifest.operation_id, manifest.note_id)? {
             return self.purge_one_in_progress(manifest);
         }
+        if manifest.kind == NoteKind::Temporary {
+            crate::storage::temporary_ops::finalize_purged_delete(
+                &self.paths,
+                &manifest.operation_id,
+                manifest.note_id,
+            )?;
+        }
         delete_metadata(&self.paths, manifest.note_id)?;
         remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
     }
@@ -506,9 +568,17 @@ impl TrashService {
                 if !name.ends_with(MANIFEST_SUFFIX) {
                     continue;
                 }
+                if name.len() > MANIFEST_NAME_BYTES {
+                    let _ = quarantine_manifest(&operation, &name);
+                    continue;
+                }
                 match operation.entry_is_regular_file(&name) {
                     Ok(true) => {}
-                    Ok(false) | Err(_) => continue,
+                    Ok(false) => {
+                        let _ = quarantine_manifest(&operation, &name);
+                        continue;
+                    }
+                    Err(_) => continue,
                 }
                 let bytes = match operation.read(&name, 4 * 1024 * 1024) {
                     Ok(bytes) => bytes,
@@ -722,7 +792,9 @@ fn validate_operation_id(value: &str) -> Result<(), CommandError> {
 }
 
 fn quarantine_manifest(directory: &SafeDirectory, name: &str) -> Result<(), CommandError> {
-    let destination = format!("quarantined-{name}-{}", Uuid::now_v7());
+    // Do not embed an attacker-controlled source name: a valid 255-byte entry
+    // would make the quarantine destination itself unrepresentable.
+    let destination = format!("quarantined-{}.invalid", Uuid::now_v7());
     directory.move_file(name, &destination)?;
     directory.sync()
 }
@@ -791,15 +863,18 @@ fn read_trashed_document(
 
 fn derive_restore_document(
     paths: &StoragePaths,
-    manifest: &TrashManifest,
+    _manifest: &TrashManifest,
     mut document: NoteDocument,
     guard: &IndexMutationLock,
 ) -> Result<NoteDocument, CommandError> {
     if document.kind != NoteKind::Formal {
         return Ok(document);
     }
-    let target = if folder_exists(paths, manifest.previous_folder_id)? {
-        manifest.previous_folder_id
+    // The durable frontmatter is the trusted previous logical location. The
+    // catalog is discoverability/recovery metadata and may not redirect a note.
+    let durable_folder_id = document.folder_id;
+    let target = if folder_exists(paths, durable_folder_id)? {
+        durable_folder_id
     } else {
         Some(recovered_folder(paths, guard)?)
     };
