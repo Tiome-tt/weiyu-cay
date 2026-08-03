@@ -19,7 +19,7 @@ use crate::{
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, path::Path};
+use std::{collections::HashSet, fs, io::Write, path::Path};
 use uuid::Uuid;
 
 const MANIFEST_SUFFIX: &str = ".trash.json";
@@ -60,6 +60,8 @@ pub enum TrashFailurePoint {
     Purge(NoteId),
     CrashAfterMove(NoteId),
     CrashAfterDatabase(NoteId),
+    InitialMove(NoteId, PublishState),
+    RestoreMove(NoteId, PublishState),
     DeleteDatabaseThenRollback(NoteId, PublishState),
     CrashPurgeAfterRemove(NoteId),
     CrashRestoreAfterMove(NoteId),
@@ -214,13 +216,21 @@ impl TrashService {
         write_manifest(&self.paths, &manifest)?;
         let source = SafeDirectory::open(self.paths.root(), &[collection(document.kind)], false)?;
         let operation = SafeDirectory::open(self.paths.root(), &["trash", operation_id], true)?;
-        if let Err(error) = move_published(source.move_directory_no_replace(
-            &id.to_string(),
-            &operation,
-            &id.to_string(),
-        )) {
-            let _ = operation.remove_checked(&manifest_name(id));
-            return Err(error);
+        let injected = match self.failure {
+            Some(TrashFailurePoint::InitialMove(failed_id, state)) if failed_id == id => {
+                Some(state)
+            }
+            _ => None,
+        };
+        match run_directory_move(injected, || {
+            source.move_directory_no_replace(&id.to_string(), &operation, &id.to_string())
+        }) {
+            DirectoryMoveOutcome::Published => {}
+            DirectoryMoveOutcome::NotPublished(error) => {
+                let _ = remove_catalog_manifest(&self.paths, operation_id, id);
+                return Err(error);
+            }
+            DirectoryMoveOutcome::PublishedUntrusted(error) => return Err(error),
         }
         if self.failure == Some(TrashFailurePoint::CrashAfterMove(id)) {
             return Err(CommandError::io("injected crash after trash move"));
@@ -343,24 +353,41 @@ impl TrashService {
             SafeDirectory::open(self.paths.root(), &[collection(document.kind)], false)?;
         let operation =
             SafeDirectory::open(self.paths.root(), &["trash", &manifest.operation_id], false)?;
-        if let Err(error) = move_published(operation.move_directory_no_replace(
-            &manifest.note_id.to_string(),
-            &destination,
-            &manifest.note_id.to_string(),
-        )) {
-            let _ = write_manifest(&self.paths, manifest);
-            return Err(error);
+        let injected = match self.failure {
+            Some(TrashFailurePoint::RestoreMove(failed_id, state))
+                if failed_id == manifest.note_id =>
+            {
+                Some(state)
+            }
+            _ => None,
+        };
+        match run_directory_move(injected, || {
+            operation.move_directory_no_replace(
+                &manifest.note_id.to_string(),
+                &destination,
+                &manifest.note_id.to_string(),
+            )
+        }) {
+            DirectoryMoveOutcome::Published => {}
+            DirectoryMoveOutcome::NotPublished(error) => {
+                let _ = write_manifest(&self.paths, manifest);
+                return Err(error);
+            }
+            DirectoryMoveOutcome::PublishedUntrusted(error) => return Err(error),
         }
         if self.failure == Some(TrashFailurePoint::CrashRestoreAfterMove(manifest.note_id)) {
             return Err(CommandError::io("injected crash after trash restore move"));
         }
         let rollback = || -> Result<(), CommandError> {
-            move_published(destination.move_directory_no_replace(
+            match classify_directory_move(destination.move_directory_no_replace(
                 &manifest.note_id.to_string(),
                 &operation,
                 &manifest.note_id.to_string(),
-            ))?;
-            write_manifest(&self.paths, manifest)
+            )) {
+                DirectoryMoveOutcome::Published => write_manifest(&self.paths, manifest),
+                DirectoryMoveOutcome::NotPublished(error)
+                | DirectoryMoveOutcome::PublishedUntrusted(error) => Err(error),
+            }
         };
         if document != durable {
             let bytes = serialize_document(&document)?;
@@ -458,11 +485,15 @@ impl TrashService {
                 )?;
                 let destination =
                     SafeDirectory::open(self.paths.root(), &[collection(manifest.kind)], false)?;
-                move_published(operation.move_directory_no_replace(
+                match classify_directory_move(operation.move_directory_no_replace(
                     &manifest.note_id.to_string(),
                     &destination,
                     &manifest.note_id.to_string(),
-                ))?;
+                )) {
+                    DirectoryMoveOutcome::Published => {}
+                    DirectoryMoveOutcome::NotPublished(error)
+                    | DirectoryMoveOutcome::PublishedUntrusted(error) => return Err(error),
+                }
                 remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
             }
             (true, false, false) => {
@@ -575,7 +606,7 @@ impl TrashService {
                 match operation.entry_is_regular_file(&name) {
                     Ok(true) => {}
                     Ok(false) => {
-                        let _ = quarantine_manifest(&operation, &name);
+                        let _ = record_nonregular_manifest(&operation, &name);
                         continue;
                     }
                     Err(_) => continue,
@@ -796,6 +827,28 @@ fn quarantine_manifest(directory: &SafeDirectory, name: &str) -> Result<(), Comm
     // would make the quarantine destination itself unrepresentable.
     let destination = format!("quarantined-{}.invalid", Uuid::now_v7());
     directory.move_file(name, &destination)?;
+    directory.sync()
+}
+
+fn record_nonregular_manifest(directory: &SafeDirectory, name: &str) -> Result<(), CommandError> {
+    let encoded = name
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let marker = format!("quarantined-nonregular-{encoded}.invalid");
+    if directory.regular_file_exists(&marker)? {
+        return Ok(());
+    }
+    let mut file = directory.create_new(&marker)?;
+    file.write_all(b"non-regular trash manifest entry")
+        .map_err(|source| {
+            CommandError::io(format!("could not write quarantine marker: {source}"))
+        })?;
+    file.sync_all().map_err(|source| {
+        CommandError::io(format!("could not sync quarantine marker: {source}"))
+    })?;
+    drop(file);
     directory.sync()
 }
 
@@ -1039,15 +1092,54 @@ fn publish_document(
     }
 }
 
-fn move_published(
+enum DirectoryMoveOutcome {
+    Published,
+    NotPublished(CommandError),
+    PublishedUntrusted(CommandError),
+}
+
+fn run_directory_move(
+    injected: Option<PublishState>,
+    action: impl FnOnce() -> Result<PublishState, crate::storage::atomic_file::PublishFailure>,
+) -> DirectoryMoveOutcome {
+    if injected == Some(PublishState::NotPublished) {
+        return DirectoryMoveOutcome::NotPublished(CommandError::io(
+            "injected directory move was not published",
+        ));
+    }
+    let outcome = classify_directory_move(action());
+    match (injected, outcome) {
+        (Some(PublishState::PublishedButSyncFailed), DirectoryMoveOutcome::Published)
+        | (Some(PublishState::RecoveryRequired), DirectoryMoveOutcome::Published) => {
+            DirectoryMoveOutcome::PublishedUntrusted(CommandError::io(
+                "injected directory move publication is untrusted",
+            ))
+        }
+        (_, outcome) => outcome,
+    }
+}
+
+fn classify_directory_move(
     result: Result<PublishState, crate::storage::atomic_file::PublishFailure>,
-) -> Result<(), CommandError> {
+) -> DirectoryMoveOutcome {
     match result {
-        Ok(PublishState::Published) => Ok(()),
-        Ok(state) => Err(CommandError::io(format!(
-            "directory move returned invalid state: {state:?}"
-        ))),
-        Err(failure) => Err(failure.into_error()),
+        Ok(PublishState::Published) => DirectoryMoveOutcome::Published,
+        Ok(PublishState::NotPublished) => DirectoryMoveOutcome::NotPublished(CommandError::io(
+            "directory move returned a not-published state",
+        )),
+        Ok(PublishState::PublishedButSyncFailed | PublishState::RecoveryRequired) => {
+            DirectoryMoveOutcome::PublishedUntrusted(CommandError::io(
+                "directory move returned an untrusted publication state",
+            ))
+        }
+        Err(failure) => match failure.state() {
+            PublishState::NotPublished => DirectoryMoveOutcome::NotPublished(failure.into_error()),
+            PublishState::PublishedButSyncFailed
+            | PublishState::RecoveryRequired
+            | PublishState::Published => {
+                DirectoryMoveOutcome::PublishedUntrusted(failure.into_error())
+            }
+        },
     }
 }
 

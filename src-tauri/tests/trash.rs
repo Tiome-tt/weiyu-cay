@@ -312,6 +312,108 @@ fn failed_delete_keeps_a_recovery_manifest_until_rollback_is_trusted() {
 }
 
 #[test]
+fn initial_trash_move_handles_all_publication_states_and_restart_converges() {
+    for (index, move_state) in [
+        PublishState::Published,
+        PublishState::NotPublished,
+        PublishState::PublishedButSyncFailed,
+        PublishState::RecoveryRequired,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let store = TestStore::new();
+        let id =
+            NoteId::parse_str(&format!("019c0000-0000-7000-8000-{:012x}", 0x170 + index)).unwrap();
+        let note = create_document(&store, id, NoteKind::Formal, None, "Initial move");
+        let service = TrashService::new_with_failure(
+            store.paths.clone(),
+            TrashFailurePoint::InitialMove(note.id, move_state),
+        );
+
+        let result = service
+            .trash(vec![note.id], "2026-07-02T00:00:00Z")
+            .unwrap();
+
+        if move_state == PublishState::Published {
+            assert_eq!(result.trashed, vec![note.id]);
+        } else {
+            assert_eq!(result.failed[0].note_id, note.id);
+        }
+        TrashService::new(store.paths.clone())
+            .recover_pending()
+            .unwrap();
+        if move_state == PublishState::Published {
+            assert!(!store.paths.note_dir(note.id, note.kind).unwrap().exists());
+            assert_eq!(
+                TrashService::new(store.paths.clone()).list().unwrap()[0].note_id,
+                note.id
+            );
+        } else {
+            assert_eq!(
+                NoteRepository::new(store.paths.clone())
+                    .load(note.id)
+                    .unwrap(),
+                note
+            );
+            assert!(TrashService::new(store.paths.clone())
+                .list()
+                .unwrap()
+                .is_empty());
+        }
+    }
+}
+
+#[test]
+fn restore_move_handles_all_publication_states_and_restart_converges() {
+    for (index, move_state) in [
+        PublishState::Published,
+        PublishState::NotPublished,
+        PublishState::PublishedButSyncFailed,
+        PublishState::RecoveryRequired,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let store = TestStore::new();
+        let id =
+            NoteId::parse_str(&format!("019c0000-0000-7000-8000-{:012x}", 0x180 + index)).unwrap();
+        let note = create_document(&store, id, NoteKind::Formal, None, "Restore move");
+        TrashService::new(store.paths.clone())
+            .trash(vec![note.id], "2026-07-02T00:00:00Z")
+            .unwrap();
+        let service = TrashService::new_with_failure(
+            store.paths.clone(),
+            TrashFailurePoint::RestoreMove(note.id, move_state),
+        );
+
+        let result = service.restore(vec![note.id]).unwrap();
+
+        if move_state == PublishState::Published {
+            assert_eq!(result.restored[0].id, note.id);
+        } else {
+            assert_eq!(result.failed[0].note_id, note.id);
+        }
+        TrashService::new(store.paths.clone())
+            .recover_pending()
+            .unwrap();
+        let restarted = TrashService::new(store.paths.clone());
+        if move_state == PublishState::NotPublished {
+            assert!(!store.paths.note_dir(note.id, note.kind).unwrap().exists());
+            assert_eq!(restarted.list().unwrap()[0].note_id, note.id);
+        } else {
+            assert_eq!(
+                NoteRepository::new(store.paths.clone())
+                    .load(note.id)
+                    .unwrap(),
+                note
+            );
+            assert!(restarted.list().unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
 fn recovery_finishes_a_delete_committed_before_its_final_state_publish() {
     let store = TestStore::new();
     let note = create_document(
@@ -447,6 +549,39 @@ fn quarantine_uses_a_bounded_name_for_a_maximum_length_bad_manifest() {
     assert_eq!(quarantined.len(), 1);
     assert!(quarantined[0].len() < 100);
     assert_eq!(quarantined, first_quarantine);
+}
+
+#[test]
+fn nonregular_manifest_entries_are_recorded_once_without_following_links() {
+    let store = TestStore::new();
+    let operation_id = Uuid::now_v7().hyphenated().to_string();
+    let operation = store.paths.trash().join(operation_id);
+    fs::create_dir(&operation).unwrap();
+    let directory_name = format!("{FORMAL_ID}.trash.json");
+    let link_name = format!("{TEMPORARY_ID}.trash.json");
+    fs::create_dir(operation.join(&directory_name)).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("sentinel"), b"keep").unwrap();
+    create_directory_link(outside.path(), &operation.join(&link_name)).unwrap();
+
+    run_startup_trash_maintenance(store.paths.clone(), "2026-08-01T00:00:00Z").unwrap();
+    let first_markers: Vec<_> = fs::read_dir(&operation)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("quarantined-nonregular-") && name.ends_with(".invalid"))
+        .collect();
+    run_startup_trash_maintenance(store.paths.clone(), "2026-08-01T00:00:00Z").unwrap();
+    let second_markers: Vec<_> = fs::read_dir(&operation)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("quarantined-nonregular-") && name.ends_with(".invalid"))
+        .collect();
+
+    assert_eq!(first_markers.len(), 2);
+    assert_eq!(second_markers, first_markers);
+    assert!(operation.join(directory_name).is_dir());
+    assert_eq!(fs::read(outside.path().join("sentinel")).unwrap(), b"keep");
+    assert!(operation.join(link_name).exists());
 }
 
 #[test]
