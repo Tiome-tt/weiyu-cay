@@ -1,7 +1,7 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, WindowPreferenceMap } from '../../domain/ports'
+import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -174,6 +174,26 @@ class TauriTemporaryWindowPort implements TemporaryWindowPort {
   }
 }
 
+class TauriTrashPort implements TrashPort {
+  constructor(private readonly client: TauriClient) {}
+
+  trash(noteIds: NoteId[]) {
+    return this.client.invoke<Awaited<ReturnType<TrashPort['trash']>>>('trash_notes', { noteIds })
+  }
+
+  list() {
+    return this.client.invoke<TrashEntry[]>('list_trash')
+  }
+
+  restore(noteIds: NoteId[]) {
+    return this.client.invoke<Awaited<ReturnType<TrashPort['restore']>>>('restore_trash', { noteIds })
+  }
+
+  undo(operationId: string) {
+    return this.client.invoke<Awaited<ReturnType<TrashPort['undo']>>>('undo_trash', { operationId })
+  }
+}
+
 export function createTauriPorts(): {
   notes: LibraryNotePort
   folders: FolderPort
@@ -183,6 +203,7 @@ export function createTauriPorts(): {
   links: LinkPort
   temporary: TemporaryPort
   temporaryWindows: TemporaryWindowPort
+  trash: TrashPort
 } {
   const client = new TauriClient()
   return {
@@ -194,5 +215,6 @@ export function createTauriPorts(): {
     links: new TauriLinkPort(client),
     temporary: new TauriTemporaryPort(client),
     temporaryWindows: new TauriTemporaryWindowPort(client),
+    trash: new TauriTrashPort(client),
   }
 }

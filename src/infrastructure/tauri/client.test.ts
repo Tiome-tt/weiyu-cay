@@ -70,4 +70,23 @@ describe('TauriClient', () => {
       ['rename_target_labels', { noteId: target, title: 'New title' }],
     ])
   })
+
+  it('maps trash operations to the narrow Tauri command boundary', async () => {
+    const first = '019c0000-0000-7000-8000-000000000031' as NoteId
+    const second = '019c0000-0000-7000-8000-000000000032' as NoteId
+    invokeMock.mockResolvedValue(undefined)
+    const { trash } = createTauriPorts()
+
+    await trash.trash([first, second])
+    await trash.list()
+    await trash.restore([second])
+    await trash.undo('019c0000-0000-7000-8000-000000000099')
+
+    expect(invokeMock.mock.calls).toEqual([
+      ['trash_notes', { noteIds: [first, second] }],
+      ['list_trash', undefined],
+      ['restore_trash', { noteIds: [second] }],
+      ['undo_trash', { operationId: '019c0000-0000-7000-8000-000000000099' }],
+    ])
+  })
 })

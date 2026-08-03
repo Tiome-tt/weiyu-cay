@@ -1,4 +1,4 @@
-import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort } from '../domain/ports'
+import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../domain/ports'
 import type { LibraryNotePort } from '../features/library/useLibrary'
 import { createTauriPorts } from '../infrastructure/tauri/ports'
 
@@ -11,6 +11,7 @@ export interface AppServices {
   links: LinkPort
   temporary?: TemporaryPort
   temporaryWindows?: TemporaryWindowPort
+  trash?: TrashPort
 }
 
 export function createAppServices(): AppServices {

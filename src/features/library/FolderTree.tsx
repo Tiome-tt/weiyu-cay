@@ -5,9 +5,11 @@ interface FolderTreeProps {
   folders: Folder[]
   activeId: FolderId | null
   temporaryInboxActive?: boolean
+  trashActive?: boolean
   state: 'loading' | 'ready' | 'error'
   onSelect: (id: FolderId | null) => void
   onTemporaryInbox?: () => void
+  onTrash?: () => void
   onCreate: (parentId: FolderId | null, name: string) => Promise<void>
   onRename: (id: FolderId, name: string) => Promise<void>
   onMove: (id: FolderId, parentId: FolderId | null) => Promise<void>
@@ -86,8 +88,13 @@ export function FolderTree(props: FolderTreeProps) {
 
   const selected = props.folders.find((folder) => folder.id === props.activeId)
   const visibleKeys = useMemo<TreeItemKey[]>(
-    () => ['root', ...(props.onTemporaryInbox ? ['temporary-inbox' as const] : []), ...flattenFolders(props.folders)],
-    [props.folders, props.onTemporaryInbox],
+    () => [
+      'root',
+      ...(props.onTemporaryInbox ? ['temporary-inbox' as const] : []),
+      ...(props.onTrash ? ['trash' as const] : []),
+      ...flattenFolders(props.folders),
+    ],
+    [props.folders, props.onTemporaryInbox, props.onTrash],
   )
 
   useEffect(() => {
@@ -105,7 +112,7 @@ export function FolderTree(props: FolderTreeProps) {
     event: KeyboardEvent<HTMLButtonElement>,
     key: TreeItemKey,
   ) => {
-    if (event.ctrlKey && event.key.toLowerCase() === 'm' && key !== 'root' && key !== 'temporary-inbox') {
+    if (event.ctrlKey && event.key.toLowerCase() === 'm' && key !== 'root' && key !== 'temporary-inbox' && key !== 'trash') {
       event.preventDefault()
       setMoving(key)
       setMoveTarget(null)
@@ -127,12 +134,12 @@ export function FolderTree(props: FolderTreeProps) {
         target = visibleKeys[visibleKeys.length - 1]
         break
       case 'ArrowRight':
-        target = key === 'root' || key === 'temporary-inbox'
+        target = key === 'root' || key === 'temporary-inbox' || key === 'trash'
           ? props.folders.find((folder) => folder.parentId === null)?.id
           : props.folders.find((folder) => folder.parentId === key)?.id
         break
       case 'ArrowLeft':
-        if (key === 'temporary-inbox') {
+        if (key === 'temporary-inbox' || key === 'trash') {
           target = 'root'
         } else if (key !== 'root') {
           target = props.folders.find((folder) => folder.id === key)?.parentId ?? 'root'
@@ -269,7 +276,7 @@ export function FolderTree(props: FolderTreeProps) {
           <button
             ref={(node) => registerItem('root', node)}
             role="treeitem"
-            aria-selected={props.activeId === null && !props.temporaryInboxActive}
+            aria-selected={props.activeId === null && !props.temporaryInboxActive && !props.trashActive}
             tabIndex={focusedKey === 'root' ? 0 : -1}
             className="folder-tree__item"
             type="button"
@@ -299,6 +306,23 @@ export function FolderTree(props: FolderTreeProps) {
             </button>
           </li>
         )}
+        {props.onTrash && (
+          <li role="none">
+            <button
+              ref={(node) => registerItem('trash', node)}
+              role="treeitem"
+              aria-selected={props.trashActive === true}
+              tabIndex={focusedKey === 'trash' ? 0 : -1}
+              className="folder-tree__item"
+              type="button"
+              onFocus={() => setFocusedKey('trash')}
+              onKeyDown={(event) => handleTreeKey(event, 'trash')}
+              onClick={props.onTrash}
+            >
+              <span aria-hidden="true">♲</span> 回收站
+            </button>
+          </li>
+        )}
         {renderBranch(null)}
       </ul>
       {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
@@ -306,7 +330,7 @@ export function FolderTree(props: FolderTreeProps) {
   )
 }
 
-type TreeItemKey = 'root' | 'temporary-inbox' | FolderId
+type TreeItemKey = 'root' | 'temporary-inbox' | 'trash' | FolderId
 
 function flattenFolders(folders: Folder[], parentId: FolderId | null = null): FolderId[] {
   return folders

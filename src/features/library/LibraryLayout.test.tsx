@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
+import type { TrashPort } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
 import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
@@ -54,6 +55,27 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('opens the application trash from folder navigation', async () => {
+    const trash: TrashPort = {
+      trash: vi.fn().mockResolvedValue({ operationId: 'op', trashed: [], failed: [] }),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort()}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+        trash={trash}
+      />,
+    )
+
+    await user.click(await screen.findByRole('treeitem', { name: '回收站' }))
+    expect(await screen.findByRole('region', { name: '回收站' })).toBeVisible()
+  })
+
   it('switches to the temporary inbox without changing the persisted column layout', async () => {
     const system = fakeSystemPort({
       getWindowPreference: vi.fn().mockResolvedValue({ folder: 0.25, noteList: 0.3 }),

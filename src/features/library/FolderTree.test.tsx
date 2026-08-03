@@ -35,6 +35,31 @@ function renderTree(overrides: { onSelect?: (id: FolderId | null) => void; onMov
 afterEach(cleanup)
 
 describe('FolderTree keyboard navigation', () => {
+  it('offers the application trash as a special keyboard-accessible navigation item', async () => {
+    const user = userEvent.setup()
+    const onTrash = vi.fn()
+    render(
+      <FolderTree
+        folders={rows}
+        activeId={null}
+        state="ready"
+        onSelect={vi.fn()}
+        onTrash={onTrash}
+        trashActive
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onMove={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const trash = screen.getByRole('treeitem', { name: '回收站' })
+    expect(trash).toHaveAttribute('aria-selected', 'true')
+    trash.focus()
+    await user.keyboard('{Enter}')
+    expect(onTrash).toHaveBeenCalledOnce()
+  })
+
   it('offers the temporary inbox as a special navigation item without a folder id', async () => {
     const user = userEvent.setup()
     const onTemporaryInbox = vi.fn()

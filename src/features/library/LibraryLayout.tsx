@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { SearchBox } from '../search/SearchBox'
@@ -7,6 +7,7 @@ import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
 import { TemporaryInbox, type TemporaryInboxHandle } from '../temporary/TemporaryInbox'
+import { TrashView } from './TrashView'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -16,11 +17,12 @@ interface LibraryLayoutProps {
   search?: SearchPort
   links?: LinkPort
   temporary?: TemporaryPort
+  trash?: TrashPort
 }
 
-export function LibraryLayout({ notes, folders, system, assets, search, links, temporary }: LibraryLayoutProps) {
+export function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
-  const [activeView, setActiveView] = useState<'library' | 'temporary'>('library')
+  const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
@@ -80,12 +82,14 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
           folders={library.folders}
           activeId={library.activeFolderId}
           temporaryInboxActive={activeView === 'temporary'}
+          trashActive={activeView === 'trash'}
           state={library.folderState}
           onSelect={(folderId) => void navigateAfterSave(() => {
             setActiveView('library')
             library.selectFolder(folderId)
           })}
           onTemporaryInbox={temporary === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('temporary'))}
+          onTrash={trash === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('trash'))}
           onCreate={library.createFolder}
           onRename={library.renameFolder}
           onMove={library.moveFolder}
@@ -100,6 +104,13 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
             </header>
             <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>
           </section>
+        ) : activeView === 'trash' ? (
+          <section className="note-list" aria-label="回收站导航">
+            <header className="library-pane__header library-pane__header--compact">
+              <div><span className="library-pane__eyebrow">安全恢复</span><h2>回收站</h2></div>
+            </header>
+            <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
+          </section>
         ) : (
           <NoteList
             notes={library.notes}
@@ -111,6 +122,7 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
         {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} />}
+        {activeView === 'trash' && trash && <TrashView trash={trash} folders={library.folders} />}
         {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
         {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (

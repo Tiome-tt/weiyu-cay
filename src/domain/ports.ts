@@ -116,3 +116,37 @@ export interface TemporaryUndoDeleteResult {
   restored: NoteId[]
   failed: Array<{ temporaryId: NoteId; message: string }>
 }
+
+export interface TrashEntry {
+  noteId: NoteId
+  kind: NoteDocument['kind']
+  title: string
+  previousFolderId: FolderId | null
+  previousRelativePath: string
+  deletedAt: string
+  assets: string[]
+  operationId: string
+}
+
+export interface TrashFailure {
+  noteId: NoteId
+  message: string
+}
+
+export interface TrashBatchResult {
+  operationId: string
+  trashed: NoteId[]
+  failed: TrashFailure[]
+}
+
+export interface RestoreTrashResult {
+  restored: NoteDocument[]
+  failed: TrashFailure[]
+}
+
+export interface TrashPort {
+  trash(ids: NoteId[]): Promise<TrashBatchResult>
+  list(): Promise<TrashEntry[]>
+  restore(ids: NoteId[]): Promise<RestoreTrashResult>
+  undo(operationId: string): Promise<RestoreTrashResult>
+}
