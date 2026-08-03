@@ -19,6 +19,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const [error, setError] = useState<string | null>(null)
   const [restartRequired, setRestartRequired] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const [cleanupExpanded, setCleanupExpanded] = useState(false)
   const requestRef = useRef(0)
   const busyRef = useRef(false)
 
@@ -26,7 +27,10 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   useEffect(() => {
     const request = ++requestRef.current
     void settings.getStorageInfo().then((info) => {
-      if (requestRef.current === request) setStorage(info)
+      if (requestRef.current === request) {
+        setStorage(info)
+        setCleanupExpanded(false)
+      }
     }).catch(() => {
       if (requestRef.current === request) setError('无法读取存储信息。')
     })
@@ -155,6 +159,25 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
             <legend>本地存储</legend>
             <p>{storage ? `${storage.root} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>
             <label className="settings-view__shortcut">新的数据位置<input aria-label="新的数据位置" value={destination} onChange={(event) => setDestination(event.target.value)} /><button type="button" disabled={destination.trim().length === 0 || busy === 'move'} onClick={() => void moveStorage()}>移动数据</button></label>
+            {storage?.previousRootCleanupReady === true && storage.previousRoot !== null && (
+              <div className="settings-cleanup">
+                <button
+                  type="button"
+                  aria-expanded={cleanupExpanded}
+                  aria-controls="settings-cleanup-guidance"
+                  onClick={() => setCleanupExpanded((expanded) => !expanded)}
+                >
+                  {cleanupExpanded ? '收起旧数据清理说明' : '查看旧数据清理说明'}
+                </button>
+                {cleanupExpanded && (
+                  <div id="settings-cleanup-guidance" className="settings-cleanup__guidance">
+                    <p><strong>应用不会自动删除旧数据。</strong>请先确认笔记和图片附件在重新打开后都完整可用，再自行处理下面的旧目录。</p>
+                    <label>旧数据位置<input aria-label="旧数据位置" readOnly value={storage.previousRoot} onFocus={(event) => event.currentTarget.select()} /></label>
+                    <p>手动清理时请保留 <code>settings.json</code> 及其他应用配置；如果无法确认，请继续保留整个旧目录。</p>
+                  </div>
+                )}
+              </div>
+            )}
           </fieldset>
         </div>
         <footer><div><button type="button" disabled={busy !== null} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={busy !== null} onClick={onClose}>完成</button></footer>

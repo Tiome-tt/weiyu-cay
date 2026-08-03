@@ -11,7 +11,7 @@ function settingsPort(overrides: Partial<SettingsPort> = {}): SettingsPort {
     load: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
     update: vi.fn().mockImplementation(async (patch: Partial<AppSettings>) => ({ ...DEFAULT_APP_SETTINGS, ...patch })),
     reset: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
-    getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 1024, assetBytes: 2048, trashBytes: 0 }),
+    getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 1024, assetBytes: 2048, trashBytes: 0, previousRoot: null, previousRootCleanupReady: false }),
     moveStorageRoot: vi.fn().mockResolvedValue(undefined),
     restartApplication: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -122,6 +122,32 @@ describe('SettingsView', () => {
     await user.click(screen.getByRole('button', { name: '移动数据' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('请先解决保存错误')
     expect(moveStorageRoot).not.toHaveBeenCalled()
+  })
+
+  it('hides old-root cleanup until reopen verification marks it ready', async () => {
+    render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    await screen.findByText(/Application data/)
+    expect(screen.queryByRole('button', { name: '查看旧数据清理说明' })).not.toBeInTheDocument()
+  })
+
+  it('discloses manual cleanup guidance without deleting the verified old root', async () => {
+    const user = userEvent.setup()
+    const previousRoot = 'D:\\Simple Notes Previous'
+    render(<SettingsView settings={settingsPort({
+      getStorageInfo: vi.fn().mockResolvedValue({
+        root: 'E:\\Simple Notes', noteBytes: 1024, assetBytes: 2048, trashBytes: 0,
+        previousRoot, previousRootCleanupReady: true,
+      }),
+    })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    const disclosure = await screen.findByRole('button', { name: '查看旧数据清理说明' })
+    expect(screen.queryByLabelText('旧数据位置')).not.toBeInTheDocument()
+    await user.click(disclosure)
+    expect(screen.getByLabelText('旧数据位置')).toHaveValue(previousRoot)
+    expect(screen.getByLabelText('旧数据位置')).toHaveAttribute('readonly')
+    expect(screen.getByText(/不会自动删除旧数据/)).toBeVisible()
+    expect(screen.getByText(/确认笔记和图片附件/)).toBeVisible()
+    expect(screen.getByText(/settings\.json/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: /删除旧数据/ })).not.toBeInTheDocument()
   })
 })
 
