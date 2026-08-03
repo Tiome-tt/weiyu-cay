@@ -84,11 +84,13 @@ describe('LibraryLayout', () => {
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'saved body' } }))
     screen.getByRole('button', { name: '删除 Note A' }).click()
 
-    expect(notes.saveNote).toHaveBeenCalledOnce()
+    await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(trash.trash).not.toHaveBeenCalled()
     await act(async () => pendingSave.resolve({ ...note('saved body'), id: noteA, title: 'Note A', revision: 2 }))
     await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA]))
-    expect(await screen.findByText('“Note A”已移入回收站。')).toBeVisible()
+    const deletionFeedback = await screen.findByText('“Note A”已移入回收站。')
+    expect(deletionFeedback).toBeVisible()
+    await waitFor(() => expect(deletionFeedback).toHaveFocus())
 
     await user.click(screen.getByRole('button', { name: '撤销删除' }))
     expect(trash.undo).toHaveBeenCalledWith('delete-op')
@@ -147,6 +149,85 @@ describe('LibraryLayout', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('文件正在被使用')
     expect(screen.getByRole('button', { name: /^Note A/ })).toBeVisible()
     expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
+  })
+
+  it('locks the current editor while trash is pending and unlocks it after failure', async () => {
+    const pendingTrash = deferred<Awaited<ReturnType<TrashPort['trash']>>>()
+    const documents = new Map<NoteId, NoteDocument>([
+      [noteA, { ...note('A body'), id: noteA, title: 'Note A' }],
+      [noteB, { ...note('B body'), id: noteB, title: 'Note B' }],
+    ])
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote: vi.fn(async (id) => documents.get(id)!),
+      saveNote: vi.fn(async (document) => ({ ...document, revision: document.revision + 1 })),
+    })
+    const trash: TrashPort = {
+      trash: vi.fn(() => pendingTrash.promise),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} trash={trash} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const textbox = await screen.findByRole('textbox', { name: 'Markdown source' })
+    const editor = EditorView.findFromDOM(textbox)
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'durable before delete' } }))
+    await user.click(screen.getByRole('button', { name: '删除 Note A' }))
+    await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA]))
+
+    expect(textbox).toHaveAttribute('contenteditable', 'false')
+    act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' late edit' } }))
+    expect(editor.state.doc.toString()).toBe('durable before delete')
+    await user.click(screen.getByRole('button', { name: /^Note B/ }))
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+
+    await act(async () => pendingTrash.resolve({
+      operationId: 'unused',
+      trashed: [],
+      failed: [{ noteId: noteA, message: '文件正在被使用' }],
+    }))
+    await waitFor(() => expect(textbox).toHaveAttribute('contenteditable', 'true'))
+    act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' editable again' } }))
+    expect(editor.state.doc.toString()).toBe('durable before delete editable again')
+  })
+
+  it('keeps the deletion barrier through success and never schedules a late save', async () => {
+    const pendingTrash = deferred<Awaited<ReturnType<TrashPort['trash']>>>()
+    const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValueOnce([summary(noteA, 'Note A')]).mockResolvedValue([]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('A body'), id: noteA, title: 'Note A' }),
+      saveNote,
+    })
+    const trash: TrashPort = {
+      trash: vi.fn(() => pendingTrash.promise),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} trash={trash} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const textbox = await screen.findByRole('textbox', { name: 'Markdown source' })
+    const editor = EditorView.findFromDOM(textbox)
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'durable before delete' } }))
+    await user.click(screen.getByRole('button', { name: '删除 Note A' }))
+    await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA]))
+    act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' late edit' } }))
+
+    expect(editor.state.doc.toString()).toBe('durable before delete')
+    await act(async () => pendingTrash.resolve({ operationId: 'delete-op', trashed: [noteA], failed: [] }))
+    expect(await screen.findByText('“Note A”已移入回收站。')).toBeVisible()
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(saveNote).toHaveBeenCalledOnce()
   })
 
   it('opens the application trash from folder navigation', async () => {

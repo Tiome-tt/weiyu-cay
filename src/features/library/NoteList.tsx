@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 
 interface NoteListProps {
@@ -15,6 +16,11 @@ interface NoteListProps {
 }
 
 export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete }: NoteListProps) {
+  const feedbackRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (deleteFeedback !== null) feedbackRef.current?.focus()
+  }, [deleteFeedback])
+
   return (
     <section aria-label="笔记列表" className="note-list">
       <header className="library-pane__header library-pane__header--compact">
@@ -25,7 +31,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingI
       </header>
       {deleteFeedback && (
         <div className="note-list__mutation-status">
-          <p role="status">{deleteFeedback}</p>
+          <p ref={feedbackRef} role="status" tabIndex={-1}>{deleteFeedback}</p>
           {undoAvailable && onUndoDelete && <button type="button" disabled={undoBusy || deletingId !== null} onClick={onUndoDelete}>{undoBusy ? '正在撤销…' : '撤销删除'}</button>}
         </div>
       )}

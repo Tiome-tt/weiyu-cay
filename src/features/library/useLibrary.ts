@@ -18,17 +18,29 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   const folderListRequest = useRef(0)
   const noteListRequest = useRef(0)
   const noteRequest = useRef(0)
+  const mountedRef = useRef(false)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      folderListRequest.current += 1
+      noteListRequest.current += 1
+      noteRequest.current += 1
+    }
+  }, [])
 
   const refreshFolders = useCallback(async () => {
+    if (!mountedRef.current) return
     const request = ++folderListRequest.current
     setFolderState('loading')
     try {
       const result = await foldersPort.listFolders()
-      if (folderListRequest.current !== request) return
+      if (!mountedRef.current || folderListRequest.current !== request) return
       setFolders(result)
       setFolderState('ready')
     } catch {
-      if (folderListRequest.current !== request) return
+      if (!mountedRef.current || folderListRequest.current !== request) return
       setFolderState('error')
     }
   }, [foldersPort])
@@ -38,16 +50,17 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   }, [refreshFolders])
 
   const refreshNotes = useCallback(async () => {
+    if (!mountedRef.current) return
     const request = ++noteListRequest.current
     setNoteListState('loading')
     setNotes([])
     try {
       const result = await notesPort.listNotes(activeFolderId)
-      if (noteListRequest.current !== request) return
+      if (!mountedRef.current || noteListRequest.current !== request) return
       setNotes(result)
       setNoteListState('ready')
     } catch {
-      if (noteListRequest.current !== request) return
+      if (!mountedRef.current || noteListRequest.current !== request) return
       setNoteListState('error')
     }
   }, [activeFolderId, notesPort])
@@ -57,6 +70,8 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   }, [refreshNotes])
 
   const selectFolder = useCallback((id: FolderId | null) => {
+    if (!mountedRef.current) return
+    noteListRequest.current += 1
     noteRequest.current += 1
     setActiveFolderId(id)
     setActiveNoteId(null)
@@ -66,6 +81,7 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
 
   const selectNote = useCallback(
     (id: NoteId) => {
+      if (!mountedRef.current) return
       const request = ++noteRequest.current
       setActiveNoteId(id)
       setDocument(null)
@@ -73,12 +89,12 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
       void notesPort
         .loadNote(id)
         .then((result) => {
-          if (noteRequest.current !== request) return
+          if (!mountedRef.current || noteRequest.current !== request) return
           setDocument(result)
           setDocumentState('ready')
         })
         .catch(() => {
-          if (noteRequest.current !== request) return
+          if (!mountedRef.current || noteRequest.current !== request) return
           setDocumentState('error')
         })
     },
@@ -119,13 +135,16 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   )
 
   const adoptDocument = useCallback((authoritative: NoteDocument) => {
+    if (!mountedRef.current) return
     if (authoritative.id !== activeNoteId) return
     setDocument(authoritative)
     setDocumentState('ready')
   }, [activeNoteId])
 
   const clearDeletedNote = useCallback((id: NoteId) => {
+    if (!mountedRef.current) return
     noteRequest.current += 1
+    noteListRequest.current += 1
     setNotes((current) => current.filter((note) => note.id !== id))
     if (activeNoteId !== id) return
     setActiveNoteId(null)

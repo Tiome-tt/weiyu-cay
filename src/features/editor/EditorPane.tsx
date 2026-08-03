@@ -29,6 +29,8 @@ interface EditorPaneProps {
 
 export interface EditorPaneHandle {
   flush: () => Promise<boolean>
+  beginEditBarrier: () => Promise<void>
+  endEditBarrier: () => void
 }
 
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: string }> = [
@@ -74,7 +76,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     }
   }, [document.id])
 
-  useImperativeHandle(ref, () => ({ flush: autosave.flush }), [autosave.flush])
+  useImperativeHandle(ref, () => ({
+    flush: autosave.flush,
+    beginEditBarrier: () => sourceRef.current?.beginEditBarrier() ?? Promise.resolve(),
+    endEditBarrier: () => sourceRef.current?.endEditBarrier(),
+  }), [autosave.flush])
 
   const updateTags = async (tags: string[]) => {
     if (search === undefined) return

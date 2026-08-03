@@ -63,7 +63,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const onImageErrorRef = useRef(onImageError)
   const editorGenerationRef = useRef(0)
   const readOnlyRef = useRef(readOnly)
-  const barrierLockedRef = useRef(false)
+  const barrierDepthRef = useRef(0)
   const pendingPastesRef = useRef(new Map<symbol, PendingPaste>())
   const authorizedPasteTokensRef = useRef(new Set<symbol>())
   const editableCompartmentRef = useRef(new Compartment())
@@ -89,7 +89,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   const configureEditable = (view: EditorView | null) => {
     if (view === null) return
-    const locked = readOnlyRef.current || barrierLockedRef.current
+    const locked = readOnlyRef.current || barrierDepthRef.current > 0
     view.dispatch({
       effects: editableCompartmentRef.current.reconfigure([
         EditorState.readOnly.of(locked),
@@ -142,7 +142,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   useImperativeHandle(ref, () => ({
     beginEditBarrier: async () => {
-      barrierLockedRef.current = true
+      barrierDepthRef.current += 1
       configureEditable(viewRef.current)
       authorizedPasteTokensRef.current.clear()
       for (const token of pendingPastesRef.current.keys()) {
@@ -152,7 +152,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       await Promise.allSettled(pending)
     },
     endEditBarrier: () => {
-      barrierLockedRef.current = false
+      barrierDepthRef.current = Math.max(0, barrierDepthRef.current - 1)
       authorizedPasteTokensRef.current.clear()
       configureEditable(viewRef.current)
     },
@@ -185,7 +185,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
         ]),
         EditorState.transactionFilter.of((transaction) => {
           if (!transaction.docChanged) return transaction
-          if (barrierLockedRef.current) {
+          if (barrierDepthRef.current > 0) {
             const token = transaction.annotation(pasteTokenAnnotation)
             return token !== undefined && authorizedPasteTokensRef.current.has(token)
               ? transaction
@@ -211,7 +211,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
         }),
         EditorView.domEventHandlers({
           paste: (event, pasteView) => {
-            if (readOnlyRef.current || barrierLockedRef.current) {
+            if (readOnlyRef.current || barrierDepthRef.current > 0) {
               event.preventDefault()
               return true
             }

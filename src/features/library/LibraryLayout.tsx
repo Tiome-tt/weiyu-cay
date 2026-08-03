@@ -35,10 +35,21 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
   const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
   const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
+  const trashMutationRef = useRef(0)
+  const mountedRef = useRef(false)
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
     [library.notes],
   )
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      navigationRequest.current += 1
+      trashMutationRef.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -68,56 +79,76 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
   }
 
   const navigateAfterSave = async (navigate: () => void) => {
+    if (trashBusyRef.current === 'delete') return
     const request = ++navigationRequest.current
     const activeEditor = activeView === 'temporary' ? temporaryInboxRef.current : editorRef.current
     const canNavigate = (await activeEditor?.flush()) ?? true
-    if (canNavigate && request === navigationRequest.current) navigate()
+    if (mountedRef.current && canNavigate && request === navigationRequest.current) navigate()
   }
 
   const deleteFormalNote = async (noteId: NoteId, title: string) => {
-    if (trash === undefined || trashBusyRef.current !== null) return
+    if (!mountedRef.current || trash === undefined || trashBusyRef.current !== null) return
+    const request = ++trashMutationRef.current
+    navigationRequest.current += 1
+    const editor = editorRef.current
+    const deletingCurrentDocument = activeView === 'library' && library.activeNoteId === noteId && editor !== null
+    let barrierHeld = false
     trashBusyRef.current = 'delete'
     setTrashBusy('delete')
     setDeletingNoteId(noteId)
     setTrashError(null)
     setTrashFeedback(null)
     try {
-      const saved = (await editorRef.current?.flush()) ?? true
+      if (deletingCurrentDocument) {
+        barrierHeld = true
+        await editor.beginEditBarrier()
+      }
+      if (!mountedRef.current || trashMutationRef.current !== request) return
+      const saved = (await editor?.flush()) ?? true
+      if (!mountedRef.current || trashMutationRef.current !== request) return
       if (!saved) {
         setTrashError('请先解决保存错误，再删除笔记。')
         return
       }
       const result = await trash.trash([noteId])
+      if (!mountedRef.current || trashMutationRef.current !== request) return
       const deleted = result.trashed.includes(noteId)
       if (deleted) {
+        barrierHeld = false
         library.clearDeletedNote(noteId)
         setRecentTrashOperationId(result.operationId)
         setTrashFeedback(`“${title}”已移入回收站。`)
-        await library.refreshNotes()
       }
       if (result.failed.length > 0) {
         setTrashError(result.failed.map((failure) => failure.message).join('；'))
       } else if (!deleted) {
         setTrashError('笔记未能移入回收站，请重试。')
       }
+      if (deleted) await library.refreshNotes()
     } catch {
-      setTrashError('无法删除笔记，请重试。')
+      if (mountedRef.current && trashMutationRef.current === request) setTrashError('无法删除笔记，请重试。')
     } finally {
+      if (barrierHeld) editor?.endEditBarrier()
       trashBusyRef.current = null
-      setTrashBusy(null)
-      setDeletingNoteId(null)
+      if (mountedRef.current && trashMutationRef.current === request) {
+        setTrashBusy(null)
+        setDeletingNoteId(null)
+      }
     }
   }
 
   const undoFormalDelete = async () => {
-    if (trash === undefined || recentTrashOperationId === null || trashBusyRef.current !== null) return
+    if (!mountedRef.current || trash === undefined || recentTrashOperationId === null || trashBusyRef.current !== null) return
+    const request = ++trashMutationRef.current
     const operationId = recentTrashOperationId
     trashBusyRef.current = 'undo'
     setTrashBusy('undo')
     setTrashError(null)
     try {
       const result = await trash.undo(operationId)
+      if (!mountedRef.current || trashMutationRef.current !== request) return
       await library.refreshLibrary()
+      if (!mountedRef.current || trashMutationRef.current !== request) return
       if (result.restored.length > 0) setTrashFeedback(`已撤销删除，恢复 ${result.restored.length} 项。`)
       if (result.failed.length > 0) {
         setTrashError(result.failed.map((failure) => failure.message).join('；'))
@@ -125,10 +156,10 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
         setRecentTrashOperationId(null)
       }
     } catch {
-      setTrashError('无法撤销删除，请重试。')
+      if (mountedRef.current && trashMutationRef.current === request) setTrashError('无法撤销删除，请重试。')
     } finally {
       trashBusyRef.current = null
-      setTrashBusy(null)
+      if (mountedRef.current && trashMutationRef.current === request) setTrashBusy(null)
     }
   }
 
