@@ -308,10 +308,16 @@ impl SafeDirectory {
         }
         #[cfg(target_os = "macos")]
         {
-            let source = CString::new(source)
-                .map_err(|_| CommandError::validation("invalid contained source name"))?;
-            let destination = CString::new(destination)
-                .map_err(|_| CommandError::validation("invalid contained destination name"))?;
+            let source = CString::new(source).map_err(|_| {
+                PublishFailure::not_published_preserve_source(CommandError::validation(
+                    "invalid contained source name",
+                ))
+            })?;
+            let destination = CString::new(destination).map_err(|_| {
+                PublishFailure::not_published_preserve_source(CommandError::validation(
+                    "invalid contained destination name",
+                ))
+            })?;
             let result = unsafe {
                 renameatx_np(
                     self.fd.as_raw_fd(),
