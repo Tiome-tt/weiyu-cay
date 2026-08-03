@@ -1,0 +1,13 @@
+{
+  "theme": "forest",
+  "stickyColorMode": "follow-theme",
+  "bodyFont": "system-ui, sans-serif",
+  "codeFont": "ui-monospace, SFMono-Regular, Consolas, monospace",
+  "fontSize": 16.0,
+  "lineHeight": 1.6,
+  "shortcut": "CommandOrControl+Shift+Space",
+  "launchAtStartup": false,
+  "defaultEditorMode": "source",
+  "autosaveDelayMs": 500,
+  "dataRoot": { "mode": "default" }
+}

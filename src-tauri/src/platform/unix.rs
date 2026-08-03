@@ -1,4 +1,4 @@
-use super::NewFilePublishState;
+use super::{NewFilePublishState, SafeEntryKind};
 use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -165,6 +165,226 @@ extern "C" {
 }
 
 impl SafeDirectory {
+    pub(crate) fn ensure_path_identity(&self) -> Result<(), CommandError> {
+        let expected = directory_identity(self.fd.as_fd())?;
+        let current = statat(CWD, &self.path, AtFlags::SYMLINK_NOFOLLOW).map_err(|source| {
+            CommandError::io(format!(
+                "could not revalidate safe directory path: {source}"
+            ))
+        })?;
+        if directory_identity_from_stat(&current)? != expected {
+            return Err(CommandError::conflict(
+                "safe directory path identity changed",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn open_child(&self, name: &str, create: bool) -> Result<Self, CommandError> {
+        validate_child_name(name)?;
+        let fd = match openat(
+            &self.fd,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(source) if create && source == rustix::io::Errno::NOENT => {
+                mkdirat(&self.fd, name, Mode::from_bits_truncate(0o700)).map_err(|error| {
+                    CommandError::io(format!("could not create contained directory: {error}"))
+                })?;
+                fsync(&self.fd).map_err(|error| {
+                    CommandError::io(format!(
+                        "could not sync contained directory parent: {error}"
+                    ))
+                })?;
+                openat(
+                    &self.fd,
+                    name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|error| {
+                    CommandError::io(format!("could not pin contained directory: {error}"))
+                })?
+            }
+            Err(source) => {
+                return Err(CommandError::io(format!(
+                    "could not pin contained directory: {source}"
+                )))
+            }
+        };
+        Ok(Self {
+            fd,
+            path: self.path.join(name),
+        })
+    }
+
+    pub(crate) fn create_child_no_replace(&self, name: &str) -> Result<Self, CommandError> {
+        validate_child_name(name)?;
+        mkdirat(&self.fd, name, Mode::from_bits_truncate(0o700)).map_err(|source| {
+            if source == rustix::io::Errno::EXIST {
+                CommandError::conflict("contained directory already exists")
+            } else {
+                CommandError::io(format!("could not create contained directory: {source}"))
+            }
+        })?;
+        fsync(&self.fd).map_err(|source| {
+            CommandError::io(format!(
+                "could not sync contained directory parent: {source}"
+            ))
+        })?;
+        self.open_child(name, false)
+    }
+
+    pub(crate) fn move_self_no_replace(
+        self,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+    ) -> Result<PublishState, PublishFailure> {
+        validate_child_name(destination).map_err(PublishFailure::not_published_preserve_source)?;
+        let source = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                PublishFailure::not_published_preserve_source(CommandError::validation(
+                    "movable directory source name is invalid",
+                ))
+            })?;
+        let expected = directory_identity(self.fd.as_fd())
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        validate_safe_directory_tree_fd(self.fd.as_fd())
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        if statat(
+            &destination_parent.fd,
+            destination,
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .is_ok()
+        {
+            return Err(PublishFailure::not_published_preserve_source(
+                CommandError::conflict("contained directory destination already exists"),
+            ));
+        }
+        renameat(
+            &destination_parent.fd,
+            source,
+            &destination_parent.fd,
+            destination,
+        )
+        .map_err(|error| {
+            PublishFailure::not_published_preserve_source(CommandError::io(format!(
+                "could not publish verified staging directory: {error}"
+            )))
+        })?;
+        let moved = statat(
+            &destination_parent.fd,
+            destination,
+            AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(|source| {
+            PublishFailure::recovery_required(CommandError::io(format!(
+                "could not identify published directory: {source}"
+            )))
+        })?;
+        if directory_identity_from_stat(&moved).map_err(PublishFailure::recovery_required)?
+            != expected
+        {
+            return Err(PublishFailure::recovery_required(CommandError::io(
+                "published directory identity does not match verified staging",
+            )));
+        }
+        validate_safe_directory_tree_at(destination_parent.fd.as_fd(), destination)
+            .map_err(PublishFailure::recovery_required)?;
+        destination_parent
+            .sync()
+            .map(|()| PublishState::Published)
+            .map_err(PublishFailure::published_but_sync_failed)
+    }
+
+    pub(crate) fn entry_kind(&self, name: &str) -> Result<SafeEntryKind, CommandError> {
+        validate_child_name(name)?;
+        let stat = statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|source| {
+            CommandError::io(format!("could not inspect contained entry: {source}"))
+        })?;
+        match FileType::from_raw_mode(stat.st_mode) {
+            FileType::Directory => Ok(SafeEntryKind::Directory),
+            FileType::RegularFile => Ok(SafeEntryKind::RegularFile),
+            _ => Err(CommandError::validation(
+                "contained entry is not a regular file or directory",
+            )),
+        }
+    }
+
+    pub(crate) fn copy_regular_file_to(
+        &self,
+        name: &str,
+        destination: &SafeDirectory,
+    ) -> Result<u64, CommandError> {
+        validate_child_name(name)?;
+        let source = openat(
+            &self.fd,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| CommandError::io(format!("could not open contained file: {error}")))?;
+        if FileType::from_raw_mode(
+            fstat(&source)
+                .map_err(|error| {
+                    CommandError::io(format!("could not inspect source file: {error}"))
+                })?
+                .st_mode,
+        ) != FileType::RegularFile
+        {
+            return Err(CommandError::validation(
+                "contained source is not a regular file",
+            ));
+        }
+        let before = fstat(&source)
+            .map_err(|error| CommandError::io(format!("could not inspect source file: {error}")))?
+            .st_size;
+        let mut source: fs::File = source.into();
+        let mut target = destination.create_new(name)?;
+        let copied = std::io::copy(&mut source, &mut target)
+            .map_err(|error| CommandError::io(format!("could not copy contained file: {error}")))?;
+        target.sync_all().map_err(|error| {
+            CommandError::io(format!("could not sync copied contained file: {error}"))
+        })?;
+        let after = fstat(&source)
+            .map_err(|error| {
+                CommandError::io(format!("could not re-inspect source file: {error}"))
+            })?
+            .st_size;
+        if before < 0 || after < 0 || before as u64 != copied || after as u64 != copied {
+            return Err(CommandError::conflict(
+                "contained source file size changed while it was copied",
+            ));
+        }
+        Ok(copied)
+    }
+
+    pub(crate) fn regular_file_len(&self, name: &str) -> Result<u64, CommandError> {
+        validate_child_name(name)?;
+        let file = openat(
+            &self.fd,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|source| CommandError::io(format!("could not open contained file: {source}")))?;
+        let stat = fstat(&file).map_err(|source| {
+            CommandError::io(format!("could not inspect contained file: {source}"))
+        })?;
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_size < 0 {
+            return Err(CommandError::validation(
+                "contained entry is not a regular file",
+            ));
+        }
+        Ok(stat.st_size as u64)
+    }
+
     pub fn open(root: &Path, segments: &[&str], create: bool) -> Result<Self, CommandError> {
         let mut fd = openat(
             CWD,

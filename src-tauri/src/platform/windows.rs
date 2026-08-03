@@ -1,4 +1,4 @@
-use super::NewFilePublishState;
+use super::{NewFilePublishState, SafeEntryKind};
 use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -644,12 +644,193 @@ pub struct SafeDirectory {
 }
 
 impl SafeDirectory {
+    pub(crate) fn ensure_path_identity(&self) -> Result<(), CommandError> {
+        let expected = DirectoryIdentity::from_file(
+            self._pins
+                .last()
+                .ok_or_else(|| CommandError::io("safe directory has no identity pin"))?,
+        )?;
+        let current = open_pinned_directory(&self.path)?;
+        if DirectoryIdentity::from_file(&current)? != expected {
+            return Err(CommandError::conflict(
+                "safe directory path identity changed",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn open_child(&self, name: &str, create: bool) -> Result<Self, CommandError> {
+        let path = self.child_path(name)?;
+        if create && !path.exists() {
+            fs::create_dir(&path).map_err(|source| {
+                CommandError::io(format!("could not create contained directory: {source}"))
+            })?;
+            self.sync()?;
+        }
+        let pin = open_pinned_directory(&path)?;
+        Ok(Self {
+            path,
+            _pins: vec![pin],
+        })
+    }
+
+    pub(crate) fn create_child_no_replace(&self, name: &str) -> Result<Self, CommandError> {
+        let path = self.child_path(name)?;
+        fs::create_dir(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::AlreadyExists {
+                CommandError::conflict("contained directory already exists")
+            } else {
+                CommandError::io(format!("could not create contained directory: {source}"))
+            }
+        })?;
+        self.sync()?;
+        let pin = open_pinned_directory(&path)?;
+        Ok(Self {
+            path,
+            _pins: vec![pin],
+        })
+    }
+
+    pub(crate) fn move_self_no_replace(
+        mut self,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+    ) -> Result<PublishState, PublishFailure> {
+        validate_child_name(destination).map_err(PublishFailure::not_published_preserve_source)?;
+        let destination_path = destination_parent
+            .child_path(destination)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        let identity_pin = self._pins.pop().ok_or_else(|| {
+            PublishFailure::not_published_preserve_source(CommandError::io(
+                "movable directory has no identity handle",
+            ))
+        })?;
+        let expected = DirectoryIdentity::from_file(&identity_pin)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        validate_safe_directory_tree(&self.path)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        if fs::symlink_metadata(&destination_path).is_ok() {
+            return Err(PublishFailure::not_published_preserve_source(
+                CommandError::conflict("contained directory destination already exists"),
+            ));
+        }
+        drop(identity_pin);
+        let source_pin = open_movable_directory(&self.path)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        if DirectoryIdentity::from_file(&source_pin)
+            .map_err(PublishFailure::not_published_preserve_source)?
+            != expected
+        {
+            return Err(PublishFailure::not_published_preserve_source(
+                CommandError::conflict("verified staging identity changed before publish"),
+            ));
+        }
+        rename_pinned_directory_no_replace(&source_pin, &destination_path)
+            .map_err(PublishFailure::not_published_preserve_source)?;
+        if DirectoryIdentity::from_path(&destination_path)
+            .map_err(PublishFailure::recovery_required)?
+            != expected
+        {
+            return Err(PublishFailure::recovery_required(CommandError::io(
+                "published directory identity does not match verified staging",
+            )));
+        }
+        validate_safe_directory_tree(&destination_path)
+            .map_err(PublishFailure::recovery_required)?;
+        destination_parent
+            .sync()
+            .map(|()| PublishState::Published)
+            .map_err(PublishFailure::published_but_sync_failed)
+    }
+
+    pub(crate) fn entry_kind(&self, name: &str) -> Result<SafeEntryKind, CommandError> {
+        let path = self.child_path(name)?;
+        let metadata = fs::symlink_metadata(&path).map_err(|source| {
+            CommandError::io(format!("could not inspect contained entry: {source}"))
+        })?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(CommandError::validation(
+                "contained entry is a reparse point",
+            ));
+        }
+        if metadata.is_dir() {
+            let _pin = open_pinned_directory(&path)?;
+            Ok(SafeEntryKind::Directory)
+        } else if metadata.is_file() {
+            Ok(SafeEntryKind::RegularFile)
+        } else {
+            Err(CommandError::validation(
+                "contained entry is not a regular file or directory",
+            ))
+        }
+    }
+
+    pub(crate) fn copy_regular_file_to(
+        &self,
+        name: &str,
+        destination: &SafeDirectory,
+    ) -> Result<u64, CommandError> {
+        let path = self.child_path(name)?;
+        let mut source = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!("could not open contained source file: {source}"))
+            })?;
+        let before = source
+            .metadata()
+            .map_err(|error| CommandError::io(format!("could not inspect source file: {error}")))?;
+        validate_regular_file_metadata(before.file_attributes(), before.is_file())?;
+        let mut target = destination.create_new(name)?;
+        let copied = std::io::copy(&mut source, &mut target)
+            .map_err(|error| CommandError::io(format!("could not copy contained file: {error}")))?;
+        target.sync_all().map_err(|error| {
+            CommandError::io(format!("could not sync copied contained file: {error}"))
+        })?;
+        let after = source.metadata().map_err(|error| {
+            CommandError::io(format!("could not reinspect source file: {error}"))
+        })?;
+        if before.len() != copied || after.len() != copied {
+            return Err(CommandError::conflict(
+                "contained source file size changed while it was copied",
+            ));
+        }
+        Ok(copied)
+    }
+
+    pub(crate) fn regular_file_len(&self, name: &str) -> Result<u64, CommandError> {
+        let path = self.child_path(name)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!("could not open contained file: {source}"))
+            })?;
+        let metadata = file.metadata().map_err(|source| {
+            CommandError::io(format!("could not inspect contained file: {source}"))
+        })?;
+        validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+        Ok(metadata.len())
+    }
+
     pub fn open(root: &Path, segments: &[&str], create: bool) -> Result<Self, CommandError> {
+        let root_pin = open_pinned_directory(root)?;
         let root = root.canonicalize().map_err(|source| {
             CommandError::io(format!("could not resolve safe directory root: {source}"))
         })?;
+        let canonical_pin = open_pinned_directory(&root)?;
+        if DirectoryIdentity::from_file(&root_pin)? != DirectoryIdentity::from_file(&canonical_pin)?
+        {
+            return Err(CommandError::conflict(
+                "safe directory root identity changed while opening",
+            ));
+        }
         let mut path = root;
-        let mut pins = vec![open_pinned_directory(&path)?];
+        let mut pins = vec![root_pin];
         for segment in segments {
             validate_child_name(segment)?;
             path.push(segment);

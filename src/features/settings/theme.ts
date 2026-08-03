@@ -1,19 +1,8 @@
 import type { CSSProperties } from 'react'
 import type { AppSettings } from '../../domain/ports'
+import settingsDefaults from '../../shared/settings-defaults.json'
 
-export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
-  theme: 'forest',
-  stickyColorMode: 'follow-theme',
-  bodyFont: 'system-ui, sans-serif',
-  codeFont: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-  fontSize: 16,
-  lineHeight: 1.6,
-  shortcut: 'CommandOrControl+Shift+Space',
-  launchAtStartup: false,
-  defaultEditorMode: 'source',
-  autosaveDelayMs: 500,
-  dataRoot: { mode: 'default' },
-}
+export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = settingsDefaults as AppSettings
 
 const palettes = {
   forest: {

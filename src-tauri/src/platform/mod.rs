@@ -19,3 +19,9 @@ pub(crate) enum NewFilePublishState {
     Published,
     DestinationExists,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SafeEntryKind {
+    Directory,
+    RegularFile,
+}

@@ -39,14 +39,14 @@ pub fn run() {
         .setup(move |app| {
             commands::settings::setup(app)?;
             commands::storage::setup(app)?;
-            commands::notes::setup(app)?;
-            commands::temporary::setup(app)?;
-            commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
             let paths = app
                 .state::<commands::settings::SettingsCommandState>()
                 .paths()
                 .clone();
             commands::settings::finalize_reopened_relocation(&paths)?;
+            commands::notes::setup(app)?;
+            commands::temporary::setup(app)?;
+            commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
