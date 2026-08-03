@@ -86,8 +86,14 @@ export interface LibraryColumnPreference {
   noteList: number
 }
 
+export interface LibraryCollapsedPreference {
+  folder: boolean
+  noteList: boolean
+}
+
 export interface WindowPreferenceMap {
   'library-columns': LibraryColumnPreference
+  'library-collapsed': LibraryCollapsedPreference
 }
 
 export interface TemporaryPort {
@@ -176,8 +182,13 @@ export interface StorageInfo {
   noteBytes: number
   assetBytes: number
   trashBytes: number
-  previousRoot: string | null
-  previousRootCleanupReady: boolean
+  previousStorageCleanup?: {
+    root: string
+    candidates: Array<{
+      relativePath: string
+      kind: 'notes' | 'temporary' | 'trash' | 'folder-manifest' | 'index-database' | 'index-sidecar' | 'recovery-marker'
+    }>
+  }
 }
 
 export interface SettingsPort {
@@ -187,4 +198,11 @@ export interface SettingsPort {
   getStorageInfo(): Promise<StorageInfo>
   moveStorageRoot(destination: string): Promise<void>
   restartApplication(): Promise<void>
+  onChanged(handler: (settings: AppSettings) => void): Promise<() => void>
+  getShortcutStatus(): Promise<{
+    current: string | null
+    registration: { state: string }
+    acceptingTriggers: boolean
+    startupError: { kind: string; reason: string; accelerator?: string } | null
+  }>
 }

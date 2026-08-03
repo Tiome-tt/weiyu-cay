@@ -2,7 +2,7 @@ import '../styles/tokens.css'
 import '../styles/app.css'
 import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/LibraryLayout'
 import { createAppServices, type AppServices } from './services'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../domain/model'
 import type { TemporaryWindowState } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
@@ -17,21 +17,46 @@ export function App({ services = defaultServices }: { services?: AppServices }) 
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
+  const [settingsError, setSettingsError] = useState(false)
+  const settingsRevision = useRef(0)
   const libraryRef = useRef<LibraryLayoutHandle>(null)
+  const systemScheme = useSystemColorScheme()
+  const loadSettings = useCallback(async () => {
+    if (services.settings === undefined) return
+    const revision = settingsRevision.current
+    try {
+      const loaded = normalizeSettings(await services.settings.load())
+      if (settingsRevision.current === revision) setSettings(loaded)
+      setSettingsError(false)
+    } catch {
+      setSettingsError(true)
+    }
+  }, [services.settings])
   useEffect(() => {
     let active = true
     if (services.settings === undefined) return
-    void services.settings.load().then((loaded) => {
-      if (active) setSettings(normalizeSettings(loaded))
-    }).catch(() => undefined)
-    return () => { active = false }
-  }, [services.settings])
+    let unlisten: (() => void) | undefined
+    void services.settings.onChanged((changed) => {
+      if (!active) return
+      settingsRevision.current += 1
+      setSettings(normalizeSettings(changed))
+      setSettingsError(false)
+    }).then((stop) => {
+      if (!active) stop()
+      else {
+        unlisten = stop
+        void loadSettings()
+      }
+    }).catch(() => void loadSettings())
+    return () => { active = false; unlisten?.() }
+  }, [loadSettings, services.settings])
   const sticky = stickyRoute()
   if (sticky !== null) {
-    return <div className="app-shell" data-theme={settings.theme} style={themeStyle(settings)}><StickyWindowEntry services={services} route={sticky} /></div>
+    return <div className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>{settingsError && <SettingsLoadError onRetry={loadSettings} />}<StickyWindowEntry services={services} route={sticky} autosaveDelayMs={settings.autosaveDelayMs} /></div>
   }
   return (
-    <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings)}>
+    <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
+      {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
         {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
@@ -70,7 +95,7 @@ function stickyRoute(): StickyRoute | null {
   }
 }
 
-function StickyWindowEntry({ services, route }: { services: AppServices; route: StickyRoute }) {
+function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: AppServices; route: StickyRoute; autosaveDelayMs: number }) {
   const [note, setNote] = useState<NoteDocument | null>(null)
   const [error, setError] = useState(false)
   useEffect(() => {
@@ -102,6 +127,25 @@ function StickyWindowEntry({ services, route }: { services: AppServices; route: 
       windows={services.temporaryWindows}
       assets={services.assets}
       initialWindowState={route.state}
+      autosaveDelayMs={autosaveDelayMs}
     />
   )
+}
+
+function SettingsLoadError({ onRetry }: { onRetry(): Promise<void> }) {
+  return <p className="settings-load-error" role="alert">无法加载设置，当前编辑内容保持不变。<button type="button" onClick={() => void onRetry()}>重试加载设置</button></p>
+}
+
+function useSystemColorScheme(): 'light' | 'dark' {
+  const [scheme, setScheme] = useState<'light' | 'dark'>(() =>
+    typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia('(prefers-color-scheme: dark)')
+    const changed = (event: MediaQueryListEvent) => setScheme(event.matches ? 'dark' : 'light')
+    query.addEventListener('change', changed)
+    return () => query.removeEventListener('change', changed)
+  }, [])
+  return scheme
 }

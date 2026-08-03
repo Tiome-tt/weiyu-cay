@@ -224,6 +224,14 @@ class TauriSettingsPort implements SettingsPort {
   restartApplication() {
     return this.client.invoke<void>('restart_application')
   }
+
+  onChanged(handler: (settings: AppSettings) => void) {
+    return getCurrentWebviewWindow().listen<AppSettings>('settings-updated', (event) => handler(event.payload))
+  }
+
+  getShortcutStatus() {
+    return this.client.invoke<Awaited<ReturnType<SettingsPort['getShortcutStatus']>>>('get_capture_shortcut')
+  }
 }
 
 export function createTauriPorts(): {

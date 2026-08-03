@@ -9,7 +9,6 @@ interface StickyWindowProps {
   temporary: Pick<TemporaryPort, 'save'>
   windows: Pick<TemporaryWindowPort, 'hide' | 'setAlwaysOnTop' | 'startDragging' | 'onCloseRequested'>
   assets?: AssetPort
-  themeColor?: string
   autosaveDelayMs?: number
   initialWindowState?: TemporaryWindowState
 }
@@ -29,7 +28,6 @@ export function StickyWindow({
   temporary,
   windows,
   assets,
-  themeColor = 'var(--color-accent-soft)',
   autosaveDelayMs,
   initialWindowState,
 }: StickyWindowProps) {
@@ -84,11 +82,7 @@ export function StickyWindow({
   }
 
   return (
-    <main
-      data-testid="sticky-window"
-      className="sticky-window"
-      style={{ backgroundColor: themeColor }}
-    >
+    <main data-testid="sticky-window" className="sticky-window">
       <header className="sticky-window__toolbar">
         <button
           type="button"

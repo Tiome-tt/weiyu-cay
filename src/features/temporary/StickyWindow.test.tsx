@@ -43,7 +43,6 @@ function setup(save = vi.fn(async (document: NoteDocument) => ({ ...document, re
       note={capture}
       temporary={temporary}
       windows={windows}
-      themeColor="rgb(224, 235, 210)"
       autosaveDelayMs={400}
     />,
   )
@@ -60,7 +59,7 @@ describe('StickyWindow', () => {
     expect(screen.queryByRole('button', { name: /删除|搜索|转为笔记|颜色/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '关闭便签' })).toBeVisible()
     expect(screen.getByRole('button', { name: '钉在桌面上' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('sticky-window')).toHaveStyle({ backgroundColor: 'rgb(224, 235, 210)' })
+    expect(screen.getByTestId('sticky-window')).not.toHaveAttribute('style')
 
     fireEvent.pointerDown(screen.getByTestId('sticky-drag-region'))
     expect(windows.startDragging).toHaveBeenCalledOnce()

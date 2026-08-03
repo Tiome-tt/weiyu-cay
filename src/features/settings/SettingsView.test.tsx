@@ -11,9 +11,11 @@ function settingsPort(overrides: Partial<SettingsPort> = {}): SettingsPort {
     load: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
     update: vi.fn().mockImplementation(async (patch: Partial<AppSettings>) => ({ ...DEFAULT_APP_SETTINGS, ...patch })),
     reset: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
-    getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 1024, assetBytes: 2048, trashBytes: 0, previousRoot: null, previousRootCleanupReady: false }),
+    getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 1024, assetBytes: 2048, trashBytes: 0 }),
     moveStorageRoot: vi.fn().mockResolvedValue(undefined),
     restartApplication: vi.fn().mockResolvedValue(undefined),
+    onChanged: vi.fn().mockResolvedValue(() => undefined),
+    getShortcutStatus: vi.fn().mockResolvedValue({ current: DEFAULT_APP_SETTINGS.shortcut, registration: { state: 'active' }, acceptingTriggers: true, startupError: null }),
     ...overrides,
   }
 }
@@ -35,30 +37,59 @@ describe('SettingsView', () => {
     expect(await screen.findByText(/3 KB/)).toBeVisible()
   })
 
-  it('publishes only the latest successful update and reports shortcut conflicts', async () => {
-    const first = deferred<AppSettings>()
-    const second = deferred<AppSettings>()
-    const update = vi.fn()
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
-      .mockRejectedValueOnce(new Error('shortcut conflict'))
-    const onChange = vi.fn()
+  it('shows a startup shortcut registration warning without disabling local notes', async () => {
+    render(<SettingsView settings={settingsPort({
+      getShortcutStatus: vi.fn().mockResolvedValue({
+        current: null, registration: { state: 'inactive' }, acceptingTriggers: false,
+        startupError: { kind: 'conflict', reason: 'already registered', accelerator: 'CommandOrControl+Shift+Space' },
+      }),
+    })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    expect(await screen.findByRole('status', { name: '快捷键状态警告' })).toHaveTextContent('全局快捷键未能启用')
+    expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible()
+  })
+
+  it('reports shortcut conflicts without replacing the prior shortcut', async () => {
+    const update = vi.fn().mockRejectedValueOnce(new Error('shortcut conflict'))
     const user = userEvent.setup()
-    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={onChange} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-
-    await user.selectOptions(screen.getByLabelText('主题'), 'sand')
-    await user.selectOptions(screen.getByLabelText('主题'), 'system')
-    second.resolve({ ...DEFAULT_APP_SETTINGS, theme: 'system' })
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ theme: 'system' })))
-    first.resolve({ ...DEFAULT_APP_SETTINGS, theme: 'sand' })
-    await Promise.resolve()
-    expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ theme: 'sand' }))
-
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
     const shortcut = screen.getByLabelText('全局快捷键')
     await user.clear(shortcut)
     await user.type(shortcut, 'Ctrl+Space')
     await user.click(screen.getByRole('button', { name: '应用快捷键' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('快捷键已被占用')
+  })
+
+  it('serializes every settings mutation while an update is pending', async () => {
+    const pending = deferred<AppSettings>()
+    const update = vi.fn().mockReturnValue(pending.promise)
+    const reset = vi.fn()
+    const moveStorageRoot = vi.fn()
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ update, reset, moveStorageRoot })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    await user.selectOptions(screen.getByLabelText('主题'), 'sand')
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('主题')).toBeDisabled()
+    expect(screen.getByRole('button', { name: '恢复默认设置' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '移动数据' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    expect(reset).not.toHaveBeenCalled()
+    expect(moveStorageRoot).not.toHaveBeenCalled()
+    pending.resolve({ ...DEFAULT_APP_SETTINGS, theme: 'sand' })
+    await waitFor(() => expect(screen.getByLabelText('主题')).toBeEnabled())
+  })
+
+  it('keeps numeric input editable and persists its complete value on blur', async () => {
+    const update = vi.fn().mockImplementation(async (patch: Partial<AppSettings>) => ({ ...DEFAULT_APP_SETTINGS, ...patch }))
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+
+    const autosave = screen.getByLabelText('自动保存延迟')
+    await user.clear(autosave)
+    await user.type(autosave, '650')
+    expect(autosave).toHaveValue(650)
+    expect(update).not.toHaveBeenCalled()
+    await user.tab()
+    expect(update).toHaveBeenCalledWith({ autosaveDelayMs: 650 })
   })
 
   it('blocks duplicate mutations, moves storage explicitly, and resets without deleting data', async () => {
@@ -124,30 +155,35 @@ describe('SettingsView', () => {
     expect(moveStorageRoot).not.toHaveBeenCalled()
   })
 
-  it('hides old-root cleanup until reopen verification marks it ready', async () => {
+  it('never offers deletion of a previous root and warns that old data is retained', async () => {
     render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
     await screen.findByText(/Application data/)
     expect(screen.queryByRole('button', { name: '查看旧数据清理说明' })).not.toBeInTheDocument()
+    expect(screen.getByText(/不会自动删除旧位置中的数据/)).toBeVisible()
+    expect(screen.getByText(/配置和未知文件/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: /删除旧数据/ })).not.toBeInTheDocument()
   })
 
-  it('discloses manual cleanup guidance without deleting the verified old root', async () => {
+  it('lists only exact cleanup candidates without offering root deletion', async () => {
     const user = userEvent.setup()
-    const previousRoot = 'D:\\Simple Notes Previous'
-    render(<SettingsView settings={settingsPort({
-      getStorageInfo: vi.fn().mockResolvedValue({
-        root: 'E:\\Simple Notes', noteBytes: 1024, assetBytes: 2048, trashBytes: 0,
-        previousRoot, previousRootCleanupReady: true,
-      }),
-    })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    const disclosure = await screen.findByRole('button', { name: '查看旧数据清理说明' })
-    expect(screen.queryByLabelText('旧数据位置')).not.toBeInTheDocument()
+    render(<SettingsView settings={settingsPort({ getStorageInfo: vi.fn().mockResolvedValue({
+      root: 'E:\\Notes', noteBytes: 1, assetBytes: 2, trashBytes: 3,
+      previousStorageCleanup: {
+        root: 'D:\\Old Notes',
+        candidates: [
+          { relativePath: 'notes', kind: 'notes' },
+          { relativePath: 'index.sqlite-wal', kind: 'index-sidecar' },
+        ],
+      },
+    }) })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    const disclosure = await screen.findByRole('button', { name: '查看旧位置候选项' })
     await user.click(disclosure)
-    expect(screen.getByLabelText('旧数据位置')).toHaveValue(previousRoot)
-    expect(screen.getByLabelText('旧数据位置')).toHaveAttribute('readonly')
-    expect(screen.getByText(/不会自动删除旧数据/)).toBeVisible()
-    expect(screen.getByText(/确认笔记和图片附件/)).toBeVisible()
+    expect(screen.getByLabelText('旧位置（仅供核对）')).toHaveValue('D:\\Old Notes')
+    expect(screen.getByRole('list', { name: '可手动核对的旧数据候选项' })).toHaveTextContent('notes')
+    expect(screen.getByRole('list', { name: '可手动核对的旧数据候选项' })).toHaveTextContent('index.sqlite-wal')
+    expect(screen.getByText(/绝不要删除旧位置根目录/)).toBeVisible()
     expect(screen.getByText(/settings\.json/)).toBeVisible()
-    expect(screen.queryByRole('button', { name: /删除旧数据/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /删除/ })).not.toBeInTheDocument()
   })
 })
 

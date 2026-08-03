@@ -185,4 +185,23 @@ describe('SplitPane', () => {
     expect(dividers[0]).toHaveAttribute('aria-orientation', 'vertical')
     expect(dividers[0]).toHaveAttribute('tabindex', '0')
   })
+
+  it('collapses and restores a pane without losing its last resized width', () => {
+    const { rerender } = render(
+      <SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[false, false]}>
+        <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
+      </SplitPane>,
+    )
+    fireEvent.keyDown(screen.getAllByRole('separator')[0], { key: 'ArrowRight' })
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '256px' })
+    rerender(<SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[true, false]}>
+      <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
+    </SplitPane>)
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '0px' })
+    expect(screen.getByTestId('first-pane')).toHaveAttribute('aria-hidden', 'true')
+    rerender(<SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[false, false]}>
+      <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
+    </SplitPane>)
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '256px' })
+  })
 })

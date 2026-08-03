@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { EditorMode, NoteId } from '../../domain/model'
-import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { SearchBox } from '../search/SearchBox'
@@ -36,7 +36,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
   const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
+  const [collapsed, setCollapsed] = useState<LibraryCollapsedPreference>({ folder: false, noteList: false })
   const preferenceRequest = useRef(0)
+  const collapsedPreferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
   const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
@@ -74,6 +76,22 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }, [system])
 
+  useEffect(() => {
+    const request = ++collapsedPreferenceRequest.current
+    let current = true
+    void system
+      .getWindowPreference('library-collapsed')
+      .then((value) => {
+        if (current && collapsedPreferenceRequest.current === request && isCollapsedPreference(value)) {
+          setCollapsed(value)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [system])
+
   const persistColumns = (sizes: SplitPaneSizes, containerWidth: number) => {
     preferenceRequest.current += 1
     const total = containerWidth > 0 ? containerWidth : window.innerWidth
@@ -83,6 +101,15 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
     setColumnPreference(value)
     void system.setWindowPreference('library-columns', value).catch(() => undefined)
+  }
+
+  const toggleColumn = (column: keyof LibraryCollapsedPreference) => {
+    collapsedPreferenceRequest.current += 1
+    setCollapsed((current) => {
+      const next = { ...current, [column]: !current[column] }
+      void system.setWindowPreference('library-collapsed', next).catch(() => undefined)
+      return next
+    })
   }
 
   const navigateAfterSave = async (navigate: () => void) => {
@@ -212,13 +239,32 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   return (
     <div className="library-shell">
       {search && <SearchBox search={search} onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))} />}
+      <div className="library-collapse-controls" role="toolbar" aria-label="侧栏显示">
+        <button
+          type="button"
+          aria-label={collapsed.folder ? '展开文件夹栏' : '折叠文件夹栏'}
+          aria-pressed={collapsed.folder}
+          onClick={() => toggleColumn('folder')}
+        >
+          <span aria-hidden="true">{collapsed.folder ? '▸' : '◂'}</span>
+        </button>
+        <button
+          type="button"
+          aria-label={collapsed.noteList ? '展开笔记列表栏' : '折叠笔记列表栏'}
+          aria-pressed={collapsed.noteList}
+          onClick={() => toggleColumn('noteList')}
+        >
+          <span aria-hidden="true">{collapsed.noteList ? '▸' : '◂'}</span>
+        </button>
+      </div>
       <SplitPane
-      defaultSizes={[240, 300]}
-      minimumSizes={[180, 220, 420]}
-      dividerLabels={['调整文件夹栏宽度', '调整笔记列表栏宽度']}
-      proportions={columnPreference ? [columnPreference.folder, columnPreference.noteList] : undefined}
-      onCommit={persistColumns}
-    >
+        defaultSizes={[240, 300]}
+        minimumSizes={[180, 220, 420]}
+        dividerLabels={['调整文件夹栏宽度', '调整笔记列表栏宽度']}
+        proportions={columnPreference ? [columnPreference.folder, columnPreference.noteList] : undefined}
+        collapsed={[collapsed.folder, collapsed.noteList]}
+        onCommit={persistColumns}
+      >
       <aside data-testid="folder-pane" className="library-pane library-pane--folders">
         <FolderTree
           folders={library.folders}
@@ -270,7 +316,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
-        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} />}
+        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} autosaveDelayMs={autosaveDelayMs} />}
         {activeView === 'trash' && trash && (
           <TrashView
             trash={trash}
@@ -327,4 +373,11 @@ function isColumnPreference(value: unknown): value is LibraryColumnPreference {
     noteList < 1 &&
     folder + noteList < 1
   )
+}
+
+function isCollapsedPreference(value: unknown): value is LibraryCollapsedPreference {
+  if (typeof value !== 'object' || value === null) return false
+  const folder = 'folder' in value ? value.folder : undefined
+  const noteList = 'noteList' in value ? value.noteList : undefined
+  return typeof folder === 'boolean' && typeof noteList === 'boolean'
 }

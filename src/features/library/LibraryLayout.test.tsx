@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { TrashPort } from '../../domain/ports'
+import type { SystemPort, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
 import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
@@ -58,6 +58,23 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('restores and persists keyboard-accessible collapsed columns without losing proportions', async () => {
+    const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-columns': { folder: 0.25, noteList: 0.3 },
+      'library-collapsed': { folder: true, noteList: false },
+    })[key]) as unknown as SystemPort['getWindowPreference']
+    const system = fakeSystemPort({
+      getWindowPreference,
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+    expect(await screen.findByRole('button', { name: '展开文件夹栏' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '0px' })
+    await user.click(screen.getByRole('button', { name: '展开文件夹栏' }))
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
+    expect(screen.getByTestId('folder-pane')).not.toHaveStyle({ width: '0px' })
+    expect(screen.getByRole('button', { name: '折叠文件夹栏' })).toBeVisible()
+  })
   it('holds the active editor behind a barrier while flushing for a storage move', async () => {
     const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))
     const notes = fakeNotePort({

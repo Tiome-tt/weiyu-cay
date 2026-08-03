@@ -4,11 +4,11 @@ import type { AppSettings } from '../../domain/ports'
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
   theme: 'forest',
   stickyColorMode: 'follow-theme',
-  bodyFont: 'Inter, ui-sans-serif, system-ui, sans-serif',
+  bodyFont: 'system-ui, sans-serif',
   codeFont: 'ui-monospace, SFMono-Regular, Consolas, monospace',
   fontSize: 16,
   lineHeight: 1.6,
-  shortcut: 'Ctrl+Shift+N',
+  shortcut: 'CommandOrControl+Shift+Space',
   launchAtStartup: false,
   defaultEditorMode: 'source',
   autosaveDelayMs: 500,
@@ -78,9 +78,9 @@ export function normalizeSettings(value: AppSettings): AppSettings {
   }
 }
 
-export function themeVariables(settings: AppSettings): ThemeVariables {
+export function themeVariables(settings: AppSettings, systemScheme: 'light' | 'dark' = 'light'): ThemeVariables {
   const normalized = normalizeSettings(settings)
-  const palette = palettes[normalized.theme]
+  const palette = normalized.theme === 'system' && systemScheme === 'dark' ? systemDarkPalette : palettes[normalized.theme]
   return {
     ...palette,
     '--sticky-color': palette['--theme-note-accent'],
@@ -91,9 +91,17 @@ export function themeVariables(settings: AppSettings): ThemeVariables {
   }
 }
 
-export function themeStyle(settings: AppSettings): CSSProperties {
-  return themeVariables(settings) as CSSProperties
+export function themeStyle(settings: AppSettings, systemScheme: 'light' | 'dark' = 'light'): CSSProperties {
+  return themeVariables(settings, systemScheme) as CSSProperties
 }
+
+const systemDarkPalette = {
+  '--color-canvas': '#202729', '--color-surface': '#293033', '--color-panel': '#252c2e',
+  '--color-panel-warm': '#333d40', '--color-accent': '#78aeba', '--color-accent-strong': '#9ac8d2',
+  '--color-accent-soft': '#324a50', '--color-accent-border': '#496b73', '--color-accent-haze': 'rgb(120 174 186 / 18%)',
+  '--color-text': '#e4e9e8', '--color-heading': '#f5f8f7', '--color-muted': '#b5c0bf',
+  '--color-border-soft': '#414b4e', '--theme-note-accent': '#354d51',
+} as const
 
 function clamp(value: number, minimum: number, maximum: number) {
   if (!Number.isFinite(value)) return minimum

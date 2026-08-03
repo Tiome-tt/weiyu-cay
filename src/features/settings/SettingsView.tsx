@@ -20,10 +20,16 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const [restartRequired, setRestartRequired] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [cleanupExpanded, setCleanupExpanded] = useState(false)
+  const [shortcutWarning, setShortcutWarning] = useState<string | null>(null)
   const requestRef = useRef(0)
   const busyRef = useRef(false)
+  const draftRef = useRef(value)
 
-  useEffect(() => setDraft(value), [value])
+  useEffect(() => {
+    if (busyRef.current) return
+    draftRef.current = value
+    setDraft(value)
+  }, [value])
   useEffect(() => {
     const request = ++requestRef.current
     void settings.getStorageInfo().then((info) => {
@@ -36,9 +42,22 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     })
     return () => { requestRef.current += 1 }
   }, [settings])
+  useEffect(() => {
+    let active = true
+    void settings.getShortcutStatus().then((status) => {
+      if (!active) return
+      setShortcutWarning(status.startupError !== null || !status.acceptingTriggers ? '全局快捷键未能启用；本地笔记仍可正常使用。请更换快捷键后重试。' : null)
+    }).catch(() => {
+      if (active) setShortcutWarning('无法确认全局快捷键状态；本地笔记仍可正常使用。')
+    })
+    return () => { active = false }
+  }, [settings])
 
   const update = async (patch: Partial<AppSettings>, kind: 'shortcut' | 'general' = 'general') => {
-    const nextDraft = normalizeSettings({ ...draft, ...patch })
+    if (busyRef.current) return
+    busyRef.current = true
+    const nextDraft = normalizeSettings({ ...draftRef.current, ...patch })
+    draftRef.current = nextDraft
     setDraft(nextDraft)
     setError(null)
     const request = ++requestRef.current
@@ -47,19 +66,28 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
       const persisted = await settings.update(patch)
       if (requestRef.current !== request) return
       const normalized = normalizeSettings(persisted)
+      draftRef.current = normalized
       setDraft(normalized)
       onChange(normalized)
     } catch {
       if (requestRef.current !== request) return
       setDraft(value)
+      draftRef.current = value
       setError(kind === 'shortcut' ? '快捷键已被占用，原快捷键保持不变。' : '设置未能保存，已保留原设置。')
     } finally {
+      busyRef.current = false
       if (requestRef.current === request) setBusy(null)
     }
   }
 
-  const updateNumber = (key: 'fontSize' | 'lineHeight' | 'autosaveDelayMs') =>
-    (event: ChangeEvent<HTMLInputElement>) => void update({ [key]: Number(event.target.value) })
+  const editDraft = (patch: Partial<AppSettings>) => {
+    const next = { ...draftRef.current, ...patch }
+    draftRef.current = next
+    setDraft(next)
+  }
+
+  const updateNumberDraft = (key: 'fontSize' | 'lineHeight' | 'autosaveDelayMs') =>
+    (event: ChangeEvent<HTMLInputElement>) => editDraft({ [key]: Number(event.target.value) })
 
   const reset = async () => {
     if (busyRef.current) return
@@ -71,6 +99,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
       const restored = normalizeSettings(await settings.reset())
       if (requestRef.current !== request) return
       setDraft(restored)
+      draftRef.current = restored
       onChange(restored)
     } catch {
       if (requestRef.current === request) setError('无法恢复默认设置。')
@@ -139,43 +168,40 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         <header><div><span className="library-pane__eyebrow">Simple Notes</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={busy !== null} onClick={onClose} aria-label="关闭设置">×</button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
+        {shortcutWarning && <p className="settings-view__warning" role="status" aria-label="快捷键状态警告">{shortcutWarning}</p>}
         <div className="settings-view__body">
-          <fieldset disabled={busy === 'reset' || busy === 'move'}>
+          <fieldset disabled={busy !== null}>
             <legend>外观与编辑</legend>
             <label>主题<select aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">森林</option><option value="sand">沙丘</option><option value="system">跟随系统</option></select></label>
-            <label>正文字体<input aria-label="正文字体" value={draft.bodyFont} onChange={(event) => setDraft({ ...draft, bodyFont: event.target.value })} onBlur={() => void update({ bodyFont: draft.bodyFont })} /></label>
-            <label>代码字体<input aria-label="代码字体" value={draft.codeFont} onChange={(event) => setDraft({ ...draft, codeFont: event.target.value })} onBlur={() => void update({ codeFont: draft.codeFont })} /></label>
-            <label>字号<input aria-label="字号" type="number" min="12" max="28" value={draft.fontSize} onChange={updateNumber('fontSize')} /></label>
-            <label>行高<input aria-label="行高" type="number" min="1.2" max="2.2" step="0.1" value={draft.lineHeight} onChange={updateNumber('lineHeight')} /></label>
+            <label>正文字体<input aria-label="正文字体" value={draft.bodyFont} onChange={(event) => editDraft({ bodyFont: event.target.value })} onBlur={() => void update({ bodyFont: draftRef.current.bodyFont })} /></label>
+            <label>代码字体<input aria-label="代码字体" value={draft.codeFont} onChange={(event) => editDraft({ codeFont: event.target.value })} onBlur={() => void update({ codeFont: draftRef.current.codeFont })} /></label>
+            <label>字号<input aria-label="字号" type="number" min="12" max="28" value={draft.fontSize} onChange={updateNumberDraft('fontSize')} onBlur={() => void update({ fontSize: draftRef.current.fontSize })} /></label>
+            <label>行高<input aria-label="行高" type="number" min="1.2" max="2.2" step="0.1" value={draft.lineHeight} onChange={updateNumberDraft('lineHeight')} onBlur={() => void update({ lineHeight: draftRef.current.lineHeight })} /></label>
             <label>默认编辑视图<select aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">Markdown 源码</option><option value="split">源码与预览</option><option value="preview">预览</option></select></label>
-            <label>自动保存延迟<input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumber('autosaveDelayMs')} /><span>毫秒</span></label>
+            <label>自动保存延迟<input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumberDraft('autosaveDelayMs')} onBlur={() => void update({ autosaveDelayMs: draftRef.current.autosaveDelayMs })} /><span>毫秒</span></label>
           </fieldset>
           <fieldset disabled={busy !== null}>
             <legend>系统</legend>
-            <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" value={draft.shortcut} onChange={(event) => setDraft({ ...draft, shortcut: event.target.value })} /><button type="button" onClick={() => void update({ shortcut: draft.shortcut }, 'shortcut')}>应用快捷键</button></label>
+            <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" value={draft.shortcut} onChange={(event) => editDraft({ shortcut: event.target.value })} /><button type="button" onClick={() => void update({ shortcut: draftRef.current.shortcut }, 'shortcut')}>应用快捷键</button></label>
             <label className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} />开机启动</label>
           </fieldset>
           <fieldset disabled={busy !== null}>
             <legend>本地存储</legend>
             <p>{storage ? `${storage.root} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>
+            <p>应用不会自动删除旧位置中的数据。请保留应用配置和未知文件，直到你确认新位置中的笔记与附件完整可用。</p>
             <label className="settings-view__shortcut">新的数据位置<input aria-label="新的数据位置" value={destination} onChange={(event) => setDestination(event.target.value)} /><button type="button" disabled={destination.trim().length === 0 || busy === 'move'} onClick={() => void moveStorage()}>移动数据</button></label>
-            {storage?.previousRootCleanupReady === true && storage.previousRoot !== null && (
+            {storage?.previousStorageCleanup !== undefined && (
               <div className="settings-cleanup">
-                <button
-                  type="button"
-                  aria-expanded={cleanupExpanded}
-                  aria-controls="settings-cleanup-guidance"
-                  onClick={() => setCleanupExpanded((expanded) => !expanded)}
-                >
-                  {cleanupExpanded ? '收起旧数据清理说明' : '查看旧数据清理说明'}
+                <button type="button" aria-expanded={cleanupExpanded} aria-controls="settings-cleanup-candidates" onClick={() => setCleanupExpanded((value) => !value)}>
+                  {cleanupExpanded ? '收起旧位置候选项' : '查看旧位置候选项'}
                 </button>
-                {cleanupExpanded && (
-                  <div id="settings-cleanup-guidance" className="settings-cleanup__guidance">
-                    <p><strong>应用不会自动删除旧数据。</strong>请先确认笔记和图片附件在重新打开后都完整可用，再自行处理下面的旧目录。</p>
-                    <label>旧数据位置<input aria-label="旧数据位置" readOnly value={storage.previousRoot} onFocus={(event) => event.currentTarget.select()} /></label>
-                    <p>手动清理时请保留 <code>settings.json</code> 及其他应用配置；如果无法确认，请继续保留整个旧目录。</p>
-                  </div>
-                )}
+                {cleanupExpanded && <div id="settings-cleanup-candidates" className="settings-cleanup__guidance">
+                  <p><strong>Simple Notes 不提供自动删除。</strong>请先核验新位置的笔记与附件。绝不要删除旧位置根目录、<code>settings.json</code>、应用配置或任何未知文件。</p>
+                  <label>旧位置（仅供核对）<input aria-label="旧位置（仅供核对）" readOnly value={storage.previousStorageCleanup.root} onFocus={(event) => event.currentTarget.select()} /></label>
+                  <ul aria-label="可手动核对的旧数据候选项">
+                    {storage.previousStorageCleanup.candidates.map((candidate) => <li key={`${candidate.kind}:${candidate.relativePath}`}><code>{candidate.relativePath}</code> <span>{candidate.kind}</span></li>)}
+                  </ul>
+                </div>}
               </div>
             )}
           </fieldset>

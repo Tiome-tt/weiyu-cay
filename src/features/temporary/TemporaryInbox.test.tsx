@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,9 +18,28 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('TemporaryInbox', () => {
+  it('uses the configured autosave delay for the active temporary draft', async () => {
+    vi.useFakeTimers()
+    const captures = twoCaptures()
+    const save = vi.fn(async (document: NoteDocument) => document)
+    const temporary = { ...fakeTemporaryPort(captures), save }
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} autosaveDelayMs={175} />)
+    const title = deriveTemporaryPreviewTitle(captures[0].markdown, captures[0].createdAt)
+    await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(title) }))
+    await act(async () => undefined)
+    const editor = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'delayed draft' } }))
+    await act(async () => vi.advanceTimersByTimeAsync(174))
+    expect(save).not.toHaveBeenCalled()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(save).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
   it.each([
     ['removes one ATX marker run', '\n  ###  发布检查  \nbody', '发布检查'],
     ['keeps a hashtag that is not a heading', '#urgent keep', '#urgent keep'],

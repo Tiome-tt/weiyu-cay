@@ -25,6 +25,7 @@ interface SplitPaneProps {
   dividerLabels: readonly [first: string, second: string]
   proportions?: SplitPaneSizes
   onCommit?: (sizes: SplitPaneSizes, containerWidth: number) => void
+  collapsed?: readonly [first: boolean, second: boolean]
 }
 
 interface DragState {
@@ -32,7 +33,12 @@ interface DragState {
   pointerId: number
 }
 
-type PaneElement = ReactElement<{ className?: string; style?: CSSProperties }>
+type PaneElement = ReactElement<{
+  className?: string
+  style?: CSSProperties
+  'aria-hidden'?: boolean
+  inert?: boolean
+}>
 
 export function SplitPane({
   children,
@@ -41,6 +47,7 @@ export function SplitPane({
   dividerLabels,
   proportions,
   onCommit,
+  collapsed = [false, false],
 }: SplitPaneProps) {
   const panes = Children.toArray(children)
   if (panes.length !== 3 || panes.some((pane) => !isValidElement(pane))) {
@@ -173,8 +180,10 @@ export function SplitPane({
   }
 
   const width = containerWidth
-  const thirdWidth = width > 0 ? Math.max(minimumSizes[2], width - DIVIDER_WIDTH * 2 - sizes[0] - sizes[1]) : undefined
-  const paneWidths = [sizes[0], sizes[1], thirdWidth] as const
+  const visibleFirst = collapsed[0] ? 0 : sizes[0]
+  const visibleSecond = collapsed[1] ? 0 : sizes[1]
+  const thirdWidth = width > 0 ? Math.max(minimumSizes[2], width - DIVIDER_WIDTH * 2 - visibleFirst - visibleSecond) : undefined
+  const paneWidths = [visibleFirst, visibleSecond, thirdWidth] as const
 
   return (
     <div ref={containerRef} className="split-pane">
@@ -183,12 +192,15 @@ export function SplitPane({
         const paneStyle: CSSProperties = {
           ...element.props.style,
           flex: index === 2 && thirdWidth === undefined ? '1 1 auto' : '0 0 auto',
-          minWidth: `${minimumSizes[index]}px`,
+          minWidth: index < 2 && collapsed[index] ? '0px' : `${minimumSizes[index]}px`,
           width: paneWidths[index] === undefined ? undefined : `${paneWidths[index]}px`,
+          overflow: index < 2 && collapsed[index] ? 'hidden' : element.props.style?.overflow,
         }
         const rendered = cloneElement(element, {
           className: [element.props.className, 'split-pane__pane'].filter(Boolean).join(' '),
           style: paneStyle,
+          'aria-hidden': index < 2 && collapsed[index] ? true : undefined,
+          inert: index < 2 && collapsed[index] ? true : undefined,
         })
         if (index === 2) return rendered
         const divider = index as 0 | 1
@@ -206,7 +218,8 @@ export function SplitPane({
               aria-valuemin={minimumSizes[divider]}
               aria-valuemax={Math.max(minimumSizes[divider], maximum)}
               aria-valuenow={sizes[divider]}
-              tabIndex={0}
+              aria-hidden={collapsed[divider] || undefined}
+              tabIndex={collapsed[divider] ? -1 : 0}
               onPointerDown={(event) => startDrag(divider, event)}
               onPointerMove={moveDrag}
               onPointerUp={finishDrag}
