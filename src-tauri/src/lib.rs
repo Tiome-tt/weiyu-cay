@@ -37,10 +37,16 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            commands::settings::setup(app)?;
             commands::notes::setup(app)?;
             commands::folders::setup(app)?;
             commands::temporary::setup(app)?;
             commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
+            let paths = app
+                .state::<commands::settings::SettingsCommandState>()
+                .paths()
+                .clone();
+            commands::settings::finalize_reopened_relocation(&paths)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -77,6 +83,12 @@ pub fn run() {
             commands::temporary::set_temporary_always_on_top,
             commands::shortcuts::get_capture_shortcut,
             commands::shortcuts::rebind_capture_shortcut,
+            commands::settings::load_settings,
+            commands::settings::update_settings,
+            commands::settings::reset_settings,
+            commands::settings::get_storage_info,
+            commands::settings::move_storage_root,
+            commands::settings::restart_application,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

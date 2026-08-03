@@ -37,6 +37,14 @@ pub struct CaptureShortcutStatus {
 }
 
 impl CaptureShortcutState {
+    pub(crate) fn rebind(&self, accelerator: &str) -> Result<(), ShortcutError> {
+        self.service.rebind(accelerator).map(|_| ())
+    }
+
+    pub(crate) fn current(&self) -> Option<String> {
+        self.service.current()
+    }
+
     pub fn shutdown(&self) {
         let _ = self.service.shutdown();
         self.worker_stop.store(true, Ordering::Release);
@@ -108,7 +116,12 @@ pub fn setup(
     dispatcher.attach(sender);
     let worker_stop = Arc::new(AtomicBool::new(false));
     let worker = spawn_worker(app.handle().clone(), router, receiver, worker_stop.clone())?;
-    let startup_error = service.register(DEFAULT_CAPTURE_SHORTCUT).err();
+    let configured_shortcut = app
+        .state::<crate::commands::settings::SettingsCommandState>()
+        .stored_settings()
+        .map(|settings| settings.shortcut)
+        .unwrap_or_else(|_| DEFAULT_CAPTURE_SHORTCUT.to_owned());
+    let startup_error = service.register(&configured_shortcut).err();
     app.manage(CaptureShortcutState {
         service,
         dispatcher,
@@ -172,7 +185,7 @@ pub fn rebind_capture_shortcut(
 ) -> Result<CaptureShortcutStatus, ShortcutError> {
     authorize_main(window.label())
         .map_err(|_| ShortcutError::validation("shortcut management requires the main window"))?;
-    state.service.rebind(&accelerator)?;
+    state.rebind(&accelerator)?;
     *lock_recover(&state.startup_error) = None;
     Ok(state.status())
 }

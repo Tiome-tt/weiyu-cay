@@ -33,8 +33,10 @@ pub struct SaveNoteInput {
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let root = app.path().app_data_dir()?;
-    let paths = StoragePaths::open(root)?;
+    let paths = app
+        .state::<crate::commands::settings::SettingsCommandState>()
+        .paths()
+        .clone();
     {
         let _guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
         let database = Database::open(paths.database())?;

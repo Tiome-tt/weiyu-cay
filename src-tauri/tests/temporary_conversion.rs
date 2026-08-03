@@ -1823,7 +1823,13 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-undo-delete",
             "allow-show-temporary-window",
             "allow-get-capture-shortcut",
-            "allow-rebind-capture-shortcut"
+            "allow-rebind-capture-shortcut",
+            "allow-load-settings",
+            "allow-update-settings",
+            "allow-reset-settings",
+            "allow-get-storage-info",
+            "allow-move-storage-root",
+            "allow-restart-application"
         ])
     );
     assert_eq!(
