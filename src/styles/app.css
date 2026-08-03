@@ -100,6 +100,9 @@ body {
 
 .app-shell {
   min-height: 100%;
+  font-family: var(--body-font);
+  font-size: var(--body-font-size);
+  line-height: var(--body-line-height);
   background: var(--color-surface);
 }
 
@@ -639,7 +642,7 @@ button {
 
 .markdown-preview pre,
 .markdown-preview code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-family: var(--code-font);
 }
 
 .markdown-preview pre {
@@ -771,6 +774,77 @@ input:focus-visible,
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
   color: var(--color-text);
+  background: var(--sticky-color);
+}
+
+.settings-launcher {
+  position: fixed;
+  z-index: 8;
+  top: 10px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--color-heading);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-border);
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.settings-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  background: rgb(40 35 28 / 38%);
+  place-items: center;
+}
+
+.settings-view {
+  display: grid;
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 18px 60px rgb(45 37 27 / 20%);
+}
+
+.settings-view > header,
+.settings-view > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+}
+
+.settings-view > header { border-bottom: 1px solid var(--color-border-soft); }
+.settings-view > footer { border-top: 1px solid var(--color-border-soft); }
+.settings-view h1 { margin: 2px 0 0; color: var(--color-heading); font-size: 1.35rem; }
+.settings-view button { padding: 7px 11px; color: var(--color-heading); background: var(--color-accent-soft); border: 1px solid var(--color-accent-border); border-radius: 9px; cursor: pointer; }
+.settings-view button:disabled { opacity: .52; cursor: default; }
+.settings-view__body { display: grid; gap: 14px; padding: 18px 20px; overflow: auto; }
+.settings-view fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 15px; border: 1px solid var(--color-border-soft); border-radius: 13px; }
+.settings-view legend { padding: 0 6px; color: var(--color-heading); font-weight: 700; }
+.settings-view label { display: grid; gap: 5px; color: var(--color-muted); font-size: .82rem; }
+.settings-view input,
+.settings-view select { width: 100%; min-width: 0; padding: 8px 9px; color: var(--color-heading); background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 8px; }
+.settings-view__shortcut { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+.settings-view__shortcut input { grid-column: 1; }
+.settings-view__shortcut button { grid-column: 2; grid-row: 2; }
+.settings-view__check { grid-column: 1 / -1; display: flex !important; align-items: center; flex-direction: row; }
+.settings-view__check input { width: auto; }
+.settings-view fieldset > p { grid-column: 1 / -1; margin: 0; color: var(--color-muted); }
+.settings-view__error { margin: 12px 20px 0; padding: 9px 11px; color: var(--color-error); background: var(--color-panel-warm); border-radius: 9px; }
+.settings-view > footer > div { display: flex; align-items: center; gap: 10px; color: var(--color-muted); font-size: .78rem; }
+
+@media (max-width: 640px) {
+  .settings-view fieldset { grid-template-columns: 1fr; }
 }
 
 .sticky-window__toolbar {

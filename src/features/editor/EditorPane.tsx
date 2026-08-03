@@ -22,6 +22,7 @@ interface EditorPaneProps {
   search?: SearchPort
   onDocumentAdopt?: (document: NoteDocument) => void
   autosaveDelayMs?: number
+  initialMode?: EditorMode
   links?: LinkPort
   linkCache?: ReadonlyMap<NoteId, NoteSummary>
   onNavigateNote?(noteId: NoteId): void | Promise<void>
@@ -54,10 +55,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     onNavigateNote,
     onDocumentAdopt,
     autosaveDelayMs,
+    initialMode = 'source',
   },
   ref,
 ) {
-  const [mode, setMode] = useState<EditorMode>('source')
+  const [mode, setMode] = useState<EditorMode>(initialMode)
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
   const [imageError, setImageError] = useState<string | null>(null)
   const [tagTransactionActive, setTagTransactionActive] = useState(false)

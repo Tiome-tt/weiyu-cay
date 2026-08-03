@@ -7,17 +7,32 @@ import type { NoteDocument, NoteId } from '../domain/model'
 import type { TemporaryWindowState } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
 import { StickyWindow } from '../features/temporary/StickyWindow'
+import type { AppSettings } from '../domain/ports'
+import { SettingsView } from '../features/settings/SettingsView'
+import { DEFAULT_APP_SETTINGS, normalizeSettings, themeStyle } from '../features/settings/theme'
 
 const defaultServices = createAppServices()
 
 export function App({ services = defaultServices }: { services?: AppServices }) {
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  useEffect(() => {
+    let active = true
+    if (services.settings === undefined) return
+    void services.settings.load().then((loaded) => {
+      if (active) setSettings(normalizeSettings(loaded))
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [services.settings])
   const sticky = stickyRoute()
   if (sticky !== null) {
-    return <StickyWindowEntry services={services} route={sticky} />
+    return <div className="app-shell" data-theme={settings.theme} style={themeStyle(settings)}><StickyWindowEntry services={services} route={sticky} /></div>
   }
   return (
-    <main role="application" aria-label="Simple Notes" className="app-shell">
-      <LibraryLayout notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} />
+    <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings)}>
+      <LibraryLayout notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
+      {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" onClick={() => setSettingsOpen(true)}>⚙</button>}
+      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => setSettingsOpen(false)} />}
     </main>
   )
 }

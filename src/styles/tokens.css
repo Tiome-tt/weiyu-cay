@@ -21,4 +21,10 @@
   --radius-panel: 18px;
   --shadow-soft: 0 8px 24px rgb(76 63 44 / 8%);
   --motion-fast: 120ms;
+  --theme-note-accent: #e5f0d6;
+  --sticky-color: var(--theme-note-accent);
+  --body-font: Inter, ui-sans-serif, system-ui, sans-serif;
+  --code-font: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --body-font-size: 16px;
+  --body-line-height: 1.6;
 }

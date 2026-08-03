@@ -1,7 +1,7 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, FolderPort, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppSettings, AssetPort, FolderPort, LinkPort, SearchPort, SettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -198,6 +198,30 @@ class TauriTrashPort implements TrashPort {
   }
 }
 
+class TauriSettingsPort implements SettingsPort {
+  constructor(private readonly client: TauriClient) {}
+
+  load() {
+    return this.client.invoke<AppSettings>('load_settings')
+  }
+
+  update(patch: Partial<AppSettings>) {
+    return this.client.invoke<AppSettings>('update_settings', { patch })
+  }
+
+  reset() {
+    return this.client.invoke<AppSettings>('reset_settings')
+  }
+
+  getStorageInfo() {
+    return this.client.invoke<StorageInfo>('get_storage_info')
+  }
+
+  moveStorageRoot(destination: string) {
+    return this.client.invoke<void>('move_storage_root', { destination })
+  }
+}
+
 export function createTauriPorts(): {
   notes: LibraryNotePort
   folders: FolderPort
@@ -208,6 +232,7 @@ export function createTauriPorts(): {
   temporary: TemporaryPort
   temporaryWindows: TemporaryWindowPort
   trash: TrashPort
+  settings: SettingsPort
 } {
   const client = new TauriClient()
   return {
@@ -220,5 +245,6 @@ export function createTauriPorts(): {
     temporary: new TauriTemporaryPort(client),
     temporaryWindows: new TauriTemporaryWindowPort(client),
     trash: new TauriTrashPort(client),
+    settings: new TauriSettingsPort(client),
   }
 }

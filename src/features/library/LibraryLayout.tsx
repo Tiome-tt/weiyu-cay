@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { NoteId } from '../../domain/model'
+import type { EditorMode, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
@@ -19,9 +19,11 @@ interface LibraryLayoutProps {
   links?: LinkPort
   temporary?: TemporaryPort
   trash?: TrashPort
+  defaultEditorMode?: EditorMode
+  autosaveDelayMs?: number
 }
 
-export function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash }: LibraryLayoutProps) {
+export function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash, defaultEditorMode, autosaveDelayMs }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
@@ -256,6 +258,8 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
             linkCache={linkCache}
             onNavigateNote={(noteId) => navigateAfterSave(() => library.selectNote(noteId))}
             onDocumentAdopt={library.adoptDocument}
+            initialMode={defaultEditorMode}
+            autosaveDelayMs={autosaveDelayMs}
           />
         )}
       </section>

@@ -1,4 +1,4 @@
-import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from './model'
+import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } from './model'
 
 export type SearchQuery =
   | { kind: 'tag'; value: string }
@@ -155,4 +155,33 @@ export interface TrashPort {
   restore(ids: NoteId[]): Promise<RestoreTrashResult>
   undo(operationId: string): Promise<RestoreTrashResult>
   purgeExpired(): Promise<PurgeTrashResult>
+}
+
+export interface AppSettings {
+  theme: 'forest' | 'sand' | 'system'
+  stickyColorMode: 'follow-theme'
+  bodyFont: string
+  codeFont: string
+  fontSize: number
+  lineHeight: number
+  shortcut: string
+  launchAtStartup: boolean
+  defaultEditorMode: EditorMode
+  autosaveDelayMs: number
+  dataRoot: { mode: 'default' } | { mode: 'custom'; path: string }
+}
+
+export interface StorageInfo {
+  root: string
+  noteBytes: number
+  assetBytes: number
+  trashBytes: number
+}
+
+export interface SettingsPort {
+  load(): Promise<AppSettings>
+  update(patch: Partial<AppSettings>): Promise<AppSettings>
+  reset(): Promise<AppSettings>
+  getStorageInfo(): Promise<StorageInfo>
+  moveStorageRoot(destination: string): Promise<void>
 }

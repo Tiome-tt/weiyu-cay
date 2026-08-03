@@ -20,6 +20,10 @@ function view() {
 }
 
 describe('EditorPane', () => {
+  it('starts in the configured default editor view', () => {
+    render(<EditorPane document={note('# Preview')} notes={fakeNotePort()} initialMode="preview" autosaveDelayMs={10_000} />)
+    expect(screen.getByRole('button', { name: '预览视图' })).toHaveAttribute('aria-pressed', 'true')
+  })
   it('places the note title and exactly three primary view controls in the editor toolbar', () => {
     render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} assets={fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 })} />)
 

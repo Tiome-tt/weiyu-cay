@@ -1,6 +1,7 @@
 import { vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../domain/model'
-import type { AssetPort, FolderPort, LinkPort, NotePort, SearchPort, SystemPort, TemporaryPort } from '../domain/ports'
+import type { AssetPort, FolderPort, LinkPort, NotePort, SearchPort, SettingsPort, SystemPort, TemporaryPort } from '../domain/ports'
+import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 
 export const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
 export const projectB = '019c0000-0000-7000-8000-000000000001' as FolderId
@@ -47,6 +48,15 @@ export const fakeSystemPort = (overrides: Partial<SystemPort> = {}): SystemPort 
   getWindowPreference: vi.fn().mockResolvedValue(undefined),
   setWindowPreference: vi.fn().mockResolvedValue(undefined),
   hideTemporaryWindow: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
+})
+
+export const fakeSettingsPort = (overrides: Partial<SettingsPort> = {}): SettingsPort => ({
+  load: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
+  update: vi.fn().mockImplementation(async (patch) => ({ ...DEFAULT_APP_SETTINGS, ...patch })),
+  reset: vi.fn().mockResolvedValue(DEFAULT_APP_SETTINGS),
+  getStorageInfo: vi.fn().mockResolvedValue({ root: 'Application data', noteBytes: 0, assetBytes: 0, trashBytes: 0 }),
+  moveStorageRoot: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 })
 
