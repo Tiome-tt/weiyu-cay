@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
@@ -79,7 +79,8 @@ describe('TrashView', () => {
     const pending = new Promise<Awaited<ReturnType<TrashPort['undo']>>>((resolve) => { resolveUndo = resolve })
     const undo = vi.fn(() => pending)
     const list = vi.fn().mockResolvedValueOnce(entries).mockResolvedValueOnce([])
-    render(<TrashView trash={fakeTrashPort({ list, undo })} folders={folders} recentOperationId="delete-op" />)
+    const onLibraryChanged = vi.fn().mockResolvedValue(undefined)
+    render(<TrashView trash={fakeTrashPort({ list, undo })} folders={folders} recentOperationId="delete-op" onLibraryChanged={onLibraryChanged} />)
 
     const button = await screen.findByRole('button', { name: '撤销最近删除' })
     button.click()
@@ -89,8 +90,28 @@ describe('TrashView', () => {
     await waitFor(() => expect(button).toBeDisabled())
 
     resolveUndo({ restored: [restoredDocument(formalId, project)], failed: [] })
-    expect(await screen.findByText('已撤销最近删除，恢复 1 项。')).toHaveFocus()
+    const feedback = await screen.findByText('已撤销最近删除，恢复 1 项。')
+    await waitFor(() => expect(feedback).toHaveFocus())
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(onLibraryChanged).toHaveBeenCalledOnce()
+  })
+
+  it('invalidates an older list request before restore and refreshes the surrounding library', async () => {
+    const lateList = deferred<TrashEntry[]>()
+    const list = vi.fn().mockResolvedValueOnce(entries).mockReturnValueOnce(lateList.promise)
+    const restore = vi.fn().mockResolvedValue({ restored: [restoredDocument(formalId, project)], failed: [] })
+    const onLibraryChanged = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(<TrashView trash={fakeTrashPort({ list, restore })} folders={folders} onLibraryChanged={onLibraryChanged} />)
+
+    await user.click(await screen.findByRole('checkbox', { name: '选择 发布清单' }))
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    await user.click(screen.getByRole('button', { name: '恢复所选' }))
+
+    expect(await screen.findByText('已恢复 1 项。')).toBeVisible()
+    expect(onLibraryChanged).toHaveBeenCalledOnce()
+    await act(async () => lateList.resolve(entries))
+    expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
   })
 
   it('derives the immediate undo entry point from the newest trash operation', async () => {
@@ -142,6 +163,7 @@ function fakeTrashPort(overrides: Partial<TrashPort> = {}): TrashPort {
     list: vi.fn().mockResolvedValue(entries),
     restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
     undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+    purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
     ...overrides,
   }
 }
@@ -158,4 +180,10 @@ function restoredDocument(id: NoteId, folderId: FolderId | null): NoteDocument {
     createdAt: '2026-08-01T00:00:00Z',
     updatedAt: '2026-08-03T00:00:00Z',
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
 }

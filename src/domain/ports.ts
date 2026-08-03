@@ -144,9 +144,15 @@ export interface RestoreTrashResult {
   failed: TrashFailure[]
 }
 
+export interface PurgeTrashResult {
+  purged: NoteId[]
+  failed: TrashFailure[]
+}
+
 export interface TrashPort {
   trash(ids: NoteId[]): Promise<TrashBatchResult>
   list(): Promise<TrashEntry[]>
   restore(ids: NoteId[]): Promise<RestoreTrashResult>
   undo(operationId: string): Promise<RestoreTrashResult>
+  purgeExpired(): Promise<PurgeTrashResult>
 }

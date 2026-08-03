@@ -192,6 +192,10 @@ class TauriTrashPort implements TrashPort {
   undo(operationId: string) {
     return this.client.invoke<Awaited<ReturnType<TrashPort['undo']>>>('undo_trash', { operationId })
   }
+
+  purgeExpired() {
+    return this.client.invoke<Awaited<ReturnType<TrashPort['purgeExpired']>>>('purge_expired_trash')
+  }
 }
 
 export function createTauriPorts(): {

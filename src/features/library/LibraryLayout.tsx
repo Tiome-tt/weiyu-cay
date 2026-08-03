@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
@@ -23,11 +24,17 @@ interface LibraryLayoutProps {
 export function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash }: LibraryLayoutProps) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
+  const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
+  const [deletingNoteId, setDeletingNoteId] = useState<NoteId | null>(null)
+  const [trashError, setTrashError] = useState<string | null>(null)
+  const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
+  const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const preferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
   const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
+  const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
     [library.notes],
@@ -65,6 +72,64 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
     const activeEditor = activeView === 'temporary' ? temporaryInboxRef.current : editorRef.current
     const canNavigate = (await activeEditor?.flush()) ?? true
     if (canNavigate && request === navigationRequest.current) navigate()
+  }
+
+  const deleteFormalNote = async (noteId: NoteId, title: string) => {
+    if (trash === undefined || trashBusyRef.current !== null) return
+    trashBusyRef.current = 'delete'
+    setTrashBusy('delete')
+    setDeletingNoteId(noteId)
+    setTrashError(null)
+    setTrashFeedback(null)
+    try {
+      const saved = (await editorRef.current?.flush()) ?? true
+      if (!saved) {
+        setTrashError('请先解决保存错误，再删除笔记。')
+        return
+      }
+      const result = await trash.trash([noteId])
+      const deleted = result.trashed.includes(noteId)
+      if (deleted) {
+        library.clearDeletedNote(noteId)
+        setRecentTrashOperationId(result.operationId)
+        setTrashFeedback(`“${title}”已移入回收站。`)
+        await library.refreshNotes()
+      }
+      if (result.failed.length > 0) {
+        setTrashError(result.failed.map((failure) => failure.message).join('；'))
+      } else if (!deleted) {
+        setTrashError('笔记未能移入回收站，请重试。')
+      }
+    } catch {
+      setTrashError('无法删除笔记，请重试。')
+    } finally {
+      trashBusyRef.current = null
+      setTrashBusy(null)
+      setDeletingNoteId(null)
+    }
+  }
+
+  const undoFormalDelete = async () => {
+    if (trash === undefined || recentTrashOperationId === null || trashBusyRef.current !== null) return
+    const operationId = recentTrashOperationId
+    trashBusyRef.current = 'undo'
+    setTrashBusy('undo')
+    setTrashError(null)
+    try {
+      const result = await trash.undo(operationId)
+      await library.refreshLibrary()
+      if (result.restored.length > 0) setTrashFeedback(`已撤销删除，恢复 ${result.restored.length} 项。`)
+      if (result.failed.length > 0) {
+        setTrashError(result.failed.map((failure) => failure.message).join('；'))
+      } else {
+        setRecentTrashOperationId(null)
+      }
+    } catch {
+      setTrashError('无法撤销删除，请重试。')
+    } finally {
+      trashBusyRef.current = null
+      setTrashBusy(null)
+    }
   }
 
   return (
@@ -117,12 +182,29 @@ export function LibraryLayout({ notes, folders, system, assets, search, links, t
             activeId={library.activeNoteId}
             state={library.noteListState}
             onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
+            onDelete={trash === undefined ? undefined : (noteId, title) => void deleteFormalNote(noteId, title)}
+            deletingId={deletingNoteId}
+            deleteError={trashError}
+            deleteFeedback={trashFeedback}
+            undoAvailable={recentTrashOperationId !== null}
+            undoBusy={trashBusy === 'undo'}
+            onUndoDelete={() => void undoFormalDelete()}
           />
         )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
         {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} />}
-        {activeView === 'trash' && trash && <TrashView trash={trash} folders={library.folders} />}
+        {activeView === 'trash' && trash && (
+          <TrashView
+            trash={trash}
+            folders={library.folders}
+            recentOperationId={recentTrashOperationId}
+            onLibraryChanged={library.refreshLibrary}
+            onUndoCompleted={(operationId) => {
+              if (operationId === recentTrashOperationId) setRecentTrashOperationId(null)
+            }}
+          />
+        )}
         {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
         {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (

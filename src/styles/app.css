@@ -339,6 +339,8 @@ button {
   overflow: auto;
 }
 
+.note-list__row { position: relative; }
+
 .note-card {
   display: grid;
   width: 100%;
@@ -381,6 +383,26 @@ button {
   color: var(--color-muted-light);
   font-size: 0.73rem;
 }
+
+.note-list__delete {
+  position: absolute;
+  top: 9px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  color: var(--color-muted);
+  background: var(--color-panel-warm);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.note-list__delete:hover:not(:disabled) { color: var(--color-error); background: var(--color-surface); }
+.note-list__delete:disabled { opacity: .5; cursor: default; }
+.note-list__mutation-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px; padding: 9px 10px; color: var(--color-heading); background: var(--color-accent-soft); border: 1px solid var(--color-accent-border); border-radius: 10px; }
+.note-list__mutation-status p { margin: 0; font-size: .82rem; }
+.note-list__mutation-status button { flex: none; padding: 5px 8px; color: var(--color-heading); background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: 8px; cursor: pointer; }
+.note-list__mutation-status button:disabled { opacity: .55; cursor: default; }
 
 .library-status {
   margin: 10px 8px;

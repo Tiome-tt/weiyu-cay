@@ -6,12 +6,14 @@ interface TrashViewProps {
   trash: TrashPort
   folders: Folder[]
   recentOperationId?: string | null
+  onLibraryChanged?: () => Promise<void> | void
+  onUndoCompleted?: (operationId: string) => void
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
 type BusyAction = 'restore' | 'undo' | null
 
-export function TrashView({ trash, folders, recentOperationId = null }: TrashViewProps) {
+export function TrashView({ trash, folders, recentOperationId = null, onLibraryChanged, onUndoCompleted }: TrashViewProps) {
   const [entries, setEntries] = useState<TrashEntry[]>([])
   const [selected, setSelected] = useState<ReadonlySet<NoteId>>(new Set())
   const [state, setState] = useState<LoadState>('loading')
@@ -22,8 +24,10 @@ export function TrashView({ trash, folders, recentOperationId = null }: TrashVie
   const requestRef = useRef(0)
   const busyRef = useRef<BusyAction>(null)
   const feedbackRef = useRef<HTMLParagraphElement>(null)
+  const mountedRef = useRef(false)
 
   const refresh = useCallback(async () => {
+    if (!mountedRef.current) return
     const request = ++requestRef.current
     setState('loading')
     try {
@@ -39,8 +43,10 @@ export function TrashView({ trash, folders, recentOperationId = null }: TrashVie
   }, [trash])
 
   useEffect(() => {
+    mountedRef.current = true
     void refresh()
     return () => {
+      mountedRef.current = false
       requestRef.current += 1
     }
   }, [refresh])
@@ -69,51 +75,78 @@ export function TrashView({ trash, folders, recentOperationId = null }: TrashVie
     if (busyRef.current !== null || selectedIds.length === 0) return
     const ids = [...selectedIds]
     const selectedEntries = entries.filter((entry) => selected.has(entry.noteId))
+    requestRef.current += 1
     busyRef.current = 'restore'
     setBusy('restore')
     setError(null)
     setFeedback(null)
     try {
       const result = await trash.restore(ids)
+      let surroundingRefreshFailed = false
+      try {
+        await onLibraryChanged?.()
+      } catch {
+        surroundingRefreshFailed = true
+      }
+      if (!mountedRef.current) return
       const restoredIds = new Set(result.restored.map((document) => document.id))
       const usedRecoveryFolder = selectedEntries.some(
         (entry) => restoredIds.has(entry.noteId) && isMissingFolder(entry, folders),
       )
       setEntries((current) => current.filter((entry) => !restoredIds.has(entry.noteId)))
       setSelected((current) => new Set([...current].filter((id) => !restoredIds.has(id))))
-      if (result.failed.length > 0) setError(result.failed.map((failure) => failure.message).join('；'))
+      const errors = result.failed.map((failure) => failure.message)
+      if (surroundingRefreshFailed) errors.push('项目已恢复，但资料库刷新失败，请手动刷新。')
+      if (errors.length > 0) setError(errors.join('；'))
       if (restoredIds.size > 0) {
         setFeedback(`已恢复 ${restoredIds.size} 项。${usedRecoveryFolder ? '原文件夹不可用的项目已放入“已恢复”。' : ''}`)
       }
+      setState('ready')
     } catch {
-      setError('无法恢复所选项目，请重试。')
+      if (mountedRef.current) {
+        setError('无法恢复所选项目，请重试。')
+        setState('ready')
+      }
     } finally {
       busyRef.current = null
-      setBusy(null)
+      if (mountedRef.current) setBusy(null)
     }
   }
 
   const undoRecentDeletion = async () => {
     if (undoOperationId === null || !undoAvailable || busyRef.current !== null) return
     const operationId = undoOperationId
+    requestRef.current += 1
     busyRef.current = 'undo'
     setBusy('undo')
     setError(null)
     setFeedback(null)
     try {
       const result = await trash.undo(operationId)
+      let surroundingRefreshFailed = false
+      try {
+        await onLibraryChanged?.()
+      } catch {
+        surroundingRefreshFailed = true
+      }
+      if (!mountedRef.current) return
       if (result.failed.length > 0) {
         setError(result.failed.map((failure) => failure.message).join('；'))
       } else {
         setDismissedUndoOperations((current) => new Set([...current, operationId]))
+        onUndoCompleted?.(operationId)
       }
+      if (surroundingRefreshFailed) setError((current) => [current, '项目已恢复，但资料库刷新失败，请手动刷新。'].filter(Boolean).join('；'))
       if (result.restored.length > 0) setFeedback(`已撤销最近删除，恢复 ${result.restored.length} 项。`)
       await refresh()
     } catch {
-      setError('无法撤销最近删除，请重试。')
+      if (mountedRef.current) {
+        setError('无法撤销最近删除，请重试。')
+        setState('ready')
+      }
     } finally {
       busyRef.current = null
-      setBusy(null)
+      if (mountedRef.current) setBusy(null)
     }
   }
 

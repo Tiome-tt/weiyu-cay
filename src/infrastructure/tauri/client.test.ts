@@ -81,12 +81,14 @@ describe('TauriClient', () => {
     await trash.list()
     await trash.restore([second])
     await trash.undo('019c0000-0000-7000-8000-000000000099')
+    await trash.purgeExpired()
 
     expect(invokeMock.mock.calls).toEqual([
       ['trash_notes', { noteIds: [first, second] }],
       ['list_trash', undefined],
       ['restore_trash', { noteIds: [second] }],
       ['undo_trash', { operationId: '019c0000-0000-7000-8000-000000000099' }],
+      ['purge_expired_trash', undefined],
     ])
   })
 })

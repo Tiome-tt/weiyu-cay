@@ -37,22 +37,24 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     void refreshFolders()
   }, [refreshFolders])
 
-  useEffect(() => {
+  const refreshNotes = useCallback(async () => {
     const request = ++noteListRequest.current
     setNoteListState('loading')
     setNotes([])
-    void notesPort
-      .listNotes(activeFolderId)
-      .then((result) => {
-        if (noteListRequest.current !== request) return
-        setNotes(result)
-        setNoteListState('ready')
-      })
-      .catch(() => {
-        if (noteListRequest.current !== request) return
-        setNoteListState('error')
-      })
+    try {
+      const result = await notesPort.listNotes(activeFolderId)
+      if (noteListRequest.current !== request) return
+      setNotes(result)
+      setNoteListState('ready')
+    } catch {
+      if (noteListRequest.current !== request) return
+      setNoteListState('error')
+    }
   }, [activeFolderId, notesPort])
+
+  useEffect(() => {
+    void refreshNotes()
+  }, [refreshNotes])
 
   const selectFolder = useCallback((id: FolderId | null) => {
     noteRequest.current += 1
@@ -122,6 +124,19 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     setDocumentState('ready')
   }, [activeNoteId])
 
+  const clearDeletedNote = useCallback((id: NoteId) => {
+    noteRequest.current += 1
+    setNotes((current) => current.filter((note) => note.id !== id))
+    if (activeNoteId !== id) return
+    setActiveNoteId(null)
+    setDocument(null)
+    setDocumentState('ready')
+  }, [activeNoteId])
+
+  const refreshLibrary = useCallback(async () => {
+    await Promise.all([refreshFolders(), refreshNotes()])
+  }, [refreshFolders, refreshNotes])
+
   return {
     folders,
     folderState,
@@ -138,5 +153,9 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     moveFolder,
     deleteFolder,
     adoptDocument,
+    clearDeletedNote,
+    refreshFolders,
+    refreshNotes,
+    refreshLibrary,
   }
 }

@@ -11,6 +11,7 @@ import { LibraryLayout } from './LibraryLayout'
 
 const folderA = '019c0000-0000-7000-8000-000000000021' as FolderId
 const folderB = '019c0000-0000-7000-8000-000000000022' as FolderId
+const recoveredFolder = '019c0000-0000-7000-8000-000000000024' as FolderId
 const noteA = '019c0000-0000-7000-8000-000000000031' as NoteId
 const noteB = '019c0000-0000-7000-8000-000000000032' as NoteId
 const noteC = '019c0000-0000-7000-8000-000000000033' as NoteId
@@ -55,12 +56,106 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('flushes the active editor before deleting a formal note and exposes immediate undo', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const listNotes = vi.fn()
+      .mockResolvedValueOnce([summary(noteA, 'Note A')])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([summary(noteA, 'Note A')])
+    const folderList = vi.fn().mockResolvedValue(folderRows)
+    const notes = fakeNotePort({
+      listNotes,
+      loadNote: vi.fn().mockResolvedValue({ ...note('old body'), id: noteA, title: 'Note A' }),
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    const trash: TrashPort = {
+      trash: vi.fn().mockResolvedValue({ operationId: 'delete-op', trashed: [noteA], failed: [] }),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [{ ...note('saved body'), id: noteA, title: 'Note A' }], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: folderList })} system={fakeSystemPort()} trash={trash} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'saved body' } }))
+    screen.getByRole('button', { name: '删除 Note A' }).click()
+
+    expect(notes.saveNote).toHaveBeenCalledOnce()
+    expect(trash.trash).not.toHaveBeenCalled()
+    await act(async () => pendingSave.resolve({ ...note('saved body'), id: noteA, title: 'Note A', revision: 2 }))
+    await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA]))
+    expect(await screen.findByText('“Note A”已移入回收站。')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: '撤销删除' }))
+    expect(trash.undo).toHaveBeenCalledWith('delete-op')
+    await waitFor(() => expect(listNotes.mock.calls.length).toBeGreaterThanOrEqual(3))
+    expect(folderList.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(await screen.findByRole('button', { name: /^Note A/ })).toBeVisible()
+  })
+
+  it('keeps a formal note when its editor flush or trash operation fails', async () => {
+    const trashNote = vi.fn()
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('old body'), id: noteA, title: 'Note A' }),
+      saveNote: vi.fn().mockRejectedValue(commandError('io')),
+    })
+    const trash: TrashPort = {
+      trash: trashNote,
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} trash={trash} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'unsaved body' } }))
+    await user.click(screen.getByRole('button', { name: '删除 Note A' }))
+
+    expect(await screen.findByText('请先解决保存错误，再删除笔记。')).toBeVisible()
+    expect(trashNote).not.toHaveBeenCalled()
+    expect(screen.getByRole('heading', { name: 'Note A' })).toBeVisible()
+  })
+
+  it('shows a per-item trash failure and leaves the formal note reachable', async () => {
+    const trash: TrashPort = {
+      trash: vi.fn().mockResolvedValue({ operationId: 'unused', trashed: [], failed: [{ noteId: noteA, message: '文件正在被使用' }] }),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A')]) })}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+        trash={trash}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '删除 Note A' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('文件正在被使用')
+    expect(screen.getByRole('button', { name: /^Note A/ })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
+  })
+
   it('opens the application trash from folder navigation', async () => {
     const trash: TrashPort = {
       trash: vi.fn().mockResolvedValue({ operationId: 'op', trashed: [], failed: [] }),
       list: vi.fn().mockResolvedValue([]),
       restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
       undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
     }
     const user = userEvent.setup()
     render(
@@ -74,6 +169,51 @@ describe('LibraryLayout', () => {
 
     await user.click(await screen.findByRole('treeitem', { name: '回收站' }))
     expect(await screen.findByRole('region', { name: '回收站' })).toBeVisible()
+  })
+
+  it('shows a recovered folder and its restored note after restoring from trash', async () => {
+    const folderList = vi.fn()
+      .mockResolvedValueOnce(folderRows)
+      .mockResolvedValue([...folderRows, { id: recoveredFolder, parentId: null, name: '已恢复', sortOrder: 2 }])
+    const listNotes = vi.fn(async (folderId: FolderId | null) => folderId === recoveredFolder
+      ? [summary(noteA, 'Recovered note', recoveredFolder)]
+      : [])
+    const trash: TrashPort = {
+      trash: vi.fn().mockResolvedValue({ operationId: 'op', trashed: [], failed: [] }),
+      list: vi.fn().mockResolvedValue([{
+        noteId: noteA,
+        kind: 'formal',
+        title: 'Recovered note',
+        previousFolderId: '019c0000-0000-7000-8000-000000000099' as FolderId,
+        previousRelativePath: `notes/${noteA}`,
+        deletedAt: '2026-08-02T02:30:00Z',
+        assets: [],
+        operationId: 'delete-op',
+      }]),
+      restore: vi.fn().mockResolvedValue({
+        restored: [{ ...note(''), id: noteA, title: 'Recovered note', folderId: recoveredFolder }],
+        failed: [],
+      }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes })}
+        folders={fakeFolderPort({ listFolders: folderList })}
+        system={fakeSystemPort()}
+        trash={trash}
+      />,
+    )
+
+    await user.click(await screen.findByRole('treeitem', { name: '回收站' }))
+    await user.click(await screen.findByRole('checkbox', { name: '选择 Recovered note' }))
+    await user.click(screen.getByRole('button', { name: '恢复所选' }))
+    await user.click(await screen.findByRole('treeitem', { name: '已恢复' }))
+
+    expect(await screen.findByRole('button', { name: /^Recovered note/ })).toBeVisible()
+    expect(folderList.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
   it('switches to the temporary inbox without changing the persisted column layout', async () => {
