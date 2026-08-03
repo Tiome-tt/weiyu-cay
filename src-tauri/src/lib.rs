@@ -38,8 +38,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             commands::settings::setup(app)?;
+            commands::storage::setup(app)?;
             commands::notes::setup(app)?;
-            commands::folders::setup(app)?;
             commands::temporary::setup(app)?;
             commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
             let paths = app

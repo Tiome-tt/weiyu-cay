@@ -4,4 +4,5 @@ pub mod notes;
 pub mod search;
 pub mod settings;
 pub mod shortcuts;
+pub mod storage;
 pub mod temporary;

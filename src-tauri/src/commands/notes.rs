@@ -1,4 +1,5 @@
 use crate::{
+    commands::storage::{StorageCommandState, StorageConsumer},
     domain::{
         FolderId, LinkRepairResult, NoteDocument, NoteId, NoteSummary, PurgeTrashResult,
         RestoreTrashResult, TrashBatchResult, TrashEntry,
@@ -6,7 +7,6 @@ use crate::{
     error::CommandError,
     storage::{
         database::Database,
-        paths::StoragePaths,
         repository::{LinkRepository, NoteRepository},
         trash::TrashService,
     },
@@ -14,16 +14,6 @@ use crate::{
 };
 use serde::Deserialize;
 use tauri::{Manager, State};
-
-pub struct NoteCommandState {
-    paths: StoragePaths,
-}
-
-impl NoteCommandState {
-    pub(crate) fn paths(&self) -> &StoragePaths {
-        &self.paths
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,8 +24,8 @@ pub struct SaveNoteInput {
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app
-        .state::<crate::commands::settings::SettingsCommandState>()
-        .paths()
+        .state::<StorageCommandState>()
+        .paths_for(StorageConsumer::Notes)
         .clone();
     {
         let _guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
@@ -43,22 +33,23 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         database.migrate()?;
         database.close()?;
     }
-    app.manage(NoteCommandState { paths });
     Ok(())
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn create_note(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     document: NoteDocument,
 ) -> Result<NoteDocument, CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Notes).root(),
+    )?;
     repository(&state)?.create_locked(document, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn load_note(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_id: NoteId,
 ) -> Result<NoteDocument, CommandError> {
     repository(&state)?.load(note_id)
@@ -66,16 +57,18 @@ pub fn load_note(
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_note(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     input: SaveNoteInput,
 ) -> Result<NoteDocument, CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Notes).root(),
+    )?;
     repository(&state)?.save_locked(input.document, input.expected_revision, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn list_notes(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     folder_id: Option<FolderId>,
 ) -> Result<Vec<NoteSummary>, CommandError> {
     repository(&state)?.list_in_folder(folder_id)
@@ -83,87 +76,94 @@ pub fn list_notes(
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn move_note(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_id: NoteId,
     folder_id: Option<FolderId>,
 ) -> Result<NoteDocument, CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Notes).root(),
+    )?;
     repository(&state)?.move_note_locked(note_id, folder_id, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn trash_notes(
     window: tauri::WebviewWindow,
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_ids: Vec<NoteId>,
 ) -> Result<TrashBatchResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
-    TrashService::new(state.paths.clone()).trash(note_ids, &chrono::Utc::now().to_rfc3339())
+    TrashService::new(state.paths_for(StorageConsumer::Trash).clone())
+        .trash(note_ids, &chrono::Utc::now().to_rfc3339())
 }
 
 #[tauri::command]
 pub fn list_trash(
     window: tauri::WebviewWindow,
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
 ) -> Result<Vec<TrashEntry>, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::List, None)?;
-    TrashService::new(state.paths.clone()).list()
+    TrashService::new(state.paths_for(StorageConsumer::Trash).clone()).list()
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn restore_trash(
     window: tauri::WebviewWindow,
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_ids: Vec<NoteId>,
 ) -> Result<RestoreTrashResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
-    TrashService::new(state.paths.clone()).restore(note_ids)
+    TrashService::new(state.paths_for(StorageConsumer::Trash).clone()).restore(note_ids)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn undo_trash(
     window: tauri::WebviewWindow,
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     operation_id: String,
 ) -> Result<RestoreTrashResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
-    TrashService::new(state.paths.clone()).undo(&operation_id)
+    TrashService::new(state.paths_for(StorageConsumer::Trash).clone()).undo(&operation_id)
 }
 
 #[tauri::command]
 pub fn purge_expired_trash(
     window: tauri::WebviewWindow,
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
 ) -> Result<PurgeTrashResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
-    TrashService::new(state.paths.clone()).purge_expired(&chrono::Utc::now().to_rfc3339())
+    TrashService::new(state.paths_for(StorageConsumer::Trash).clone())
+        .purge_expired(&chrono::Utc::now().to_rfc3339())
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn resolve_link(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_id: NoteId,
 ) -> Result<Option<NoteSummary>, CommandError> {
-    LinkRepository::new(state.paths.clone()).resolve(note_id)
+    LinkRepository::new(state.paths_for(StorageConsumer::Links).clone()).resolve(note_id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn backlinks(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_id: NoteId,
 ) -> Result<Vec<NoteSummary>, CommandError> {
-    LinkRepository::new(state.paths.clone()).backlinks(note_id)
+    LinkRepository::new(state.paths_for(StorageConsumer::Links).clone()).backlinks(note_id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn rename_target_labels(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_id: NoteId,
     title: String,
 ) -> Result<LinkRepairResult, CommandError> {
-    LinkRepository::new(state.paths.clone()).rename_target_labels(note_id, &title)
+    LinkRepository::new(state.paths_for(StorageConsumer::Links).clone())
+        .rename_target_labels(note_id, &title)
 }
 
-fn repository(state: &NoteCommandState) -> Result<NoteRepository, CommandError> {
-    Ok(NoteRepository::new(state.paths.clone()))
+fn repository(state: &StorageCommandState) -> Result<NoteRepository, CommandError> {
+    Ok(NoteRepository::new(
+        state.paths_for(StorageConsumer::Notes).clone(),
+    ))
 }

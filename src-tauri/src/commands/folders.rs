@@ -1,4 +1,5 @@
 use crate::{
+    commands::storage::{StorageCommandState, StorageConsumer},
     domain::{CreateFolderInput, Folder, FolderId},
     error::CommandError,
     storage::{
@@ -10,7 +11,7 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::State;
 use uuid::Uuid;
 
 pub struct FolderRepository {
@@ -292,61 +293,61 @@ impl FolderRepository {
     }
 }
 
-pub struct FolderCommandState {
-    paths: StoragePaths,
-}
-
-pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let paths = StoragePaths::open(app.path().app_data_dir()?)?;
-    app.manage(FolderCommandState { paths });
-    Ok(())
-}
-
 #[tauri::command]
-pub fn list_folders(state: State<'_, FolderCommandState>) -> Result<Vec<Folder>, CommandError> {
+pub fn list_folders(state: State<'_, StorageCommandState>) -> Result<Vec<Folder>, CommandError> {
     repository(&state)?.list()
 }
 
 #[tauri::command]
 pub fn create_folder(
-    state: State<'_, FolderCommandState>,
+    state: State<'_, StorageCommandState>,
     input: CreateFolderInput,
 ) -> Result<Folder, CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Folders).root(),
+    )?;
     repository(&state)?.create_locked(input, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn rename_folder(
-    state: State<'_, FolderCommandState>,
+    state: State<'_, StorageCommandState>,
     folder_id: FolderId,
     name: String,
 ) -> Result<Folder, CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Folders).root(),
+    )?;
     repository(&state)?.rename_locked(folder_id, name, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn move_folder(
-    state: State<'_, FolderCommandState>,
+    state: State<'_, StorageCommandState>,
     folder_id: FolderId,
     parent_id: Option<FolderId>,
 ) -> Result<Folder, CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Folders).root(),
+    )?;
     repository(&state)?.move_folder_locked(folder_id, parent_id, &guard)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn delete_empty_folder(
-    state: State<'_, FolderCommandState>,
+    state: State<'_, StorageCommandState>,
     folder_id: FolderId,
 ) -> Result<(), CommandError> {
-    let guard = crate::platform::IndexMutationLock::acquire(state.paths.root())?;
+    let guard = crate::platform::IndexMutationLock::acquire(
+        state.paths_for(StorageConsumer::Folders).root(),
+    )?;
     repository(&state)?.delete_empty_locked(folder_id, &guard)
 }
 
-fn repository(state: &FolderCommandState) -> Result<FolderRepository, CommandError> {
-    Ok(FolderRepository::new(state.paths.clone()))
+fn repository(state: &StorageCommandState) -> Result<FolderRepository, CommandError> {
+    Ok(FolderRepository::new(
+        state.paths_for(StorageConsumer::Folders).clone(),
+    ))
 }
 
 #[derive(Serialize)]

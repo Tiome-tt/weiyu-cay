@@ -1,5 +1,5 @@
 use crate::{
-    commands::notes::NoteCommandState,
+    commands::storage::{StorageCommandState, StorageConsumer},
     domain::{NoteKind, SaveImageInput, SavedImage},
     error::CommandError,
     platform::{NewFilePublishState, SafeDirectory},
@@ -43,11 +43,11 @@ impl ValidatedImage {
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_image(
     window: tauri::WebviewWindow,
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     input: SaveImageInput,
 ) -> Result<SavedImage, CommandError> {
     authorize_asset_caller(window.label(), input.note_id)?;
-    save_image_to(state.paths(), input)
+    save_image_to(state.paths_for(StorageConsumer::Assets), input)
 }
 
 pub fn validate_image(media_type: &str, bytes: &[u8]) -> Result<ValidatedImage, CommandError> {

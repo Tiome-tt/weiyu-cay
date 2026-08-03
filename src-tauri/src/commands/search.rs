@@ -1,5 +1,5 @@
 use crate::{
-    commands::notes::NoteCommandState,
+    commands::storage::{StorageCommandState, StorageConsumer},
     domain::{FolderId, NoteDocument, NoteId, NoteKind, SearchResult},
     error::CommandError,
     storage::{
@@ -226,27 +226,30 @@ pub enum SearchQuery {
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn search_notes(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     query: SearchQuery,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResult>, CommandError> {
     match query {
         SearchQuery::Tag { value } => {
-            SearchRepository::new(state.paths().clone()).search_tag(&value, limit.unwrap_or(50))
+            SearchRepository::new(state.paths_for(StorageConsumer::Search).clone())
+                .search_tag(&value, limit.unwrap_or(50))
         }
         SearchQuery::Text { value } => {
-            SearchRepository::new(state.paths().clone()).search_text(&value, limit.unwrap_or(50))
+            SearchRepository::new(state.paths_for(StorageConsumer::Search).clone())
+                .search_text(&value, limit.unwrap_or(50))
         }
     }
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn update_note_tags(
-    state: State<'_, NoteCommandState>,
+    state: State<'_, StorageCommandState>,
     note_id: NoteId,
     tags: Vec<String>,
 ) -> Result<NoteDocument, CommandError> {
-    SearchRepository::new(state.paths().clone()).update_tags(note_id, tags)
+    SearchRepository::new(state.paths_for(StorageConsumer::Search).clone())
+        .update_tags(note_id, tags)
 }
 
 fn normalize_query(input: &str) -> Result<String, CommandError> {

@@ -1,5 +1,5 @@
 use crate::{
-    commands::notes::NoteCommandState,
+    commands::storage::{StorageCommandState, StorageConsumer},
     domain::{
         BatchConversionResult, DeleteTemporaryResult, FolderId, NoteDocument, NoteId,
         TemporaryWindowState, UndoTemporaryDeleteResult,
@@ -45,10 +45,17 @@ pub struct SaveTemporaryInput {
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let paths = app.state::<NoteCommandState>().paths().clone();
+    let paths = app
+        .state::<StorageCommandState>()
+        .paths_for(StorageConsumer::Temporary)
+        .clone();
     let shutting_down = Arc::new(AtomicBool::new(false));
+    let window_paths = app
+        .state::<StorageCommandState>()
+        .paths_for(StorageConsumer::StickyWindows)
+        .clone();
     let backend =
-        TauriTemporaryWindowBackend::new(app.handle().clone(), paths.clone(), shutting_down);
+        TauriTemporaryWindowBackend::new(app.handle().clone(), window_paths, shutting_down);
     TemporaryInboxService::new(paths.clone(), backend.clone()).recover_pending()?;
     crate::storage::trash::run_startup_trash_maintenance(
         paths.clone(),
