@@ -131,14 +131,14 @@ fn export_rewrites_parser_confirmed_asset_variants_and_preserves_suffixes_and_co
 }
 
 #[test]
-fn export_preserves_unmanaged_relative_paths_with_a_later_assets_component() {
+fn export_preserves_unmanaged_relative_and_root_relative_asset_paths() {
     let store = TestStore::new();
     create_formal_note(
         &store,
         note_id(FIRST_ID),
         "Documentation",
         None,
-        "[documentation](docs/assets/diagram.png)\n[second](reference/assets/index.html)",
+        "[documentation](docs/assets/diagram.png)\n[second](reference/assets/index.html)\n[root documentation](/docs/assets/diagram.png)\n[root asset](/assets/image.png)\n[root percent](/assets/100%ready.png)\n[drive](C:/assets/image.png)\n[cdn](//cdn.example/assets/image.png)",
     );
     let destination = tempfile::tempdir().unwrap();
 
@@ -150,6 +150,11 @@ fn export_preserves_unmanaged_relative_paths_with_a_later_assets_component() {
     assert!(report.failed.is_empty(), "{report:?}");
     assert!(exported.contains("[documentation](docs/assets/diagram.png)"));
     assert!(exported.contains("[second](reference/assets/index.html)"));
+    assert!(exported.contains("[root documentation](/docs/assets/diagram.png)"));
+    assert!(exported.contains("[root asset](/assets/image.png)"));
+    assert!(exported.contains("[root percent](/assets/100%ready.png)"));
+    assert!(exported.contains("[drive](C:/assets/image.png)"));
+    assert!(exported.contains("[cdn](//cdn.example/assets/image.png)"));
 }
 
 #[test]
@@ -176,6 +181,13 @@ fn export_rejects_raw_and_percent_encoded_asset_traversal() {
         None,
         "![escape](%2e%2e/assets/plain.png)",
     );
+    create_formal_note(
+        &store,
+        note_id("019c0000-0000-7000-8000-000000000404"),
+        "Encoded backslash escape",
+        None,
+        "![escape](assets/%5coutside.png)",
+    );
     let destination = tempfile::tempdir().unwrap();
 
     let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
@@ -184,7 +196,7 @@ fn export_rejects_raw_and_percent_encoded_asset_traversal() {
         serde_json::from_slice(&fs::read(output.join("export-manifest.json")).unwrap()).unwrap();
 
     assert_eq!(report.notes_exported, 0, "{report:?}");
-    assert_eq!(report.failed.len(), 3, "{report:?}");
+    assert_eq!(report.failed.len(), 4, "{report:?}");
     assert_eq!(manifest["notes"], serde_json::json!({}));
 }
 

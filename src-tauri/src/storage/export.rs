@@ -800,6 +800,11 @@ fn replacement_for_destination(
     if is_external_destination(encoded_path) {
         return Ok(None);
     }
+    // URI root-relative destinations are not note-local assets. Classify them
+    // before percent decoding so unrelated malformed escapes cannot fail a note.
+    if encoded_path.starts_with('/') {
+        return Ok(None);
+    }
     let decoded_path = match percent_decode_path(encoded_path) {
         Ok(path) => path,
         Err(error)
@@ -812,7 +817,11 @@ fn replacement_for_destination(
         Err(_) => return Ok(None),
     };
     let raw_components = decoded_path.split('/').collect::<Vec<_>>();
-    if decoded_path.starts_with('/') || decoded_path.contains('\\') {
+    // An encoded leading slash has the same URI-root meaning after decoding.
+    if decoded_path.starts_with('/') {
+        return Ok(None);
+    }
+    if decoded_path.contains('\\') {
         if raw_components.contains(&"assets") {
             return Err(CommandError::validation(
                 "asset reference escapes the note assets directory",
