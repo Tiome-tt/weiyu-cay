@@ -31,6 +31,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState(false)
   const [deletingNoteId, setDeletingNoteId] = useState<NoteId | null>(null)
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
@@ -210,6 +212,19 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
+  const createFormalNote = async () => {
+    if (createBusy) return
+    setCreateBusy(true)
+    setCreateError(false)
+    try {
+      await library.createNote()
+    } catch {
+      setCreateError(true)
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
   const undoFormalDelete = async () => {
     if (!mountedRef.current || trash === undefined || recentTrashOperationId === null || trashBusyRef.current !== null) return
     const request = ++trashMutationRef.current
@@ -305,6 +320,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             activeId={library.activeNoteId}
             state={library.noteListState}
             onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
+            onCreate={() => void createFormalNote()}
+            creating={createBusy}
+            createError={createError}
             onDelete={trash === undefined ? undefined : (noteId, title) => void deleteFormalNote(noteId, title)}
             deletingId={deletingNoteId}
             deleteError={trashError}

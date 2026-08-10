@@ -1829,6 +1829,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-update-settings",
             "allow-reset-settings",
             "allow-get-storage-info",
+            "allow-startup-recovery-report",
             "allow-move-storage-root",
             "allow-restart-application",
             "allow-export-library"

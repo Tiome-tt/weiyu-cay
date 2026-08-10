@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-startup-recovery-report"
+description = "Allows the main window to read the completed startup recovery report."
+commands.allow = ["startup_recovery_report"]

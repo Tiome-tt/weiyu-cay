@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { FolderPort, NotePort } from '../../domain/ports'
 
-export type LibraryNotePort = Pick<NotePort, 'listNotes' | 'loadNote' | 'saveNote'>
+export type LibraryNotePort = Pick<NotePort, 'createNote' | 'listNotes' | 'loadNote' | 'saveNote'>
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -109,6 +109,16 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     [foldersPort, refreshFolders],
   )
 
+  const createNote = useCallback(async () => {
+    const request = ++noteRequest.current
+    const created = await notesPort.createNote(activeFolderId)
+    if (!mountedRef.current || noteRequest.current !== request) return
+    setActiveNoteId(created.id)
+    setDocument(created)
+    setDocumentState('ready')
+    await refreshNotes()
+  }, [activeFolderId, notesPort, refreshNotes])
+
   const renameFolder = useCallback(
     async (id: FolderId, name: string) => {
       await foldersPort.renameFolder(id, name)
@@ -168,6 +178,7 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     selectFolder,
     selectNote,
     createFolder,
+    createNote,
     renameFolder,
     moveFolder,
     deleteFolder,

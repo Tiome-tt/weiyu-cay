@@ -18,6 +18,7 @@ use uuid::Uuid;
 const REBUILD_MARKER: &str = "rebuild-needed.json";
 const RECOVERY_MARKER: &str = "recovery-needed.json";
 const NOTE_RECOVERY_DESCRIPTOR: &str = ".note.md.replace-recovery.json";
+const MAX_MARKDOWN_BYTES: usize = 63 * 1024 * 1024;
 
 pub struct NoteRepository {
     paths: StoragePaths,
@@ -974,6 +975,9 @@ pub(crate) fn note_id_from_blob(bytes: &[u8]) -> Result<NoteId, CommandError> {
 fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
     if document.title.trim().is_empty() {
         return Err(CommandError::validation("note title is empty"));
+    }
+    if document.markdown.len() > MAX_MARKDOWN_BYTES {
+        return Err(CommandError::validation("note content is too large"));
     }
     DateTime::parse_from_rfc3339(&document.created_at).map_err(|source| {
         CommandError::validation(format!("created timestamp is invalid: {source}"))

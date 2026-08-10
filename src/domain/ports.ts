@@ -48,6 +48,18 @@ export interface ExportDestinationPicker {
   chooseExportDestination(): Promise<string | null>
 }
 
+export interface StartupRecoveryReport {
+  recovered: Array<{ noteId: NoteId; revision: number }>
+  quarantined: Array<{ noteId: NoteId; candidate: string; reason: string }>
+  ambiguous: string[]
+  indexRebuilt: boolean
+  indexQuarantine: { database: string; sidecars: string[] } | null
+}
+
+export interface RecoveryPort {
+  load(): Promise<StartupRecoveryReport>
+}
+
 export interface SearchResult {
   noteId: NoteId
   title: string

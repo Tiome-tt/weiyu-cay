@@ -3,6 +3,7 @@ import type { NoteDocument } from '../../domain/model'
 import type { AssetPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState } from '../../domain/ports'
 import { MarkdownSource, type MarkdownSourceHandle } from '../editor/MarkdownSource'
 import { useAutosave, type SaveState } from '../editor/useAutosave'
+import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
 
 interface StickyWindowProps {
   note: NoteDocument
@@ -134,17 +135,13 @@ export function shouldHandleTemporaryClose(
 }
 
 function StickySaveStatus({ state }: { state: SaveState }) {
-  if (state.status === 'idle') return <span role="status">已就绪</span>
-  if (state.status === 'error') {
-    return (
-      <span role="alert" className="sticky-window__error">
-        <span>{state.message}</span>
-        <button type="button" aria-label="重试保存" onClick={state.retry}>
-          重试
-        </button>
-      </span>
-    )
-  }
-  const labels = { dirty: '待保存', saving: '保存中…', saved: '已保存' } as const
-  return <span role="status">{labels[state.status]}</span>
+  const notice: StatusNoticeState = state.status === 'idle'
+    ? { status: 'status', message: '已就绪' }
+    : state.status === 'error'
+      ? state
+      : {
+          status: state.status === 'saved' ? 'success' : 'status',
+          message: { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status],
+        }
+  return <StatusNotice state={notice} className={state.status === 'error' ? 'sticky-window__error' : undefined} />
 }

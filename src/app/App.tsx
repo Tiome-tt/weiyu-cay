@@ -11,6 +11,7 @@ import type { AppSettings } from '../domain/ports'
 import { SettingsView } from '../features/settings/SettingsView'
 import { useExportLibraryController } from '../features/settings/ExportLibrary'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeStyle } from '../features/settings/theme'
+import { StatusNotice, type StatusNoticeState } from '../shared/StatusNotice'
 
 const defaultServices = createAppServices()
 
@@ -26,6 +27,7 @@ function MainApplication({ services }: { services: AppServices }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
   const [settingsError, setSettingsError] = useState(false)
+  const [recoveryNotice, setRecoveryNotice] = useState<StatusNoticeState>({ status: 'idle' })
   const settingsRevision = useRef(0)
   const libraryRef = useRef<LibraryLayoutHandle>(null)
   const systemScheme = useSystemColorScheme()
@@ -63,9 +65,29 @@ function MainApplication({ services }: { services: AppServices }) {
     }).catch(() => void loadSettings())
     return () => { active = false; unlisten?.() }
   }, [loadSettings, services.settings])
+  const loadRecovery = useCallback(async () => {
+    if (services.recovery === undefined) return
+    try {
+      const report = await services.recovery.load()
+      const actions = report.recovered.length + report.quarantined.length + (report.indexRebuilt ? 1 : 0)
+      if (actions === 0) {
+        setRecoveryNotice({ status: 'idle' })
+        return
+      }
+      const recovered = report.recovered.length > 0 ? `已恢复 ${report.recovered.length} 篇笔记` : '启动恢复检查已完成'
+      setRecoveryNotice({
+        status: 'success',
+        message: `${recovered}${report.indexRebuilt ? '并重建本地索引' : ''}${report.quarantined.length > 0 ? `；隔离 ${report.quarantined.length} 个不安全候选` : ''}`,
+      })
+    } catch {
+      setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void loadRecovery(), retryLabel: '重试读取恢复报告' })
+    }
+  }, [services.recovery])
+  useEffect(() => { void loadRecovery() }, [loadRecovery])
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
+      <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
         {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}

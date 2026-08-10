@@ -3,6 +3,99 @@ use simple_notes_lib::{
     domain::{NoteDocument, NoteId, NoteKind},
     storage::repository::NoteRepository,
 };
+use std::fs;
+use uuid::Uuid;
+
+#[allow(dead_code)]
+const RECOVERY_NOTE_ID: &str = "019c0000-0000-7000-8000-000000000611";
+
+#[allow(dead_code)]
+pub struct RecoveryFixture {
+    pub store: TestStore,
+    candidate_sequence: u128,
+}
+
+#[allow(dead_code)]
+impl RecoveryFixture {
+    pub fn with_document(revision: u64, markdown: &str) -> Self {
+        let store = TestStore::new();
+        let repository = NoteRepository::new(store.paths.clone());
+        let mut current = repository
+            .create(recovery_document(0, markdown))
+            .expect("create recovery fixture note");
+        for expected in 0..revision {
+            current.revision = expected;
+            current.markdown = markdown.to_owned();
+            current = repository
+                .save(current, expected)
+                .expect("advance recovery fixture revision");
+        }
+        Self {
+            store,
+            candidate_sequence: 1,
+        }
+    }
+
+    pub fn add_candidate(&mut self, revision: u64, markdown: &str) {
+        self.add_candidate_with_id(RECOVERY_NOTE_ID, revision, markdown);
+    }
+
+    pub fn add_candidate_with_id(&mut self, id: &str, revision: u64, markdown: &str) {
+        let name = format!(".note.md.{}.tmp", Uuid::from_u128(self.candidate_sequence));
+        self.candidate_sequence += 1;
+        fs::write(
+            self.note_directory().join(name),
+            serialized_document(id, revision, markdown),
+        )
+        .expect("write recovery candidate");
+    }
+
+    pub fn loaded_markdown(&self) -> String {
+        NoteRepository::new(self.store.paths.clone())
+            .load(NoteId::parse_str(RECOVERY_NOTE_ID).unwrap())
+            .unwrap()
+            .markdown
+    }
+
+    pub fn candidate_names(&self) -> Vec<String> {
+        fs::read_dir(self.note_directory())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(".note.md.") && name.ends_with(".tmp"))
+            .collect()
+    }
+
+    pub fn note_path(&self) -> std::path::PathBuf {
+        self.note_directory().join("note.md")
+    }
+
+    fn note_directory(&self) -> std::path::PathBuf {
+        self.store.paths.notes().join(RECOVERY_NOTE_ID)
+    }
+}
+
+#[allow(dead_code)]
+fn recovery_document(revision: u64, markdown: &str) -> NoteDocument {
+    NoteDocument {
+        id: NoteId::parse_str(RECOVERY_NOTE_ID).unwrap(),
+        kind: NoteKind::Formal,
+        title: "Recovery fixture".to_owned(),
+        folder_id: None,
+        tags: Vec::new(),
+        markdown: markdown.to_owned(),
+        revision,
+        created_at: "2026-07-30T00:00:00Z".to_owned(),
+        updated_at: "2026-07-30T00:00:00Z".to_owned(),
+    }
+}
+
+#[allow(dead_code)]
+fn serialized_document(id: &str, revision: u64, markdown: &str) -> String {
+    format!(
+        "---\nid: {id}\nkind: formal\ntitle: Recovery fixture\nfolderId: null\ntags: []\nrevision: {revision}\ncreatedAt: 2026-07-30T00:00:00Z\nupdatedAt: 2026-07-30T00:00:00Z\n---\n{markdown}"
+    )
+}
 
 pub struct TestStore {
     // Keep the database before TempDir so Windows closes SQLite before cleanup.

@@ -21,6 +21,70 @@ const TEMPORARY_ID: &str = "019c0000-0000-7000-8000-000000000072";
 const UNKNOWN_ID: &str = "019c0000-0000-7000-8000-000000000079";
 
 #[test]
+fn rejects_oversized_note_command_payload_before_creating_durable_content() {
+    let store = TestStore::new();
+    let id = id("019c0000-0000-7000-8000-000000000078");
+    let result = NoteRepository::new(store.paths.clone()).create(NoteDocument {
+        id,
+        kind: NoteKind::Formal,
+        title: "Oversized".to_owned(),
+        folder_id: None,
+        tags: Vec::new(),
+        markdown: "x".repeat(64 * 1024 * 1024 + 1),
+        revision: 0,
+        created_at: "2026-07-30T00:00:00Z".to_owned(),
+        updated_at: "2026-07-30T00:00:00Z".to_owned(),
+    });
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("oversized note must be rejected"),
+    };
+
+    assert_eq!(error.code(), CommandErrorCode::Validation);
+    assert!(!store.paths.notes().join(id.to_string()).exists());
+}
+
+#[test]
+fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_commands() {
+    let main: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let sticky: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/temporary.json")).unwrap();
+    let strings = |document: &serde_json::Value| {
+        document["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let main_permissions = strings(&main);
+    let sticky_permissions = strings(&sticky);
+
+    assert_eq!(sticky["windows"], serde_json::json!(["temporary-*"]));
+    for required in [
+        "allow-load-temporary",
+        "allow-save-temporary",
+        "allow-hide-temporary-window",
+        "allow-set-temporary-always-on-top",
+    ] {
+        assert!(sticky_permissions.contains(required));
+    }
+    for forbidden in [
+        "allow-create-note",
+        "allow-list-notes",
+        "allow-delete-temporary",
+        "allow-convert-temporary",
+        "allow-export-library",
+        "allow-move-storage-root",
+        "opener:default",
+    ] {
+        assert!(!sticky_permissions.contains(forbidden));
+        assert!(main_permissions.contains(forbidden) || forbidden == "allow-delete-temporary");
+    }
+}
+
+#[test]
 fn validates_png_jpeg_gif_and_webp_with_canonical_extensions_and_dimensions() {
     for (media_type, format, extension) in [
         ("image/png", ImageFormat::Png, "png"),

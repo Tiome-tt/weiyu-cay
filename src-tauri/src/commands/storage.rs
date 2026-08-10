@@ -1,4 +1,5 @@
 use crate::storage::paths::StoragePaths;
+use crate::{error::CommandError, storage::recovery::StartupRecoveryReport};
 
 #[derive(Debug, Clone, Copy)]
 pub enum StorageConsumer {
@@ -40,4 +41,17 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .clone();
     app.manage(StorageCommandState::new(paths));
     Ok(())
+}
+
+#[tauri::command]
+pub fn startup_recovery_report(
+    window: tauri::Window,
+    report: tauri::State<'_, StartupRecoveryReport>,
+) -> Result<StartupRecoveryReport, CommandError> {
+    if window.label() != "main" {
+        return Err(CommandError::validation(
+            "startup recovery report requires the main window",
+        ));
+    }
+    Ok(report.inner().clone())
 }

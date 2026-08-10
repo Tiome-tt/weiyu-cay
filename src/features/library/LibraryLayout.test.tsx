@@ -58,6 +58,22 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('creates a note in the active folder and opens the authoritative document', async () => {
+    const created = { ...note(''), id: noteC, title: '未命名笔记', folderId: folderA }
+    const notes = fakeNotePort({
+      createNote: vi.fn().mockResolvedValue(created),
+      listNotes: vi.fn().mockResolvedValue([]),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />)
+
+    await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
+    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+
+    expect(notes.createNote).toHaveBeenCalledWith(folderA)
+    expect(await screen.findByRole('heading', { name: '未命名笔记' })).toBeVisible()
+  })
+
   it('restores and persists keyboard-accessible collapsed columns without losing proportions', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': { folder: 0.25, noteList: 0.3 },

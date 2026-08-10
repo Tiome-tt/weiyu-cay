@@ -4,6 +4,7 @@ pub mod export;
 pub mod markdown;
 pub mod paths;
 pub mod rebuild;
+pub mod recovery;
 pub mod repository;
 pub mod temporary_ops;
 pub mod trash;

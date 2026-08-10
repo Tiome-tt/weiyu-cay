@@ -2,12 +2,16 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, LinkPort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
 class TauriNotePort implements LibraryNotePort {
   constructor(private readonly client: TauriClient) {}
+
+  createNote(folderId: FolderId | null) {
+    return this.client.invoke<NoteDocument>('create_note', { folderId })
+  }
 
   loadNote(noteId: NoteId) {
     return this.client.invoke<NoteDocument>('load_note', { noteId })
@@ -21,6 +25,14 @@ class TauriNotePort implements LibraryNotePort {
 
   listNotes(folderId: FolderId | null) {
     return this.client.invoke<NoteSummary[]>('list_notes', { folderId })
+  }
+}
+
+class TauriRecoveryPort implements RecoveryPort {
+  constructor(private readonly client: TauriClient) {}
+
+  load() {
+    return this.client.invoke<StartupRecoveryReport>('startup_recovery_report')
   }
 }
 
@@ -276,6 +288,7 @@ export function createTauriPorts(): {
   stickySettings: StickySettingsPort
   exporter: ExportPort
   exportDestinationPicker: ExportDestinationPicker
+  recovery: RecoveryPort
 } {
   const client = new TauriClient()
   return {
@@ -292,5 +305,6 @@ export function createTauriPorts(): {
     stickySettings: new TauriStickySettingsPort(client),
     exporter: new TauriExportPort(client),
     exportDestinationPicker: new TauriExportDestinationPicker(),
+    recovery: new TauriRecoveryPort(client),
   }
 }

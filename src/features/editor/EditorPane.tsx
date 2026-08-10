@@ -14,6 +14,7 @@ import { Backlinks } from './Backlinks'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
+import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
 
 interface EditorPaneProps {
   document: NoteDocument
@@ -234,22 +235,15 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 })
 
 function SaveStatus({ state }: { state: SaveState }) {
-  if (state.status === 'idle') return null
-  if (state.status === 'error') {
-    return (
-      <span className="editor-save editor-save--error" role="alert">
-        <span>{state.message}</span>
-        <button type="button" aria-label="重试保存" onClick={state.retry}>
-          重试
-        </button>
-      </span>
-    )
-  }
-  return (
-    <span className="editor-save" role="status">
-      {state.status}
-    </span>
-  )
+  const notice: StatusNoticeState = state.status === 'idle'
+    ? { status: 'idle' }
+    : state.status === 'error'
+      ? state
+      : {
+          status: state.status === 'saved' ? 'success' : 'status',
+          message: { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status],
+        }
+  return <StatusNotice state={notice} className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`} />
 }
 
 function syncScrollPosition(source: HTMLElement, target: HTMLElement, sourceTop: number) {

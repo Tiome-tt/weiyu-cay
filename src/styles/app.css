@@ -448,6 +448,19 @@ button {
   color: var(--color-error);
 }
 
+.startup-recovery-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  color: var(--color-heading);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-border);
+  border-radius: 10px;
+}
+
 .library-content {
   display: grid;
   height: 100%;

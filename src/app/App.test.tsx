@@ -29,6 +29,16 @@ describe('App', () => {
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
   })
 
+  it('announces the actual startup recovery report in the main application', async () => {
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      recovery: { load: vi.fn().mockResolvedValue({ recovered: [{ noteId: '019c0000-0000-7000-8000-000000000002', revision: 2 }], quarantined: [], ambiguous: [], indexRebuilt: true, indexQuarantine: null }) },
+    }} />)
+
+    expect(await screen.findByText('已恢复 1 篇笔记并重建本地索引')).toHaveAttribute('role', 'status')
+  })
+
   it('loads application settings, applies their theme, and opens settings from the main window', async () => {
     const user = userEvent.setup()
     render(

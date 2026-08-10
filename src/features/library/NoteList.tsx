@@ -1,11 +1,15 @@
 import { useEffect, useRef } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
+import { StatusNotice } from '../../shared/StatusNotice'
 
 interface NoteListProps {
   notes: NoteSummary[]
   activeId: NoteId | null
   state: 'loading' | 'ready' | 'error'
   onSelect: (id: NoteId) => void
+  onCreate?: () => void
+  creating?: boolean
+  createError?: boolean
   onDelete?: (id: NoteId, title: string) => void
   deletingId?: NoteId | null
   deleteError?: string | null
@@ -15,7 +19,7 @@ interface NoteListProps {
   onUndoDelete?: () => void
 }
 
-export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete }: NoteListProps) {
+export function NoteList({ notes, activeId, state, onSelect, onCreate, creating = false, createError = false, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete }: NoteListProps) {
   const feedbackRef = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
     if (deleteFeedback !== null) feedbackRef.current?.focus()
@@ -28,7 +32,18 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingI
           <span className="library-pane__eyebrow">当前文件夹</span>
           <h2>笔记</h2>
         </div>
+        {onCreate && (
+          <button className="icon-button" type="button" aria-label="新建笔记" disabled={creating} onClick={onCreate}>
+            <span aria-hidden="true">+</span>
+          </button>
+        )}
       </header>
+      {createError && onCreate && (
+        <StatusNotice
+          className="library-status library-status--error"
+          state={{ status: 'error', message: '无法新建笔记。', retry: onCreate, retryLabel: '重试新建笔记' }}
+        />
+      )}
       {deleteFeedback && (
         <div className="note-list__mutation-status">
           <p ref={feedbackRef} role="status" tabIndex={-1}>{deleteFeedback}</p>
