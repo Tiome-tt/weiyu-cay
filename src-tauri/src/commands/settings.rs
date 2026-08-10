@@ -1920,9 +1920,11 @@ pub fn get_storage_info(
 pub fn move_storage_root(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, SettingsCommandState>,
+    recovery: tauri::State<'_, crate::storage::recovery::StartupRecoveryState>,
     destination: String,
 ) -> Result<(), CommandError> {
     authorize_settings_caller(window.label())?;
+    recovery.ensure_ready()?;
     state.service().move_storage_root(destination)
 }
 

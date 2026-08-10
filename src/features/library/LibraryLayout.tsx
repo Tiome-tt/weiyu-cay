@@ -25,6 +25,7 @@ interface LibraryLayoutProps {
 
 export interface LibraryLayoutHandle {
   prepareStorageMove(): Promise<(() => void) | null>
+  refreshAfterRecovery(): Promise<void>
 }
 
 export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash, defaultEditorMode, autosaveDelayMs }, ref) {
@@ -123,6 +124,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }
 
   useImperativeHandle(ref, () => ({
+    refreshAfterRecovery: async () => {
+      await Promise.all([
+        library.refreshLibrary(),
+        temporaryInboxRef.current?.refresh() ?? Promise.resolve(),
+      ])
+    },
     prepareStorageMove: async () => {
       if (storageMoveLockedRef.current) return null
       storageMoveLockedRef.current = true
@@ -159,7 +166,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         return null
       }
     },
-  }), [])
+  }), [library.refreshLibrary])
 
   const deleteFormalNote = async (noteId: NoteId, title: string) => {
     if (!mountedRef.current || trash === undefined || trashBusyRef.current !== null) return

@@ -1,11 +1,12 @@
 use crate::{
-    commands::storage::{StorageCommandState, StorageConsumer},
+    commands::storage::StorageCommandState,
     domain::{
         BatchConversionResult, DeleteTemporaryResult, FolderId, NoteDocument, NoteId,
         TemporaryWindowState, UndoTemporaryDeleteResult,
     },
     error::CommandError,
     storage::paths::StoragePaths,
+    storage::recovery::StartupRecoveryReadiness,
     storage::temporary_ops::TemporaryInboxService,
     windows::sticky::{
         authorize_temporary_caller, AppLifecycleEvent, TauriTemporaryWindowBackend,
@@ -19,6 +20,7 @@ use tauri::{Manager, State};
 pub struct TemporaryCommandState {
     paths: StoragePaths,
     backend: TauriTemporaryWindowBackend,
+    readiness: StartupRecoveryReadiness,
 }
 
 impl TemporaryCommandState {
@@ -28,6 +30,18 @@ impl TemporaryCommandState {
 
     pub(crate) fn backend(&self) -> &TauriTemporaryWindowBackend {
         &self.backend
+    }
+
+    fn ensure_ready(&self) -> Result<(), CommandError> {
+        self.readiness.ensure_ready()
+    }
+
+    pub(crate) fn finish_startup_recovery(&self) -> Result<(), CommandError> {
+        TemporaryInboxService::new(self.paths.clone(), self.backend.clone()).recover_pending()?;
+        crate::storage::trash::run_startup_trash_maintenance(
+            self.paths.clone(),
+            &chrono::Utc::now().to_rfc3339(),
+        )
     }
 
     pub fn mark_lifecycle(&self, event: AppLifecycleEvent) {
@@ -47,21 +61,25 @@ pub struct SaveTemporaryInput {
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app
         .state::<StorageCommandState>()
-        .paths_for(StorageConsumer::Temporary)
+        .configured_paths()
         .clone();
     let shutting_down = Arc::new(AtomicBool::new(false));
     let window_paths = app
         .state::<StorageCommandState>()
-        .paths_for(StorageConsumer::StickyWindows)
+        .configured_paths()
         .clone();
     let backend =
         TauriTemporaryWindowBackend::new(app.handle().clone(), window_paths, shutting_down);
-    TemporaryInboxService::new(paths.clone(), backend.clone()).recover_pending()?;
-    crate::storage::trash::run_startup_trash_maintenance(
-        paths.clone(),
-        &chrono::Utc::now().to_rfc3339(),
-    )?;
-    app.manage(TemporaryCommandState { paths, backend });
+    let readiness = app.state::<StorageCommandState>().readiness();
+    let state = TemporaryCommandState {
+        paths,
+        backend,
+        readiness,
+    };
+    if state.ensure_ready().is_ok() {
+        state.finish_startup_recovery()?;
+    }
+    app.manage(state);
     Ok(())
 }
 
@@ -71,6 +89,7 @@ pub fn create_temporary(
     state: State<'_, TemporaryCommandState>,
 ) -> Result<NoteDocument, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Create, None)?;
+    state.ensure_ready()?;
     TemporaryRepository::new(state.paths.clone()).create()
 }
 
@@ -85,6 +104,7 @@ pub fn load_temporary(
         TemporaryCommandOperation::Load,
         Some(note_id),
     )?;
+    state.ensure_ready()?;
     TemporaryRepository::new(state.paths.clone()).load(note_id)
 }
 
@@ -99,6 +119,7 @@ pub fn save_temporary(
         TemporaryCommandOperation::Save,
         Some(input.document.id),
     )?;
+    state.ensure_ready()?;
     TemporaryRepository::new(state.paths.clone()).save(input.document, input.expected_revision)
 }
 
@@ -108,6 +129,7 @@ pub fn list_temporary(
     state: State<'_, TemporaryCommandState>,
 ) -> Result<Vec<NoteDocument>, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::List, None)?;
+    state.ensure_ready()?;
     inbox_service(&state).recover_pending()?;
     TemporaryRepository::new(state.paths.clone()).list()
 }
@@ -120,6 +142,7 @@ pub fn convert_temporary(
     folder_id: FolderId,
 ) -> Result<BatchConversionResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Convert, None)?;
+    state.ensure_ready()?;
     Ok(inbox_service(&state).convert(
         crate::domain::ConvertTemporaryInput { ids, folder_id },
         &chrono::Utc::now().to_rfc3339(),
@@ -133,6 +156,7 @@ pub fn delete_temporary(
     ids: Vec<NoteId>,
 ) -> Result<DeleteTemporaryResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
+    state.ensure_ready()?;
     Ok(inbox_service(&state).delete(ids))
 }
 
@@ -143,6 +167,7 @@ pub fn undo_delete(
     operation_id: String,
 ) -> Result<UndoTemporaryDeleteResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
+    state.ensure_ready()?;
     inbox_service(&state).undo_delete(&operation_id)
 }
 
@@ -153,6 +178,7 @@ pub fn show_temporary_window(
     note_id: NoteId,
 ) -> Result<TemporaryWindowState, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Show, None)?;
+    state.ensure_ready()?;
     service(&state).show(note_id)
 }
 
@@ -167,6 +193,7 @@ pub fn hide_temporary_window(
         TemporaryCommandOperation::Hide,
         Some(note_id),
     )?;
+    state.ensure_ready()?;
     service(&state).hide(note_id).map(|_| ())
 }
 
@@ -182,6 +209,7 @@ pub fn set_temporary_always_on_top(
         TemporaryCommandOperation::SetPin,
         Some(note_id),
     )?;
+    state.ensure_ready()?;
     service(&state).set_always_on_top(note_id, always_on_top)
 }
 

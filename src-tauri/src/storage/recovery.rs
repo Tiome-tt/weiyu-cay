@@ -11,7 +11,13 @@ use crate::{
 };
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
 use uuid::Uuid;
 
 const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -56,16 +62,54 @@ pub struct QuarantinedCandidate {
     pub reason: &'static str,
 }
 
+#[derive(Clone, Default)]
+pub struct StartupRecoveryReadiness {
+    ready: Arc<AtomicBool>,
+}
+
+impl StartupRecoveryReadiness {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn ensure_ready(&self) -> Result<(), CommandError> {
+        if self.ready.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(CommandError::database("startup recovery is incomplete"))
+        }
+    }
+
+    fn mark_ready(&self) {
+        self.ready.store(true, Ordering::Release);
+    }
+
+    fn mark_incomplete(&self) {
+        self.ready.store(false, Ordering::Release);
+    }
+}
+
 pub struct StartupRecoveryState {
     paths: StoragePaths,
+    readiness: StartupRecoveryReadiness,
     report: Mutex<StartupRecoveryReport>,
 }
 
 impl StartupRecoveryState {
-    pub fn initialize(paths: StoragePaths) -> Self {
-        let report = recover_startup(&paths).unwrap_or_else(failed_report);
+    pub fn initialize(paths: StoragePaths, readiness: StartupRecoveryReadiness) -> Self {
+        let report = match recover_startup(&paths) {
+            Ok(report) => {
+                readiness.mark_ready();
+                report
+            }
+            Err(error) => {
+                readiness.mark_incomplete();
+                failed_report(error)
+            }
+        };
         Self {
             paths,
+            readiness,
             report: Mutex::new(report),
         }
     }
@@ -77,12 +121,39 @@ impl StartupRecoveryState {
             .clone()
     }
 
+    pub fn ensure_ready(&self) -> Result<(), CommandError> {
+        self.readiness.ensure_ready()
+    }
+
     pub fn retry(&self) -> Result<StartupRecoveryReport, CommandError> {
-        let report = recover_startup(&self.paths)?;
+        self.retry_with(|| Ok(()))
+    }
+
+    pub fn retry_with<F>(&self, finish_setup: F) -> Result<StartupRecoveryReport, CommandError>
+    where
+        F: FnOnce() -> Result<(), CommandError>,
+    {
+        self.readiness.mark_incomplete();
+        let result = recover_startup(&self.paths).and_then(|report| {
+            finish_setup()?;
+            Ok(report)
+        });
+        let report = match result {
+            Ok(report) => report,
+            Err(error) => {
+                let failed = failed_report(error.clone());
+                *self
+                    .report
+                    .lock()
+                    .map_err(|_| CommandError::io("startup recovery state poisoned"))? = failed;
+                return Err(error);
+            }
+        };
         *self
             .report
             .lock()
             .map_err(|_| CommandError::io("startup recovery state poisoned"))? = report.clone();
+        self.readiness.mark_ready();
         Ok(report)
     }
 }

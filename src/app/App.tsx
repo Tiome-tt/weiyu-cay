@@ -69,12 +69,12 @@ function MainApplication({ services }: { services: AppServices }) {
     const recovery = services.recovery
     if (recovery === undefined) return
     let active = true
-    const show = (report: StartupRecoveryReport) => {
+    const show = async (report: StartupRecoveryReport, refreshLibrary = false) => {
       if (!active) return
       if (report.failure != null) {
         const retry = async () => {
           try {
-            show(await recovery.retry())
+            await show(await recovery.retry(), true)
           } catch {
             if (active) setRecoveryNotice({ status: 'error', message: '本地索引恢复仍未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
           }
@@ -83,6 +83,8 @@ function MainApplication({ services }: { services: AppServices }) {
         return
       }
       const actions = report.recovered.length + report.quarantined.length + (report.indexRebuilt ? 1 : 0)
+      if (refreshLibrary) await libraryRef.current?.refreshAfterRecovery()
+      if (!active) return
       if (actions === 0) {
         setRecoveryNotice({ status: 'idle' })
         return
@@ -92,7 +94,7 @@ function MainApplication({ services }: { services: AppServices }) {
     }
     const load = async () => {
       try {
-        show(await recovery.load())
+        await show(await recovery.load())
       } catch {
         if (active) setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void load(), retryLabel: '重试读取恢复报告' })
       }

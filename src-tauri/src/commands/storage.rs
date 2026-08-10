@@ -1,7 +1,7 @@
 use crate::storage::paths::StoragePaths;
 use crate::{
     error::CommandError,
-    storage::recovery::{StartupRecoveryReport, StartupRecoveryState},
+    storage::recovery::{StartupRecoveryReadiness, StartupRecoveryReport, StartupRecoveryState},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -23,26 +23,39 @@ pub enum StorageConsumer {
 /// from silently falling back to the platform's default application directory.
 pub struct StorageCommandState {
     paths: StoragePaths,
+    readiness: StartupRecoveryReadiness,
 }
 
 impl StorageCommandState {
-    pub fn new(paths: StoragePaths) -> Self {
-        Self { paths }
+    pub fn new(paths: StoragePaths, readiness: StartupRecoveryReadiness) -> Self {
+        Self { paths, readiness }
     }
 
-    pub fn paths_for(&self, _consumer: StorageConsumer) -> &StoragePaths {
+    pub fn paths_for(&self, _consumer: StorageConsumer) -> Result<&StoragePaths, CommandError> {
+        self.readiness.ensure_ready()?;
+        Ok(&self.paths)
+    }
+
+    pub(crate) fn configured_paths(&self) -> &StoragePaths {
         &self.paths
+    }
+
+    pub(crate) fn readiness(&self) -> StartupRecoveryReadiness {
+        self.readiness.clone()
     }
 }
 
-pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+pub fn setup(
+    app: &mut tauri::App,
+    readiness: StartupRecoveryReadiness,
+) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
 
     let paths = app
         .state::<crate::commands::settings::SettingsCommandState>()
         .paths()
         .clone();
-    app.manage(StorageCommandState::new(paths));
+    app.manage(StorageCommandState::new(paths, readiness));
     Ok(())
 }
 
@@ -63,11 +76,15 @@ pub fn startup_recovery_report(
 pub fn retry_startup_recovery(
     window: tauri::Window,
     recovery: tauri::State<'_, StartupRecoveryState>,
+    temporary: tauri::State<'_, crate::commands::temporary::TemporaryCommandState>,
 ) -> Result<StartupRecoveryReport, CommandError> {
     if window.label() != "main" {
         return Err(CommandError::validation(
             "startup recovery retry requires the main window",
         ));
     }
-    recovery.retry()
+    recovery.retry_with(|| {
+        temporary.finish_startup_recovery()?;
+        crate::commands::settings::finalize_reopened_relocation(temporary.paths())
+    })
 }

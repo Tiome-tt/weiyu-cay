@@ -7,7 +7,7 @@ import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fak
 import type { AppSettings, ExportReport, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
-import type { NoteDocument, NoteId } from '../domain/model'
+import type { FolderId, NoteDocument, NoteId } from '../domain/model'
 
 describe('App', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
@@ -68,6 +68,71 @@ describe('App', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
     expect(await screen.findByText(/并重建本地索引/)).toHaveAttribute('role', 'status')
+  })
+
+  it('refreshes recovered folders, notes, and the mounted temporary inbox after a repeated retry', async () => {
+    const recoveredFolderId = '019c0000-0000-7000-8000-000000000041' as FolderId
+    const recoveredNoteId = '019c0000-0000-7000-8000-000000000042' as NoteId
+    const recoveredTemporaryId = '019c0000-0000-7000-8000-000000000043' as NoteId
+    const listFolders = vi.fn()
+      .mockRejectedValueOnce(new Error('recovery incomplete'))
+      .mockResolvedValue([{ id: recoveredFolderId, parentId: null, name: 'Recovered folder', sortOrder: 0 }])
+    const listNotes = vi.fn()
+      .mockRejectedValueOnce(new Error('recovery incomplete'))
+      .mockResolvedValue([{ id: recoveredNoteId, title: 'Recovered formal note', folderId: null, tags: [], updatedAt: '2026-08-10T00:00:00Z' }])
+    const listTemporary = vi.fn()
+      .mockRejectedValueOnce(new Error('recovery incomplete'))
+      .mockResolvedValue([{
+        id: recoveredTemporaryId, kind: 'temporary', title: 'Recovered capture', folderId: null,
+        tags: [], markdown: 'durable temporary truth', revision: 1,
+        createdAt: '2026-08-10T00:00:00Z', updatedAt: '2026-08-10T00:00:00Z',
+      }])
+    const retry = vi.fn()
+      .mockRejectedValueOnce(new Error('disk still busy'))
+      .mockResolvedValue({
+        recovered: [], quarantined: [], ambiguous: [], indexRebuilt: true,
+        indexQuarantine: null, failure: null,
+      })
+    const temporary = {
+      create: vi.fn(), load: vi.fn(), save: vi.fn(), list: listTemporary,
+      convert: vi.fn(), delete: vi.fn(), undoDelete: vi.fn(),
+    }
+
+    render(<App services={{
+      notes: fakeNotePort({ listNotes }), folders: fakeFolderPort({ listFolders }), system: fakeSystemPort(),
+      temporary, assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+      search: fakeSearchPort(), links: fakeLinkPort(),
+      recovery: {
+        load: vi.fn().mockResolvedValue({
+          recovered: [], quarantined: [], ambiguous: [], indexRebuilt: false, indexQuarantine: null,
+          failure: { code: 'database', message: 'The local note index is unavailable.' },
+        }),
+        retry,
+      },
+    }} />)
+
+    expect(await screen.findByRole('alert')).toBeVisible()
+    await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(1))
+    await userEvent.setup().click(screen.getAllByRole('treeitem')[1])
+    await waitFor(() => expect(listTemporary).toHaveBeenCalledTimes(1))
+
+    await userEvent.setup().click(screen.getAllByRole('alert')[0].querySelector('button')!)
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1))
+    expect(listFolders).toHaveBeenCalledTimes(1)
+    expect(listNotes).toHaveBeenCalledTimes(1)
+    expect(listTemporary).toHaveBeenCalledTimes(1)
+
+    await userEvent.setup().click(screen.getAllByRole('alert')[0].querySelector('button')!)
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(listTemporary).toHaveBeenCalledTimes(2))
+    expect((await screen.findAllByText('durable temporary truth')).length).toBeGreaterThan(0)
+    expect(screen.getByText('Recovered folder')).toBeVisible()
+
+    await userEvent.setup().click(screen.getAllByRole('treeitem')[0])
+    expect(await screen.findByText('Recovered formal note')).toBeVisible()
   })
 
   it('loads application settings, applies their theme, and opens settings from the main window', async () => {

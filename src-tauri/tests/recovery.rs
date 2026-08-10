@@ -1,10 +1,18 @@
 mod support;
 
 use simple_notes_lib::{
+    commands::{
+        notes::prepare_startup_repository,
+        storage::{StorageCommandState, StorageConsumer},
+    },
     domain::{NoteDocument, NoteId, NoteKind},
+    error::CommandError,
     storage::{
         rebuild::rebuild_index_with_hook,
-        recovery::{recover_startup, recover_startup_with_candidate_hook, StartupRecoveryState},
+        recovery::{
+            recover_startup, recover_startup_with_candidate_hook, StartupRecoveryReadiness,
+            StartupRecoveryState,
+        },
         repository::NoteRepository,
     },
 };
@@ -204,13 +212,69 @@ fn failed_startup_recovery_is_reportable_and_retryable_without_aborting_state_cr
     fs::create_dir(&broken_dir).unwrap();
     fs::write(broken_dir.join("note.md"), b"invalid frontmatter").unwrap();
 
-    let state = StartupRecoveryState::initialize(fixture.store.paths.clone());
+    let readiness = StartupRecoveryReadiness::new();
+    let storage = StorageCommandState::new(fixture.store.paths.clone(), readiness.clone());
+    let state = StartupRecoveryState::initialize(fixture.store.paths.clone(), readiness);
     assert!(state.report().failure.is_some());
+    assert!(storage.paths_for(StorageConsumer::Notes).is_err());
+    assert!(storage.paths_for(StorageConsumer::Folders).is_err());
+    assert!(storage.paths_for(StorageConsumer::Temporary).is_err());
+    assert!(
+        !fixture.store.paths.database().exists(),
+        "ordinary repository access must not create an empty live index while recovery is incomplete"
+    );
+
+    assert!(state
+        .retry_with(|| Err(CommandError::io("injected post-recovery setup failure")))
+        .is_err());
+    assert!(storage.paths_for(StorageConsumer::Notes).is_err());
 
     fs::remove_dir_all(broken_dir).unwrap();
-    let report = state.retry().unwrap();
+    assert!(state
+        .retry_with(|| Err(CommandError::io("injected post-recovery setup failure")))
+        .is_err());
+    assert!(storage.paths_for(StorageConsumer::Temporary).is_err());
+
+    let report = state.retry_with(|| Ok(())).unwrap();
     assert!(report.failure.is_none());
-    assert!(report.index_rebuilt);
+    assert!(storage.paths_for(StorageConsumer::Notes).is_ok());
+    assert_eq!(
+        NoteRepository::new(fixture.store.paths.clone())
+            .list_in_folder(None)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn marker_failure_keeps_corrupt_live_index_untouched_and_all_repository_consumers_degraded() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable body");
+    fixture.store.close_database();
+    fs::write(fixture.store.paths.database(), b"corrupt sqlite bytes").unwrap();
+    fs::create_dir(fixture.store.paths.root().join("rebuild-needed.json")).unwrap();
+    let before = fs::read(fixture.store.paths.database()).unwrap();
+
+    let readiness = StartupRecoveryReadiness::new();
+    let storage = StorageCommandState::new(fixture.store.paths.clone(), readiness.clone());
+    let recovery = StartupRecoveryState::initialize(fixture.store.paths.clone(), readiness);
+
+    assert!(recovery.report().failure.is_some());
+    prepare_startup_repository(&storage).expect("degraded startup must remain nonfatal");
+    for consumer in [
+        StorageConsumer::Folders,
+        StorageConsumer::Notes,
+        StorageConsumer::Temporary,
+        StorageConsumer::Assets,
+        StorageConsumer::Search,
+        StorageConsumer::Links,
+        StorageConsumer::Trash,
+        StorageConsumer::StickyWindows,
+        StorageConsumer::Export,
+    ] {
+        assert!(storage.paths_for(consumer).is_err());
+    }
+    assert_eq!(fs::read(fixture.store.paths.database()).unwrap(), before);
 }
 
 #[test]

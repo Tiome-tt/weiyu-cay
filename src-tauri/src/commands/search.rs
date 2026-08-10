@@ -232,11 +232,11 @@ pub fn search_notes(
 ) -> Result<Vec<SearchResult>, CommandError> {
     match query {
         SearchQuery::Tag { value } => {
-            SearchRepository::new(state.paths_for(StorageConsumer::Search).clone())
+            SearchRepository::new(state.paths_for(StorageConsumer::Search)?.clone())
                 .search_tag(&value, limit.unwrap_or(50))
         }
         SearchQuery::Text { value } => {
-            SearchRepository::new(state.paths_for(StorageConsumer::Search).clone())
+            SearchRepository::new(state.paths_for(StorageConsumer::Search)?.clone())
                 .search_text(&value, limit.unwrap_or(50))
         }
     }
@@ -248,7 +248,7 @@ pub fn update_note_tags(
     note_id: NoteId,
     tags: Vec<String>,
 ) -> Result<NoteDocument, CommandError> {
-    SearchRepository::new(state.paths_for(StorageConsumer::Search).clone())
+    SearchRepository::new(state.paths_for(StorageConsumer::Search)?.clone())
         .update_tags(note_id, tags)
 }
 

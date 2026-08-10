@@ -38,17 +38,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             commands::settings::setup(app)?;
-            commands::storage::setup(app)?;
+            let readiness = storage::recovery::StartupRecoveryReadiness::new();
+            commands::storage::setup(app, readiness.clone())?;
             let paths = app
                 .state::<commands::settings::SettingsCommandState>()
                 .paths()
                 .clone();
             let startup_recovery =
-                storage::recovery::StartupRecoveryState::initialize(paths.clone());
+                storage::recovery::StartupRecoveryState::initialize(paths.clone(), readiness);
             app.manage(startup_recovery);
             commands::notes::setup(app)?;
             commands::temporary::setup(app)?;
-            commands::settings::finalize_reopened_relocation(&paths)?;
+            if app
+                .state::<commands::storage::StorageCommandState>()
+                .readiness()
+                .ensure_ready()
+                .is_ok()
+            {
+                commands::settings::finalize_reopened_relocation(&paths)?;
+            }
             commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
             Ok(())
         })

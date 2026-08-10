@@ -12,7 +12,7 @@ pub fn export_library(
     destination: String,
 ) -> Result<ExportReport, CommandError> {
     export_library_to(
-        state.paths_for(StorageConsumer::Export),
+        state.paths_for(StorageConsumer::Export)?,
         Path::new(&destination),
         env!("CARGO_PKG_VERSION"),
     )

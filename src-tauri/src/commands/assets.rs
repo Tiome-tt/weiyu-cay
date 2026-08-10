@@ -47,7 +47,7 @@ pub fn save_image(
     input: SaveImageInput,
 ) -> Result<SavedImage, CommandError> {
     authorize_asset_caller(window.label(), input.note_id)?;
-    save_image_to(state.paths_for(StorageConsumer::Assets), input)
+    save_image_to(state.paths_for(StorageConsumer::Assets)?, input)
 }
 
 pub fn validate_image(media_type: &str, bytes: &[u8]) -> Result<ValidatedImage, CommandError> {

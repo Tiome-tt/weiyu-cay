@@ -304,7 +304,7 @@ pub fn create_folder(
     input: CreateFolderInput,
 ) -> Result<Folder, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(
-        state.paths_for(StorageConsumer::Folders).root(),
+        state.paths_for(StorageConsumer::Folders)?.root(),
     )?;
     repository(&state)?.create_locked(input, &guard)
 }
@@ -316,7 +316,7 @@ pub fn rename_folder(
     name: String,
 ) -> Result<Folder, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(
-        state.paths_for(StorageConsumer::Folders).root(),
+        state.paths_for(StorageConsumer::Folders)?.root(),
     )?;
     repository(&state)?.rename_locked(folder_id, name, &guard)
 }
@@ -328,7 +328,7 @@ pub fn move_folder(
     parent_id: Option<FolderId>,
 ) -> Result<Folder, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(
-        state.paths_for(StorageConsumer::Folders).root(),
+        state.paths_for(StorageConsumer::Folders)?.root(),
     )?;
     repository(&state)?.move_folder_locked(folder_id, parent_id, &guard)
 }
@@ -339,14 +339,14 @@ pub fn delete_empty_folder(
     folder_id: FolderId,
 ) -> Result<(), CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(
-        state.paths_for(StorageConsumer::Folders).root(),
+        state.paths_for(StorageConsumer::Folders)?.root(),
     )?;
     repository(&state)?.delete_empty_locked(folder_id, &guard)
 }
 
 fn repository(state: &StorageCommandState) -> Result<FolderRepository, CommandError> {
     Ok(FolderRepository::new(
-        state.paths_for(StorageConsumer::Folders).clone(),
+        state.paths_for(StorageConsumer::Folders)?.clone(),
     ))
 }
 
