@@ -4,7 +4,7 @@ import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/Lib
 import { createAppServices, type AppServices } from './services'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../domain/model'
-import type { StickySettings, TemporaryWindowState } from '../domain/ports'
+import type { StartupRecoveryReport, StickySettings, TemporaryWindowState } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
 import { StickyWindow } from '../features/temporary/StickyWindow'
 import type { AppSettings } from '../domain/ports'
@@ -65,25 +65,41 @@ function MainApplication({ services }: { services: AppServices }) {
     }).catch(() => void loadSettings())
     return () => { active = false; unlisten?.() }
   }, [loadSettings, services.settings])
-  const loadRecovery = useCallback(async () => {
-    if (services.recovery === undefined) return
-    try {
-      const report = await services.recovery.load()
+  useEffect(() => {
+    const recovery = services.recovery
+    if (recovery === undefined) return
+    let active = true
+    const show = (report: StartupRecoveryReport) => {
+      if (!active) return
+      if (report.failure != null) {
+        const retry = async () => {
+          try {
+            show(await recovery.retry())
+          } catch {
+            if (active) setRecoveryNotice({ status: 'error', message: '本地索引恢复仍未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
+          }
+        }
+        setRecoveryNotice({ status: 'error', message: '本地索引恢复未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
+        return
+      }
       const actions = report.recovered.length + report.quarantined.length + (report.indexRebuilt ? 1 : 0)
       if (actions === 0) {
         setRecoveryNotice({ status: 'idle' })
         return
       }
       const recovered = report.recovered.length > 0 ? `已恢复 ${report.recovered.length} 篇笔记` : '启动恢复检查已完成'
-      setRecoveryNotice({
-        status: 'success',
-        message: `${recovered}${report.indexRebuilt ? '并重建本地索引' : ''}${report.quarantined.length > 0 ? `；隔离 ${report.quarantined.length} 个不安全候选` : ''}`,
-      })
-    } catch {
-      setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void loadRecovery(), retryLabel: '重试读取恢复报告' })
+      setRecoveryNotice({ status: 'success', message: `${recovered}${report.indexRebuilt ? '并重建本地索引' : ''}${report.quarantined.length > 0 ? `；隔离 ${report.quarantined.length} 个不安全候选` : ''}` })
     }
+    const load = async () => {
+      try {
+        show(await recovery.load())
+      } catch {
+        if (active) setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void load(), retryLabel: '重试读取恢复报告' })
+      }
+    }
+    void load()
+    return () => { active = false }
   }, [services.recovery])
-  useEffect(() => { void loadRecovery() }, [loadRecovery])
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}

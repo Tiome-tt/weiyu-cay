@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-retry-startup-recovery"
+description = "Allows the main window to retry startup recovery."
+commands.allow = ["retry_startup_recovery"]

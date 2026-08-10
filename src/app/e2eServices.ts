@@ -12,6 +12,7 @@ interface E2EState {
   notes: NoteDocument[]
   temporary: NoteDocument[]
   deletedTemporary: NoteDocument[]
+  trashed: NoteDocument[]
   sequence: number
 }
 
@@ -23,6 +24,7 @@ function initialState(): E2EState {
       document('019c0000-0000-7000-8000-000000000704' as NoteId, 'temporary', 'Temporary capture', '接口异常处理', null),
     ],
     deletedTemporary: [],
+    trashed: [],
     sequence: 710,
   }
 }
@@ -200,9 +202,26 @@ export function createE2EAppServices(): AppServices {
       async startDragging() { return },
     },
     trash: {
-      async trash(ids) { return { operationId: 'e2e-trash', trashed: ids, failed: [] } },
-      async list(): Promise<TrashEntry[]> { return [] },
-      async restore() { return { restored: [], failed: [] } },
+      async trash(ids) {
+        const trashed = state.notes.filter((note) => ids.includes(note.id))
+        state.trashed.push(...trashed)
+        state.notes = state.notes.filter((note) => !ids.includes(note.id))
+        saveState(state)
+        return { operationId: 'e2e-trash', trashed: trashed.map((note) => note.id), failed: [] }
+      },
+      async list(): Promise<TrashEntry[]> {
+        return state.trashed.map((note) => ({
+          noteId: note.id, kind: note.kind, title: note.title, previousFolderId: note.folderId,
+          previousRelativePath: `notes/${note.id}`, deletedAt: '2026-07-30T00:00:00Z', assets: [], operationId: 'e2e-trash',
+        }))
+      },
+      async restore(ids) {
+        const restored = state.trashed.filter((note) => ids.includes(note.id))
+        state.notes.push(...restored)
+        state.trashed = state.trashed.filter((note) => !ids.includes(note.id))
+        saveState(state)
+        return { restored, failed: [] }
+      },
       async undo() { return { restored: [], failed: [] } },
       async purgeExpired() { return { purged: [], failed: [] } },
     },
@@ -214,7 +233,7 @@ export function createE2EAppServices(): AppServices {
       },
     },
     exportDestinationPicker: { async chooseExportDestination() { return 'E2E Export' } },
-    recovery: { async load() { return recoveryReport } },
+    recovery: { async load() { return recoveryReport }, async retry() { return recoveryReport } },
   }
 }
 

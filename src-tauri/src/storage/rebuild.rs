@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use chrono::DateTime;
-use rusqlite::{params, Transaction};
+use rusqlite::{params, Connection, OpenFlags, Transaction};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, io::ErrorKind, path::Path};
 use uuid::Uuid;
@@ -265,13 +265,13 @@ fn read_temporary_window_states(
     if temporary_ids.is_empty() {
         return Vec::new();
     }
-    let Ok(database) = Database::open(paths.database()) else {
+    let Ok(database) = Connection::open_with_flags(
+        paths.database(),
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
         return Vec::new();
     };
-    if database.migrate().is_err() {
-        return Vec::new();
-    }
-    let Ok(mut statement) = database.connection().prepare(
+    let Ok(mut statement) = database.prepare(
         "SELECT note_id, visible, x, y, width, height, always_on_top FROM temporary_windows",
     ) else {
         return Vec::new();

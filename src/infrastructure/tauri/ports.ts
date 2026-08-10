@@ -10,7 +10,7 @@ class TauriNotePort implements LibraryNotePort {
   constructor(private readonly client: TauriClient) {}
 
   createNote(folderId: FolderId | null) {
-    return this.client.invoke<NoteDocument>('create_note', { folderId })
+    return this.client.invoke<NoteDocument>('create_note', { input: { folderId } })
   }
 
   loadNote(noteId: NoteId) {
@@ -33,6 +33,10 @@ class TauriRecoveryPort implements RecoveryPort {
 
   load() {
     return this.client.invoke<StartupRecoveryReport>('startup_recovery_report')
+  }
+
+  retry() {
+    return this.client.invoke<StartupRecoveryReport>('retry_startup_recovery')
   }
 }
 

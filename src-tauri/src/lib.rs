@@ -43,7 +43,8 @@ pub fn run() {
                 .state::<commands::settings::SettingsCommandState>()
                 .paths()
                 .clone();
-            let startup_recovery = storage::recovery::recover_startup(&paths)?;
+            let startup_recovery =
+                storage::recovery::StartupRecoveryState::initialize(paths.clone());
             app.manage(startup_recovery);
             commands::notes::setup(app)?;
             commands::temporary::setup(app)?;
@@ -91,6 +92,7 @@ pub fn run() {
             commands::settings::reset_settings,
             commands::settings::get_storage_info,
             commands::storage::startup_recovery_report,
+            commands::storage::retry_startup_recovery,
             commands::settings::move_storage_root,
             commands::settings::restart_application,
             commands::export::export_library,

@@ -14,7 +14,7 @@ try {
   exitCode = await new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ['node_modules/@playwright/test/cli.js', 'test'],
+      ['node_modules/@playwright/test/cli.js', 'test', ...process.argv.slice(2)],
       {
         cwd: process.cwd(),
         env: { ...process.env, PLAYWRIGHT_EXTERNAL_SERVER: '1' },

@@ -1,8 +1,18 @@
+use simple_notes_lib::commands::notes::CreateNoteInput;
 use simple_notes_lib::domain::{
     BatchConversionFailure, BatchConversionResult, ConvertedTemporaryNote, FolderId, NoteDocument,
     NoteId, NoteKind,
 };
 use simple_notes_lib::error::{CommandError, CommandErrorCode};
+
+#[test]
+fn create_note_command_accepts_the_renderer_folder_only_contract() {
+    let folder = "019c0000-0000-7000-8000-000000000001";
+    let input: CreateNoteInput =
+        serde_json::from_value(serde_json::json!({ "folderId": folder })).unwrap();
+
+    assert_eq!(input.folder_id, Some(FolderId::parse_str(folder).unwrap()));
+}
 
 #[test]
 fn domain_note_document_round_trips_with_camel_case_fields() {

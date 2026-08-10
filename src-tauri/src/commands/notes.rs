@@ -22,6 +22,12 @@ pub struct SaveNoteInput {
     expected_revision: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateNoteInput {
+    pub folder_id: Option<FolderId>,
+}
+
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app
         .state::<StorageCommandState>()
@@ -39,12 +45,26 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 #[tauri::command(rename_all = "camelCase")]
 pub fn create_note(
     state: State<'_, StorageCommandState>,
-    document: NoteDocument,
+    input: CreateNoteInput,
 ) -> Result<NoteDocument, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(
         state.paths_for(StorageConsumer::Notes).root(),
     )?;
-    repository(&state)?.create_locked(document, &guard)
+    let now = chrono::Utc::now().to_rfc3339();
+    repository(&state)?.create_locked(
+        NoteDocument {
+            id: NoteId::now_v7(),
+            kind: crate::domain::NoteKind::Formal,
+            title: "未命名笔记".to_owned(),
+            folder_id: input.folder_id,
+            tags: Vec::new(),
+            markdown: String::new(),
+            revision: 0,
+            created_at: now.clone(),
+            updated_at: now,
+        },
+        &guard,
+    )
 }
 
 #[tauri::command(rename_all = "camelCase")]

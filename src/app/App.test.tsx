@@ -33,10 +33,41 @@ describe('App', () => {
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
-      recovery: { load: vi.fn().mockResolvedValue({ recovered: [{ noteId: '019c0000-0000-7000-8000-000000000002', revision: 2 }], quarantined: [], ambiguous: [], indexRebuilt: true, indexQuarantine: null }) },
+      recovery: {
+        load: vi.fn().mockResolvedValue({ recovered: [{ noteId: '019c0000-0000-7000-8000-000000000002', revision: 2 }], quarantined: [], ambiguous: [], indexRebuilt: true, indexQuarantine: null }),
+        retry: vi.fn(),
+      },
     }} />)
 
     expect(await screen.findByText('已恢复 1 篇笔记并重建本地索引')).toHaveAttribute('role', 'status')
+  })
+
+  it('keeps the application usable when startup recovery fails and retries the recovery operation', async () => {
+    const retry = vi.fn()
+      .mockRejectedValueOnce(new Error('disk still busy'))
+      .mockResolvedValue({
+      recovered: [], quarantined: [], ambiguous: [], indexRebuilt: true, indexQuarantine: null, failure: null,
+      })
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      recovery: {
+        load: vi.fn().mockResolvedValue({
+          recovered: [], quarantined: [], ambiguous: [], indexRebuilt: false, indexQuarantine: null,
+          failure: { code: 'database', message: 'The local note index is unavailable.' },
+        }),
+        retry,
+      },
+    }} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('本地索引恢复未完成')
+    expect(screen.getByRole('application', { name: 'Simple Notes' })).toBeVisible()
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
+    await waitFor(() => expect(retry).toHaveBeenCalledOnce())
+    expect(screen.getByRole('alert')).toHaveTextContent('本地索引恢复仍未完成')
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText(/并重建本地索引/)).toHaveAttribute('role', 'status')
   })
 
   it('loads application settings, applies their theme, and opens settings from the main window', async () => {

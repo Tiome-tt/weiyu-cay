@@ -53,11 +53,13 @@ export interface StartupRecoveryReport {
   quarantined: Array<{ noteId: NoteId; candidate: string; reason: string }>
   ambiguous: string[]
   indexRebuilt: boolean
-  indexQuarantine: { database: string; sidecars: string[] } | null
+  indexQuarantine: { database: string | null; sidecars: string[] } | null
+  failure?: { code: string; message: string } | null
 }
 
 export interface RecoveryPort {
   load(): Promise<StartupRecoveryReport>
+  retry(): Promise<StartupRecoveryReport>
 }
 
 export interface SearchResult {

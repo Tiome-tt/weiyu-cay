@@ -1,6 +1,13 @@
 mod support;
 
-use simple_notes_lib::storage::recovery::recover_startup;
+use simple_notes_lib::{
+    domain::{NoteDocument, NoteId, NoteKind},
+    storage::{
+        rebuild::rebuild_index_with_hook,
+        recovery::{recover_startup, recover_startup_with_candidate_hook, StartupRecoveryState},
+        repository::NoteRepository,
+    },
+};
 use std::fs;
 use support::RecoveryFixture;
 
@@ -70,7 +77,14 @@ fn startup_quarantines_a_corrupt_index_with_its_sidecars_and_rebuilds_without_to
     assert!(report.index_rebuilt);
     let quarantine = report.index_quarantine.expect("corrupt index quarantine");
     assert_eq!(
-        fs::read(fixture.store.paths.root().join(quarantine.database)).unwrap(),
+        fs::read(
+            fixture
+                .store
+                .paths
+                .root()
+                .join(quarantine.database.unwrap())
+        )
+        .unwrap(),
         b"corrupt sqlite bytes"
     );
     assert_eq!(quarantine.sidecars.len(), 2);
@@ -106,4 +120,140 @@ fn startup_rejects_a_partial_rebuild_and_keeps_the_corrupt_index_retryable() {
         fs::read(broken_dir.join("note.md")).unwrap(),
         b"---\nid: invalid\n---\nbody"
     );
+}
+
+#[test]
+fn startup_publishes_the_bytes_that_were_validated_even_if_the_candidate_name_is_replaced() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable revision one");
+    fixture.add_candidate(2, "validated revision two");
+    fixture.store.close_database();
+
+    let report = recover_startup_with_candidate_hook(&fixture.store.paths, |candidate| {
+        fs::write(candidate, b"unvalidated replacement bytes").unwrap();
+    })
+    .unwrap();
+
+    assert_eq!(report.recovered.len(), 1);
+    assert_eq!(fixture.loaded_markdown(), "validated revision two");
+}
+
+#[test]
+fn startup_never_mutates_canonical_content_when_rebuild_intent_cannot_be_persisted() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable revision one");
+    fixture.add_candidate(2, "candidate revision two");
+    fixture.store.close_database();
+    fs::create_dir(fixture.store.paths.root().join("rebuild-needed.json")).unwrap();
+
+    assert!(recover_startup(&fixture.store.paths).is_err());
+
+    assert_eq!(fixture.loaded_markdown(), "durable revision one");
+    assert_eq!(fixture.candidate_names().len(), 1);
+}
+
+#[test]
+fn failed_corrupt_index_rebuild_keeps_durable_retry_intent_and_retries_all_documents() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable formal body");
+    NoteRepository::new(fixture.store.paths.clone())
+        .create(NoteDocument {
+            id: NoteId::parse_str("019c0000-0000-7000-8000-000000000614").unwrap(),
+            kind: NoteKind::Temporary,
+            title: "Temporary".to_owned(),
+            folder_id: None,
+            tags: Vec::new(),
+            markdown: "durable temporary body".to_owned(),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".to_owned(),
+            updated_at: "2026-07-30T00:00:00Z".to_owned(),
+        })
+        .unwrap();
+    fixture.store.close_database();
+    fs::write(fixture.store.paths.database(), b"corrupt sqlite bytes").unwrap();
+    let broken_id = "019c0000-0000-7000-8000-000000000615";
+    let broken_dir = fixture.store.paths.notes().join(broken_id);
+    fs::create_dir(&broken_dir).unwrap();
+    fs::write(broken_dir.join("note.md"), b"---\nid: invalid\n---\nbody").unwrap();
+
+    assert!(recover_startup(&fixture.store.paths).is_err());
+    assert!(fixture
+        .store
+        .paths
+        .root()
+        .join("rebuild-needed.json")
+        .is_file());
+    assert!(
+        !fixture.store.paths.database().exists(),
+        "failed rebuild must not create an empty live index"
+    );
+
+    fs::remove_dir_all(broken_dir).unwrap();
+    let report = recover_startup(&fixture.store.paths).unwrap();
+    assert!(report.index_rebuilt);
+    assert_eq!(fixture.loaded_markdown(), "durable formal body");
+}
+
+#[test]
+fn failed_startup_recovery_is_reportable_and_retryable_without_aborting_state_creation() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable body");
+    fixture.store.close_database();
+    fs::write(fixture.store.paths.database(), b"corrupt sqlite bytes").unwrap();
+    let broken_dir = fixture
+        .store
+        .paths
+        .notes()
+        .join("019c0000-0000-7000-8000-000000000616");
+    fs::create_dir(&broken_dir).unwrap();
+    fs::write(broken_dir.join("note.md"), b"invalid frontmatter").unwrap();
+
+    let state = StartupRecoveryState::initialize(fixture.store.paths.clone());
+    assert!(state.report().failure.is_some());
+
+    fs::remove_dir_all(broken_dir).unwrap();
+    let report = state.retry().unwrap();
+    assert!(report.failure.is_none());
+    assert!(report.index_rebuilt);
+}
+
+#[test]
+fn startup_quarantines_and_reports_sidecars_when_the_live_database_is_missing() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable body");
+    fixture.store.close_database();
+    fs::remove_file(fixture.store.paths.database()).unwrap();
+    fs::write(fixture.store.paths.root().join("index.sqlite-wal"), b"wal").unwrap();
+    fs::write(fixture.store.paths.root().join("index.sqlite-shm"), b"shm").unwrap();
+
+    let report = recover_startup(&fixture.store.paths).unwrap();
+
+    assert!(report.index_rebuilt);
+    let quarantine = report.index_quarantine.unwrap();
+    assert!(quarantine.database.is_none());
+    assert_eq!(quarantine.sidecars.len(), 2);
+}
+
+#[test]
+fn failed_rebuild_never_creates_an_empty_live_database_while_reading_window_state() {
+    let mut fixture = RecoveryFixture::with_document(1, "durable formal body");
+    NoteRepository::new(fixture.store.paths.clone())
+        .create(NoteDocument {
+            id: NoteId::parse_str("019c0000-0000-7000-8000-000000000617").unwrap(),
+            kind: NoteKind::Temporary,
+            title: "Temporary".to_owned(),
+            folder_id: None,
+            tags: Vec::new(),
+            markdown: "temporary body".to_owned(),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".to_owned(),
+            updated_at: "2026-07-30T00:00:00Z".to_owned(),
+        })
+        .unwrap();
+    fixture.store.close_database();
+    fs::remove_file(fixture.store.paths.database()).unwrap();
+
+    let result = rebuild_index_with_hook(&fixture.store.paths, |_| {
+        Err(simple_notes_lib::error::CommandError::io(
+            "injected publication failure",
+        ))
+    });
+
+    assert!(result.is_err());
+    assert!(!fixture.store.paths.database().exists());
 }

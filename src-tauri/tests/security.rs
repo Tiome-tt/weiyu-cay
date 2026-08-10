@@ -45,6 +45,35 @@ fn rejects_oversized_note_command_payload_before_creating_durable_content() {
 }
 
 #[test]
+fn rejects_aggregate_documents_that_would_exceed_the_durable_read_budget() {
+    for (id_value, kind) in [
+        ("019c0000-0000-7000-8000-000000000076", NoteKind::Formal),
+        ("019c0000-0000-7000-8000-000000000077", NoteKind::Temporary),
+    ] {
+        let store = TestStore::new();
+        let id = id(id_value);
+        let result = NoteRepository::new(store.paths.clone()).create(NoteDocument {
+            id,
+            kind,
+            title: "t".repeat(2 * 1024 * 1024),
+            folder_id: None,
+            tags: Vec::new(),
+            markdown: "m".repeat(63 * 1024 * 1024),
+            revision: 0,
+            created_at: "2026-07-30T00:00:00Z".to_owned(),
+            updated_at: "2026-07-30T00:00:00Z".to_owned(),
+        });
+
+        assert_eq!(result.unwrap_err().code(), CommandErrorCode::Validation);
+        let collection = match kind {
+            NoteKind::Formal => store.paths.notes(),
+            NoteKind::Temporary => store.paths.temporary(),
+        };
+        assert!(!collection.join(id.to_string()).exists());
+    }
+}
+
+#[test]
 fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_commands() {
     let main: serde_json::Value =
         serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();

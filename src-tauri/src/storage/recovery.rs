@@ -1,6 +1,6 @@
 use crate::{
     domain::{NoteId, NoteKind},
-    error::CommandError,
+    error::{CommandError, CommandErrorCode},
     platform::SafeDirectory,
     storage::{
         atomic_file::{atomic_replace_contained, PublishFailure, PublishState},
@@ -11,6 +11,7 @@ use crate::{
 };
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
+use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
 
 const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -23,12 +24,20 @@ pub struct StartupRecoveryReport {
     pub ambiguous: Vec<String>,
     pub index_rebuilt: bool,
     pub index_quarantine: Option<IndexQuarantine>,
+    pub failure: Option<RecoveryFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryFailure {
+    pub code: CommandErrorCode,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexQuarantine {
-    pub database: String,
+    pub database: Option<String>,
     pub sidecars: Vec<String>,
 }
 
@@ -47,7 +56,63 @@ pub struct QuarantinedCandidate {
     pub reason: &'static str,
 }
 
+pub struct StartupRecoveryState {
+    paths: StoragePaths,
+    report: Mutex<StartupRecoveryReport>,
+}
+
+impl StartupRecoveryState {
+    pub fn initialize(paths: StoragePaths) -> Self {
+        let report = recover_startup(&paths).unwrap_or_else(failed_report);
+        Self {
+            paths,
+            report: Mutex::new(report),
+        }
+    }
+
+    pub fn report(&self) -> StartupRecoveryReport {
+        self.report
+            .lock()
+            .expect("startup recovery state poisoned")
+            .clone()
+    }
+
+    pub fn retry(&self) -> Result<StartupRecoveryReport, CommandError> {
+        let report = recover_startup(&self.paths)?;
+        *self
+            .report
+            .lock()
+            .map_err(|_| CommandError::io("startup recovery state poisoned"))? = report.clone();
+        Ok(report)
+    }
+}
+
+fn failed_report(error: CommandError) -> StartupRecoveryReport {
+    StartupRecoveryReport {
+        recovered: Vec::new(),
+        quarantined: Vec::new(),
+        ambiguous: Vec::new(),
+        index_rebuilt: false,
+        index_quarantine: None,
+        failure: Some(RecoveryFailure {
+            code: error.code(),
+            message: error.message().to_owned(),
+        }),
+    }
+}
+
 pub fn recover_startup(paths: &StoragePaths) -> Result<StartupRecoveryReport, CommandError> {
+    recover_startup_with_candidate_hook(paths, |_| {})
+}
+
+#[doc(hidden)]
+pub fn recover_startup_with_candidate_hook<F>(
+    paths: &StoragePaths,
+    candidate_hook: F,
+) -> Result<StartupRecoveryReport, CommandError>
+where
+    F: Fn(&Path),
+{
     let guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
     let mut report = StartupRecoveryReport {
         recovered: Vec::new(),
@@ -55,22 +120,27 @@ pub fn recover_startup(paths: &StoragePaths) -> Result<StartupRecoveryReport, Co
         ambiguous: Vec::new(),
         index_rebuilt: false,
         index_quarantine: None,
+        failure: None,
     };
     for (collection, expected_kind) in [
         ("notes", NoteKind::Formal),
         ("temporary", NoteKind::Temporary),
     ] {
-        scan_collection(paths, collection, expected_kind, &mut report)?;
+        scan_collection(
+            paths,
+            collection,
+            expected_kind,
+            &mut report,
+            &candidate_hook,
+        )?;
     }
     let root = SafeDirectory::open(paths.root(), &[], false)?;
     let index_invalid = !index_is_complete_and_readable(paths);
     let has_rebuild_marker = root.regular_file_exists("rebuild-needed.json")?;
     let has_recovery_marker = root.regular_file_exists("recovery-needed.json")?;
-    if !report.recovered.is_empty() {
-        write_rebuild_marker(paths)?;
-    }
     if index_invalid || has_rebuild_marker || has_recovery_marker || !report.recovered.is_empty() {
         if index_invalid {
+            write_rebuild_marker(paths)?;
             report.index_quarantine = quarantine_invalid_index(&root)?;
         }
         let before = root.entry_names()?;
@@ -156,10 +226,7 @@ fn quarantine_invalid_index(root: &SafeDirectory) -> Result<Option<IndexQuaranti
     let database = moved
         .iter()
         .find(|(source, _)| source == "index.sqlite")
-        .map(|(_, destination)| destination.clone())
-        .ok_or_else(|| {
-            CommandError::validation("index sidecars exist without an index database")
-        })?;
+        .map(|(_, destination)| destination.clone());
     let mut sidecars = moved
         .into_iter()
         .filter(|(source, _)| source != "index.sqlite")
@@ -197,7 +264,10 @@ fn find_index_quarantine(before: &[String], after: &[String]) -> Option<IndexQua
         .filter(|name| name != &database)
         .collect::<Vec<_>>();
     sidecars.sort();
-    Some(IndexQuarantine { database, sidecars })
+    Some(IndexQuarantine {
+        database: Some(database),
+        sidecars,
+    })
 }
 
 fn scan_collection(
@@ -205,6 +275,7 @@ fn scan_collection(
     collection_name: &str,
     expected_kind: NoteKind,
     report: &mut StartupRecoveryReport,
+    candidate_hook: &impl Fn(&Path),
 ) -> Result<(), CommandError> {
     let collection = SafeDirectory::open(paths.root(), &[collection_name], false)?;
     for owner_name in collection.entry_names()? {
@@ -215,7 +286,15 @@ fn scan_collection(
             Ok(directory) => directory,
             Err(_) => continue,
         };
-        recover_note_directory(&directory, owner_id, expected_kind, report)?;
+        recover_note_directory(
+            paths,
+            collection_name,
+            &directory,
+            owner_id,
+            expected_kind,
+            report,
+            candidate_hook,
+        )?;
     }
     Ok(())
 }
@@ -223,13 +302,17 @@ fn scan_collection(
 struct Candidate {
     name: String,
     revision: u64,
+    bytes: Vec<u8>,
 }
 
 fn recover_note_directory(
+    paths: &StoragePaths,
+    collection_name: &str,
     directory: &SafeDirectory,
     owner_id: NoteId,
     expected_kind: NoteKind,
     report: &mut StartupRecoveryReport,
+    candidate_hook: &impl Fn(&Path),
 ) -> Result<(), CommandError> {
     // Complete the existing Windows replace descriptor before considering unrelated orphans.
     directory.recover("note.md")?;
@@ -265,7 +348,7 @@ fn recover_note_directory(
     if highest_names.len() > 1 {
         report.ambiguous.push(owner_id.to_string());
     }
-    for candidate in valid {
+    for candidate in &valid {
         if should_promote && candidate.name == highest_names[0] {
             continue;
         }
@@ -277,7 +360,19 @@ fn recover_note_directory(
         quarantine(directory, owner_id, &candidate.name, reason, report)?;
     }
     if should_promote {
-        match directory.publish(&highest_names[0], "note.md") {
+        let selected = valid
+            .iter()
+            .find(|candidate| candidate.name == highest_names[0])
+            .expect("selected recovery candidate");
+        candidate_hook(&directory.child_path(&selected.name)?);
+        write_rebuild_marker(paths)?;
+        let owner = owner_id.to_string();
+        match atomic_replace_contained(
+            paths.root(),
+            &[collection_name, owner.as_str()],
+            "note.md",
+            &selected.bytes,
+        ) {
             Ok(PublishState::Published) => report.recovered.push(RecoveredCandidate {
                 note_id: owner_id,
                 revision: highest,
@@ -289,6 +384,8 @@ fn recover_note_directory(
             }
             Err(failure) => return Err(failure.into_error()),
         }
+        let consumed = format!("quarantined-recovery-{}.consumed", Uuid::now_v7());
+        directory.quarantine_entry_no_follow(&highest_names[0], &consumed)?;
     }
     Ok(())
 }
@@ -311,6 +408,7 @@ fn read_candidate(
     Ok(Candidate {
         name: name.to_owned(),
         revision: document.revision,
+        bytes: contents.into_bytes(),
     })
 }
 

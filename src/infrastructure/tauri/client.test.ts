@@ -92,6 +92,16 @@ describe('TauriClient', () => {
     ])
   })
 
+  it('sends the production new-note command its folder-only typed contract', async () => {
+    const folderId = '019c0000-0000-7000-8000-000000000001' as import('../../domain/model').FolderId
+    invokeMock.mockResolvedValue({ id: '019c0000-0000-7000-8000-000000000002' })
+    const { notes } = createTauriPorts()
+
+    await notes.createNote(folderId)
+
+    expect(invokeMock).toHaveBeenCalledWith('create_note', { input: { folderId } })
+  })
+
   it('loads sticky appearance through its least-privilege command', async () => {
     invokeMock.mockResolvedValue({
       theme: 'forest', stickyColorMode: 'follow-theme', bodyFont: 'system-ui', codeFont: 'monospace',

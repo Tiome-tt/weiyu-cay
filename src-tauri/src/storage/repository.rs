@@ -18,7 +18,8 @@ use uuid::Uuid;
 const REBUILD_MARKER: &str = "rebuild-needed.json";
 const RECOVERY_MARKER: &str = "recovery-needed.json";
 const NOTE_RECOVERY_DESCRIPTOR: &str = ".note.md.replace-recovery.json";
-const MAX_MARKDOWN_BYTES: usize = 63 * 1024 * 1024;
+const MAX_RAW_DOCUMENT_BYTES: usize = 63 * 1024 * 1024;
+const MAX_SERIALIZED_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 
 pub struct NoteRepository {
     paths: StoragePaths,
@@ -702,11 +703,17 @@ pub(crate) fn serialize_document(document: &NoteDocument) -> Result<String, Comm
     let yaml = serde_yml::to_string(&metadata).map_err(|source| {
         CommandError::validation(format!("could not serialize note metadata: {source}"))
     })?;
-    Ok(format!(
+    let serialized = format!(
         "---\n{}\n---\n{}",
         yaml.trim_end_matches(['\r', '\n']),
         document.markdown
-    ))
+    );
+    if serialized.len() > MAX_SERIALIZED_DOCUMENT_BYTES {
+        return Err(CommandError::validation(
+            "serialized note content is too large",
+        ));
+    }
+    Ok(serialized)
 }
 
 pub(crate) fn parse_document(contents: &str) -> Result<NoteDocument, CommandError> {
@@ -976,7 +983,17 @@ fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
     if document.title.trim().is_empty() {
         return Err(CommandError::validation("note title is empty"));
     }
-    if document.markdown.len() > MAX_MARKDOWN_BYTES {
+    let aggregate = [
+        document.title.len(),
+        document.markdown.len(),
+        document.created_at.len(),
+        document.updated_at.len(),
+    ]
+    .into_iter()
+    .chain(document.tags.iter().map(String::len))
+    .try_fold(0usize, usize::checked_add)
+    .ok_or_else(|| CommandError::validation("note content size overflow"))?;
+    if aggregate > MAX_RAW_DOCUMENT_BYTES {
         return Err(CommandError::validation("note content is too large"));
     }
     DateTime::parse_from_rfc3339(&document.created_at).map_err(|source| {
