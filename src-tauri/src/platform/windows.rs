@@ -646,6 +646,13 @@ pub struct SafeDirectory {
 }
 
 impl SafeDirectory {
+    pub(crate) fn try_clone(&self) -> Result<Self, CommandError> {
+        Ok(Self {
+            path: self.path.clone(),
+            _pins: self._pins.clone(),
+        })
+    }
+
     pub(crate) fn ensure_path_identity(&self) -> Result<(), CommandError> {
         let expected = DirectoryIdentity::from_file(
             self._pins
@@ -736,9 +743,28 @@ impl SafeDirectory {
     }
 
     pub(crate) fn move_self_no_replace(
+        self,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+    ) -> Result<PublishState, PublishFailure> {
+        self.move_self_no_replace_using(destination_parent, destination, || {})
+    }
+
+    #[cfg(test)]
+    fn move_self_no_replace_with_hook<F: FnOnce()>(
+        self,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+        hook: F,
+    ) -> Result<PublishState, PublishFailure> {
+        self.move_self_no_replace_using(destination_parent, destination, hook)
+    }
+
+    fn move_self_no_replace_using<F: FnOnce()>(
         mut self,
         destination_parent: &SafeDirectory,
         destination: &str,
+        hook: F,
     ) -> Result<PublishState, PublishFailure> {
         validate_child_name(destination).map_err(PublishFailure::not_published_preserve_source)?;
         let destination_path = destination_parent
@@ -759,6 +785,7 @@ impl SafeDirectory {
             ));
         }
         drop(identity_pin);
+        hook();
         let source_pin = open_movable_directory(&self.path)
             .map_err(PublishFailure::not_published_preserve_source)?;
         if DirectoryIdentity::from_file(&source_pin)
@@ -1437,6 +1464,19 @@ mod tests {
     use std::{collections::VecDeque, fs, io::Write, path::Path};
 
     #[test]
+    fn safe_directory_clone_retains_all_ancestor_pins() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("owned")).unwrap();
+        fs::write(root.path().join("owned/note.md"), b"original").unwrap();
+        let original = super::SafeDirectory::open(root.path(), &["owned"], false).unwrap();
+        let cloned = original.try_clone().unwrap();
+        drop(original);
+
+        assert!(fs::rename(root.path().join("owned"), root.path().join("moved")).is_err());
+        assert_eq!(cloned.read("note.md", 32).unwrap(), b"original");
+    }
+
+    #[test]
     fn index_mutation_lock_keeps_the_validated_root_pinned_while_opening_the_lock_file() {
         let root = tempfile::tempdir().unwrap();
         let moved = root.path().with_extension("moved");
@@ -1522,6 +1562,32 @@ mod tests {
         assert_eq!(
             fs::read(root.path().join("source/original/note.md")).unwrap(),
             b"original"
+        );
+    }
+
+    #[test]
+    fn consuming_directory_publish_rejects_a_staging_name_replaced_after_pin_release() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("staging")).unwrap();
+        fs::write(root.path().join("staging/note.md"), b"verified").unwrap();
+        let parent = super::SafeDirectory::open(root.path(), &[], false).unwrap();
+        let staging = parent.open_child("staging", false).unwrap();
+
+        let result = staging.move_self_no_replace_with_hook(&parent, "published", || {
+            fs::rename(root.path().join("staging"), root.path().join("displaced")).unwrap();
+            fs::create_dir(root.path().join("staging")).unwrap();
+            fs::write(root.path().join("staging/note.md"), b"replacement").unwrap();
+        });
+
+        assert_eq!(result.unwrap_err().state(), PublishState::NotPublished);
+        assert!(!root.path().join("published").exists());
+        assert_eq!(
+            fs::read(root.path().join("displaced/note.md")).unwrap(),
+            b"verified"
+        );
+        assert_eq!(
+            fs::read(root.path().join("staging/note.md")).unwrap(),
+            b"replacement"
         );
     }
 

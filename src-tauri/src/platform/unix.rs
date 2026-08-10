@@ -6,8 +6,8 @@ use crate::{
 use rustix::{
     fd::{AsFd, BorrowedFd, OwnedFd},
     fs::{
-        flock, fstat, fsync, linkat, mkdirat, openat, renameat, statat, unlinkat, AtFlags, Dir,
-        FileType, FlockOperation, Mode, OFlags, CWD,
+        flock, fstat, fsync, linkat, mkdirat, openat, renameat, renameat_with, statat, unlinkat,
+        AtFlags, Dir, FileType, FlockOperation, Mode, OFlags, RenameFlags, CWD,
     },
 };
 #[cfg(target_os = "macos")]
@@ -165,6 +165,15 @@ extern "C" {
 }
 
 impl SafeDirectory {
+    pub(crate) fn try_clone(&self) -> Result<Self, CommandError> {
+        Ok(Self {
+            fd: self.fd.try_clone().map_err(|source| {
+                CommandError::io(format!("could not clone safe directory handle: {source}"))
+            })?,
+            path: self.path.clone(),
+        })
+    }
+
     pub(crate) fn ensure_path_identity(&self) -> Result<(), CommandError> {
         let expected = directory_identity(self.fd.as_fd())?;
         let current = statat(CWD, &self.path, AtFlags::SYMLINK_NOFOLLOW).map_err(|source| {
@@ -262,6 +271,25 @@ impl SafeDirectory {
         destination_parent: &SafeDirectory,
         destination: &str,
     ) -> Result<PublishState, PublishFailure> {
+        self.move_self_no_replace_using(destination_parent, destination, || {})
+    }
+
+    #[cfg(test)]
+    fn move_self_no_replace_with_hook<F: FnOnce()>(
+        self,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+        hook: F,
+    ) -> Result<PublishState, PublishFailure> {
+        self.move_self_no_replace_using(destination_parent, destination, hook)
+    }
+
+    fn move_self_no_replace_using<F: FnOnce()>(
+        self,
+        destination_parent: &SafeDirectory,
+        destination: &str,
+        hook: F,
+    ) -> Result<PublishState, PublishFailure> {
         validate_child_name(destination).map_err(PublishFailure::not_published_preserve_source)?;
         let source = self
             .path
@@ -287,11 +315,13 @@ impl SafeDirectory {
                 CommandError::conflict("contained directory destination already exists"),
             ));
         }
-        renameat(
+        hook();
+        renameat_with(
             &destination_parent.fd,
             source,
             &destination_parent.fd,
             destination,
+            RenameFlags::NOREPLACE,
         )
         .map_err(|error| {
             PublishFailure::not_published_preserve_source(CommandError::io(format!(
@@ -1076,7 +1106,22 @@ fn regular_identity_from_file(file: &fs::File) -> Result<(u64, u64), CommandErro
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::atomic_file::PublishState;
     use std::fs;
+
+    #[test]
+    fn safe_directory_clone_keeps_the_same_directory_handle_after_path_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("owned")).unwrap();
+        fs::write(root.path().join("owned/note.md"), b"original").unwrap();
+        let original = super::SafeDirectory::open(root.path(), &["owned"], false).unwrap();
+        let cloned = original.try_clone().unwrap();
+        fs::rename(root.path().join("owned"), root.path().join("moved")).unwrap();
+        fs::create_dir(root.path().join("owned")).unwrap();
+        fs::write(root.path().join("owned/note.md"), b"replacement").unwrap();
+
+        assert_eq!(cloned.read("note.md", 32).unwrap(), b"original");
+    }
 
     #[test]
     fn directory_move_remains_anchored_when_parent_paths_are_replaced() {
@@ -1138,6 +1183,31 @@ mod tests {
         assert_eq!(
             fs::read(root.path().join("source/original/note.md")).unwrap(),
             b"original"
+        );
+    }
+
+    #[test]
+    fn consuming_publish_reports_recovery_when_the_staging_name_is_replaced() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("staging")).unwrap();
+        fs::write(root.path().join("staging/note.md"), b"verified").unwrap();
+        let parent = super::SafeDirectory::open(root.path(), &[], false).unwrap();
+        let staging = parent.open_child("staging", false).unwrap();
+
+        let result = staging.move_self_no_replace_with_hook(&parent, "published", || {
+            fs::rename(root.path().join("staging"), root.path().join("displaced")).unwrap();
+            fs::create_dir(root.path().join("staging")).unwrap();
+            fs::write(root.path().join("staging/note.md"), b"replacement").unwrap();
+        });
+
+        assert_eq!(result.unwrap_err().state(), PublishState::RecoveryRequired);
+        assert_eq!(
+            fs::read(root.path().join("displaced/note.md")).unwrap(),
+            b"verified"
+        );
+        assert_eq!(
+            fs::read(root.path().join("published/note.md")).unwrap(),
+            b"replacement"
         );
     }
 }

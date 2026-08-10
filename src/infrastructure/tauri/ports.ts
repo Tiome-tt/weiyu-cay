@@ -1,7 +1,8 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
+import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppSettings, AssetPort, FolderPort, LinkPort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, LinkPort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -54,6 +55,21 @@ class TauriAssetPort implements AssetPort {
     return this.client.invoke<Awaited<ReturnType<AssetPort['saveImage']>>>('save_image', {
       input: { ...input, bytes: Array.from(input.bytes) },
     })
+  }
+}
+
+class TauriExportPort implements ExportPort {
+  constructor(private readonly client: TauriClient) {}
+
+  exportLibrary(destination: string) {
+    return this.client.invoke<ExportReport>('export_library', { destination })
+  }
+}
+
+class TauriExportDestinationPicker implements ExportDestinationPicker {
+  async chooseExportDestination() {
+    const selected = await open({ directory: true, multiple: false, title: 'Export complete library' })
+    return typeof selected === 'string' ? selected : null
   }
 }
 
@@ -258,6 +274,8 @@ export function createTauriPorts(): {
   trash: TrashPort
   settings: SettingsPort
   stickySettings: StickySettingsPort
+  exporter: ExportPort
+  exportDestinationPicker: ExportDestinationPicker
 } {
   const client = new TauriClient()
   return {
@@ -272,5 +290,7 @@ export function createTauriPorts(): {
     trash: new TauriTrashPort(client),
     settings: new TauriSettingsPort(client),
     stickySettings: new TauriStickySettingsPort(client),
+    exporter: new TauriExportPort(client),
+    exportDestinationPicker: new TauriExportDestinationPicker(),
   }
 }

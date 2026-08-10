@@ -29,6 +29,25 @@ export interface AssetPort {
   }): Promise<{ relativePath: string; width: number; height: number }>
 }
 
+export interface ExportReport {
+  completed: boolean
+  outputRoot: string | null
+  incompleteRoot: string | null
+  globalFailure: string | null
+  notesExported: number
+  assetsExported: number
+  renamedPaths: Array<{ source: string; destination: string }>
+  failed: Array<{ noteId: NoteId; message: string }>
+}
+
+export interface ExportPort {
+  exportLibrary(destination: string): Promise<ExportReport>
+}
+
+export interface ExportDestinationPicker {
+  chooseExportDestination(): Promise<string | null>
+}
+
 export interface SearchResult {
   noteId: NoteId
   title: string

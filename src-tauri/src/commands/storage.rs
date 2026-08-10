@@ -10,6 +10,7 @@ pub enum StorageConsumer {
     Links,
     Trash,
     StickyWindows,
+    Export,
 }
 
 /// The single configured storage root shared by every storage-backed command.

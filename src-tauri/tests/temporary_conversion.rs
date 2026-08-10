@@ -1830,7 +1830,8 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-reset-settings",
             "allow-get-storage-info",
             "allow-move-storage-root",
-            "allow-restart-application"
+            "allow-restart-application",
+            "allow-export-library"
         ])
     );
     assert_eq!(

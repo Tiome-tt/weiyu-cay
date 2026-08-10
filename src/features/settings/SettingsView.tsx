@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
+import type { AppSettings, ExportDestinationPicker, ExportPort, SettingsPort, StorageInfo } from '../../domain/ports'
+import { ExportLibrary } from './ExportLibrary'
 import { normalizeSettings } from './theme'
 
 interface SettingsViewProps {
@@ -9,9 +10,11 @@ interface SettingsViewProps {
   onClose(): void
   prepareStorageMove(): Promise<(() => void) | null>
   onRestartRequired?(): void
+  exporter?: ExportPort
+  exportDestinationPicker?: ExportDestinationPicker
 }
 
-export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired }: SettingsViewProps) {
+export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exporter, exportDestinationPicker }: SettingsViewProps) {
   const [draft, setDraft] = useState(value)
   const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [destination, setDestination] = useState('')
@@ -211,6 +214,12 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
               </div>
             )}
           </fieldset>
+          {exporter !== undefined && exportDestinationPicker !== undefined && (
+            <fieldset disabled={busy !== null}>
+              <legend>Portable export</legend>
+              <ExportLibrary exporter={exporter} chooseDestination={() => exportDestinationPicker.chooseExportDestination()} />
+            </fieldset>
+          )}
         </div>
         <footer><div><button type="button" disabled={busy !== null} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={busy !== null} onClick={onClose}>完成</button></footer>
       </section>

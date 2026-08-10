@@ -103,4 +103,24 @@ describe('TauriClient', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('load_sticky_settings', undefined)
   })
+
+  it('maps portable export to one typed Tauri command', async () => {
+    const report = {
+      completed: true,
+      outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+      incompleteRoot: null,
+      globalFailure: null,
+      notesExported: 1,
+      assetsExported: 0,
+      renamedPaths: [],
+      failed: [],
+    }
+    invokeMock.mockResolvedValue(report)
+    const { exporter } = createTauriPorts()
+
+    const received = await exporter.exportLibrary('D:\\Portable Notes')
+
+    expect(invokeMock).toHaveBeenCalledWith('export_library', { destination: 'D:\\Portable Notes' })
+    expect(received).toEqual(report)
+  })
 })

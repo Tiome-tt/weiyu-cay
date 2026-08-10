@@ -90,6 +90,7 @@ pub fn run() {
             commands::settings::get_storage_info,
             commands::settings::move_storage_root,
             commands::settings::restart_application,
+            commands::export::export_library,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

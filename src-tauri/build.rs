@@ -34,6 +34,7 @@ fn main() {
             "set_temporary_always_on_top",
             "get_capture_shortcut",
             "rebind_capture_shortcut",
+            "export_library",
         ]),
     ))
     .expect("failed to build Tauri application metadata")
