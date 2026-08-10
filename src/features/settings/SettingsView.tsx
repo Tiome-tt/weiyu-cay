@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import type { AppSettings, ExportDestinationPicker, ExportPort, SettingsPort, StorageInfo } from '../../domain/ports'
-import { ExportLibrary } from './ExportLibrary'
+import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
+import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
 
 interface SettingsViewProps {
@@ -10,11 +10,10 @@ interface SettingsViewProps {
   onClose(): void
   prepareStorageMove(): Promise<(() => void) | null>
   onRestartRequired?(): void
-  exporter?: ExportPort
-  exportDestinationPicker?: ExportDestinationPicker
+  exportController?: ExportLibraryController
 }
 
-export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exporter, exportDestinationPicker }: SettingsViewProps) {
+export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController }: SettingsViewProps) {
   const [draft, setDraft] = useState(value)
   const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [destination, setDestination] = useState('')
@@ -28,6 +27,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const busyRef = useRef(false)
   const draftRef = useRef(value)
   const shortcutStatusRequest = useRef(0)
+  const operationBusy = busy !== null || exportController?.busy === true
 
   useEffect(() => {
     if (busyRef.current) return
@@ -175,11 +175,11 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
-        <header><div><span className="library-pane__eyebrow">Simple Notes</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={busy !== null} onClick={onClose} aria-label="关闭设置">×</button></header>
+        <header><div><span className="library-pane__eyebrow">Simple Notes</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={operationBusy} onClick={onClose} aria-label="关闭设置">×</button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
         {shortcutWarning && <p className="settings-view__warning" role="status" aria-label="快捷键状态警告">{shortcutWarning}</p>}
         <div className="settings-view__body">
-          <fieldset disabled={busy !== null}>
+          <fieldset disabled={operationBusy}>
             <legend>外观与编辑</legend>
             <label>主题<select aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">森林</option><option value="sand">沙丘</option><option value="system">跟随系统</option></select></label>
             <label>正文字体<input aria-label="正文字体" value={draft.bodyFont} onChange={(event) => editDraft({ bodyFont: event.target.value })} onBlur={() => void update({ bodyFont: draftRef.current.bodyFont })} /></label>
@@ -189,12 +189,12 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
             <label>默认编辑视图<select aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">Markdown 源码</option><option value="split">源码与预览</option><option value="preview">预览</option></select></label>
             <label>自动保存延迟<input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumberDraft('autosaveDelayMs')} onBlur={() => void update({ autosaveDelayMs: draftRef.current.autosaveDelayMs })} /><span>毫秒</span></label>
           </fieldset>
-          <fieldset disabled={busy !== null}>
+          <fieldset disabled={operationBusy}>
             <legend>系统</legend>
             <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" value={draft.shortcut} onChange={(event) => editDraft({ shortcut: event.target.value })} /><button type="button" onClick={() => void update({ shortcut: draftRef.current.shortcut }, 'shortcut')}>应用快捷键</button></label>
             <label className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} />开机启动</label>
           </fieldset>
-          <fieldset disabled={busy !== null}>
+          <fieldset disabled={operationBusy}>
             <legend>本地存储</legend>
             <p>{storage ? `${storage.root} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>
             <p>应用不会自动删除旧位置中的数据。请保留应用配置和未知文件，直到你确认新位置中的笔记与附件完整可用。</p>
@@ -214,14 +214,14 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
               </div>
             )}
           </fieldset>
-          {exporter !== undefined && exportDestinationPicker !== undefined && (
+          {exportController !== undefined && (
             <fieldset disabled={busy !== null}>
               <legend>Portable export</legend>
-              <ExportLibrary exporter={exporter} chooseDestination={() => exportDestinationPicker.chooseExportDestination()} />
+              <ExportLibrary controller={exportController} />
             </fieldset>
           )}
         </div>
-        <footer><div><button type="button" disabled={busy !== null} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={busy !== null} onClick={onClose}>完成</button></footer>
+        <footer><div><button type="button" disabled={operationBusy} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={operationBusy} onClick={onClose}>完成</button></footer>
       </section>
     </div>
   )

@@ -1,30 +1,63 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ExportPort, ExportReport } from '../../domain/ports'
 
 interface ExportLibraryProps {
-  exporter: ExportPort
-  chooseDestination(): Promise<string | null>
+  exporter?: ExportPort
+  chooseDestination?(): Promise<string | null>
+  controller?: ExportLibraryController
 }
 
-export function ExportLibrary({ exporter, chooseDestination }: ExportLibraryProps) {
+export interface ExportLibraryController {
+  busy: boolean
+  report: ExportReport | null
+  status: string | null
+  error: string | null
+  startExport(): Promise<void>
+}
+
+export function useExportLibraryController(
+  exporter?: ExportPort,
+  chooseDestination?: () => Promise<string | null>,
+): ExportLibraryController {
   const [busy, setBusy] = useState(false)
   const [report, setReport] = useState<ExportReport | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const mounted = useRef(true)
+  const request = useRef(0)
+  const busyRef = useRef(false)
 
-  const startExport = async () => {
-    if (busy) return
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      request.current += 1
+    }
+  }, [])
+
+  useEffect(() => {
+    request.current += 1
+    busyRef.current = false
+    setBusy(false)
+  }, [chooseDestination, exporter])
+
+  const startExport = useCallback(async () => {
+    if (busyRef.current || exporter === undefined || chooseDestination === undefined) return
+    busyRef.current = true
+    const current = ++request.current
     setBusy(true)
     setReport(null)
     setStatus(null)
     setError(null)
     try {
       const destination = await chooseDestination()
+      if (!mounted.current || request.current !== current) return
       if (destination === null) {
         setStatus('Export cancelled. No files were changed.')
         return
       }
       const next = await exporter.exportLibrary(destination)
+      if (!mounted.current || request.current !== current) return
       setReport(next)
       if (next.completed) {
         setStatus(reportSummary(next))
@@ -35,11 +68,23 @@ export function ExportLibrary({ exporter, chooseDestination }: ExportLibraryProp
         setError(`The export was not published. ${retained} ${next.globalFailure ?? 'The operation did not complete.'}`)
       }
     } catch {
-      setError('The library could not be exported. Existing files were left unchanged.')
+      if (mounted.current && request.current === current) {
+        setError(
+          'The export command failed. Check the selected parent folder for incomplete export files before retrying.',
+        )
+      }
     } finally {
-      setBusy(false)
+      busyRef.current = false
+      if (mounted.current && request.current === current) setBusy(false)
     }
-  }
+  }, [chooseDestination, exporter])
+
+  return { busy, report, status, error, startExport }
+}
+
+export function ExportLibrary({ exporter, chooseDestination, controller }: ExportLibraryProps) {
+  const localController = useExportLibraryController(exporter, chooseDestination)
+  const { busy, report, status, error, startExport } = controller ?? localController
 
   return (
     <div className="settings-export">

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import userEvent from '@testing-library/user-event'
 import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort } from '../test/fakes'
-import type { AppSettings, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
+import type { AppSettings, ExportReport, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
 import type { NoteDocument, NoteId } from '../domain/model'
@@ -47,6 +47,78 @@ describe('App', () => {
     expect(app.style.getPropertyValue('--body-font-size')).toBe('18px')
     await user.click(screen.getByRole('button', { name: '打开设置' }))
     expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible()
+  })
+
+  it('owns a deferred export across settings close attempts and preserves its report after reopen', async () => {
+    const pending = deferred<ExportReport>()
+    const exportLibrary = vi.fn(() => pending.promise)
+    const user = userEvent.setup()
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(), exporter: { exportLibrary },
+      exportDestinationPicker: { chooseExportDestination: vi.fn().mockResolvedValue('D:\\Portable Notes') },
+    }} />)
+
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    expect(exportLibrary).toHaveBeenCalledTimes(1)
+    const dialog = screen.getByRole('dialog', { name: '设置' })
+    const headerClose = dialog.querySelector<HTMLButtonElement>('header button')
+    const footerClose = dialog.querySelector<HTMLButtonElement>('footer > button')
+    expect(headerClose).toBeDisabled()
+    expect(footerClose).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Exporting library…' }))
+    expect(exportLibrary).toHaveBeenCalledTimes(1)
+    expect(dialog).toBeVisible()
+
+    pending.resolve({
+      completed: true,
+      outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+      incompleteRoot: null,
+      globalFailure: null,
+      notesExported: 2,
+      assetsExported: 1,
+      renamedPaths: [],
+      failed: [],
+    })
+    expect(await screen.findByText(/Exported 2 notes and 1 asset\./)).toBeVisible()
+    expect(headerClose).toBeEnabled()
+    await user.click(headerClose!)
+    expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    expect(screen.getByText(/Exported 2 notes and 1 asset\./)).toBeVisible()
+  })
+
+  it('ignores a deferred export completion after the application unmounts', async () => {
+    const pending = deferred<ExportReport>()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const user = userEvent.setup()
+    const rendered = render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(), exporter: { exportLibrary: vi.fn(() => pending.promise) },
+      exportDestinationPicker: { chooseExportDestination: vi.fn().mockResolvedValue('D:\\Portable Notes') },
+    }} />)
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+
+    rendered.unmount()
+    pending.resolve({
+      completed: true,
+      outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+      incompleteRoot: null,
+      globalFailure: null,
+      notesExported: 1,
+      assetsExported: 0,
+      renamedPaths: [],
+      failed: [],
+    })
+    await pending.promise
+    await Promise.resolve()
+
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
   })
 
   it('removes library navigation from interaction after storage relocation requires restart', async () => {

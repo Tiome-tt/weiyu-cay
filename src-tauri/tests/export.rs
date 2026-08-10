@@ -61,20 +61,20 @@ fn export_materializes_readable_folders_markdown_and_assets() {
     assert!(report.failed.is_empty());
     let exported = fs::read_to_string(output.join("Work/Project B/Login Flow.md")).unwrap();
     assert!(exported.contains(&format!("[[Reference|{target_id}]]")));
-    assert!(exported.contains("![screen](Login Flow-assets/screenshot.png)"));
+    assert!(exported.contains("![screen](Login%20Flow-assets/screenshot.png)"));
     assert!(exported.contains(
-        "[assets/screenshot.png](Login Flow-assets/screenshot.png \"assets/screenshot.png\")"
+        "[assets/screenshot.png](Login%20Flow-assets/screenshot.png \"assets/screenshot.png\")"
     ));
-    assert!(exported.contains("[angle](<Login Flow-assets/screenshot.png> \"kept title\")"));
+    assert!(exported.contains("[angle](<Login%20Flow-assets/screenshot.png> \"kept title\")"));
     assert!(exported.contains(
-        "[title-decoy](Login Flow-assets/screenshot.png \"decoy ](assets/screenshot.png\")"
+        "[title-decoy](Login%20Flow-assets/screenshot.png \"decoy ](assets/screenshot.png\")"
     ));
-    assert!(exported.contains("[nested [label]](Login Flow-assets/screenshot.png \"nested\")"));
+    assert!(exported.contains("[nested [label]](Login%20Flow-assets/screenshot.png \"nested\")"));
     assert!(
-        exported.contains("[escaped \\[label\\]](Login Flow-assets/screenshot.png \"escaped\")")
+        exported.contains("[escaped \\[label\\]](Login%20Flow-assets/screenshot.png \"escaped\")")
     );
-    assert!(exported.contains("![unicode](Login Flow-assets/Caf\u{e9}.png)"));
-    assert!(exported.contains("[shot]: Login Flow-assets/screenshot.png"));
+    assert!(exported.contains("![unicode](Login%20Flow-assets/Caf\u{e9}.png)"));
+    assert!(exported.contains("[shot]: Login%20Flow-assets/screenshot.png"));
     assert_eq!(
         fs::read(output.join("Work/Project B/Login Flow-assets/screenshot.png")).unwrap(),
         b"portable image"
@@ -91,6 +91,70 @@ fn export_materializes_readable_folders_markdown_and_assets() {
     assert_eq!(manifest["appVersion"], "0.1.0");
     assert_eq!(manifest["notes"][FIRST_ID], "Work/Project B/Login Flow.md");
     assert_eq!(manifest["notes"][SECOND_ID], "Reference.md");
+}
+
+#[test]
+fn export_rewrites_parser_confirmed_asset_variants_and_preserves_suffixes_and_code() {
+    let store = TestStore::new();
+    let note_id = note_id(FIRST_ID);
+    create_formal_note(
+        &store,
+        note_id,
+        "Variants",
+        None,
+        "![percent](assets/space%20file.png)\n![escaped](assets/a\\(b\\).png)\n![dot](./assets/plain.png)\n![lexical](assets/sub/../plain.png)\n![suffix](assets/plain.png?download=1#preview)\n![external](https://cdn.example/assets/plain.png)\n[relative](docs/100%ready)\n![reference][asset]\n\n    [code]: assets/plain.png\n\n[asset]: <assets/space%20file.png?raw=1#reference> \"kept title\"",
+    );
+    let assets = store.paths.assets_dir(note_id, NoteKind::Formal).unwrap();
+    fs::create_dir(&assets).unwrap();
+    fs::write(assets.join("space file.png"), b"space").unwrap();
+    fs::write(assets.join("a(b).png"), b"parentheses").unwrap();
+    fs::write(assets.join("plain.png"), b"plain").unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let output = successful_output(&report);
+    let exported = fs::read_to_string(output.join("Variants.md")).unwrap();
+
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert!(exported.contains("![percent](Variants-assets/space%20file.png)"));
+    assert!(exported.contains("![escaped](Variants-assets/a%28b%29.png)"));
+    assert!(exported.contains("![dot](Variants-assets/plain.png)"));
+    assert!(exported.contains("![lexical](Variants-assets/plain.png)"));
+    assert!(exported.contains("![suffix](Variants-assets/plain.png?download=1#preview)"));
+    assert!(exported.contains("![external](https://cdn.example/assets/plain.png)"));
+    assert!(exported.contains("[relative](docs/100%ready)"));
+    assert!(exported
+        .contains("[asset]: <Variants-assets/space%20file.png?raw=1#reference> \"kept title\""));
+    assert!(exported.contains("    [code]: assets/plain.png"));
+}
+
+#[test]
+fn export_rejects_raw_and_percent_encoded_asset_traversal() {
+    let store = TestStore::new();
+    create_formal_note(
+        &store,
+        note_id(FIRST_ID),
+        "Raw traversal",
+        None,
+        "![escape](../assets/plain.png)",
+    );
+    create_formal_note(
+        &store,
+        note_id(SECOND_ID),
+        "Encoded traversal",
+        None,
+        "![escape](assets/%2e%2e/secret.png)",
+    );
+    let destination = tempfile::tempdir().unwrap();
+
+    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let output = successful_output(&report);
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(output.join("export-manifest.json")).unwrap()).unwrap();
+
+    assert_eq!(report.notes_exported, 0, "{report:?}");
+    assert_eq!(report.failed.len(), 2, "{report:?}");
+    assert_eq!(manifest["notes"], serde_json::json!({}));
 }
 
 #[test]
@@ -162,6 +226,43 @@ fn export_limits_portable_components_by_utf8_bytes_and_revalidates_truncation() 
 }
 
 #[test]
+fn export_budgets_final_note_and_asset_components_with_collisions_and_unicode() {
+    let store = TestStore::new();
+    let ascii = "a".repeat(120);
+    create_formal_note(&store, note_id(FIRST_ID), &ascii, None, "one");
+    create_formal_note(&store, note_id(SECOND_ID), &ascii, None, "two");
+    let cjk_id = note_id("019c0000-0000-7000-8000-000000000403");
+    create_formal_note(&store, cjk_id, &"界".repeat(60), None, "three");
+    let emoji_id = note_id("019c0000-0000-7000-8000-000000000404");
+    create_formal_note(&store, emoji_id, &"😀".repeat(60), None, "four");
+    let assets = store
+        .paths
+        .assets_dir(note_id(FIRST_ID), NoteKind::Formal)
+        .unwrap();
+    fs::create_dir(&assets).unwrap();
+    fs::write(assets.join("plain.png"), b"asset").unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let output = successful_output(&report);
+    let names = fs::read_dir(&output)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(report.notes_exported, 4, "{report:?}");
+    assert!(names.iter().any(|name| name.ends_with("-assets")));
+    for name in names {
+        assert!(name.len() <= 120, "UTF-8 budget exceeded: {name}");
+        assert!(
+            name.encode_utf16().count() <= 120,
+            "UTF-16 budget exceeded: {name}"
+        );
+        assert!(!name.ends_with([' ', '.']));
+    }
+}
+
+#[test]
 fn export_publishes_a_unique_child_without_overwriting_existing_content() {
     let store = TestStore::new();
     create_formal_note(&store, note_id(FIRST_ID), "Blocked", None, "blocked body");
@@ -216,6 +317,72 @@ fn manifest_and_renames_include_only_notes_that_were_staged_successfully() {
         serde_json::from_slice(&fs::read(output.join("export-manifest.json")).unwrap()).unwrap();
     assert!(manifest["notes"].get(FIRST_ID).is_none());
     assert_eq!(manifest["notes"][SECOND_ID], "Good.md");
+}
+
+#[test]
+fn export_materializes_nested_empty_and_all_failed_logical_folders() {
+    let store = TestStore::new();
+    let folders = FolderRepository::new(store.paths.clone());
+    let empty = folders
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "Empty".into(),
+        })
+        .unwrap();
+    folders
+        .create(CreateFolderInput {
+            parent_id: Some(empty.id),
+            name: "Nested".into(),
+        })
+        .unwrap();
+    folders
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "Caf\u{e9}".into(),
+        })
+        .unwrap();
+    folders
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "Cafe\u{301}".into(),
+        })
+        .unwrap();
+    let failed = folders
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "Failed only".into(),
+        })
+        .unwrap();
+    create_formal_note(
+        &store,
+        note_id(FIRST_ID),
+        "Unreadable",
+        Some(failed.id),
+        "body",
+    );
+    fs::write(
+        store
+            .paths
+            .note_dir(note_id(FIRST_ID), NoteKind::Formal)
+            .unwrap()
+            .join("note.md"),
+        b"not valid note markdown",
+    )
+    .unwrap();
+    let destination = tempfile::tempdir().unwrap();
+
+    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let output = successful_output(&report);
+
+    assert!(output.join("Empty/Nested").is_dir());
+    assert!(output.join("Failed only").is_dir());
+    assert!(output.join("Caf\u{e9}").is_dir());
+    assert!(output.join("Caf\u{e9} (2)").is_dir());
+    assert_eq!(report.notes_exported, 0, "{report:?}");
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(output.join("export-manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["notes"], serde_json::json!({}));
 }
 
 #[test]

@@ -14,6 +14,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::Write,
+    ops::Range,
     path::{Component, Path, PathBuf},
 };
 use unicode_normalization::UnicodeNormalization;
@@ -98,6 +99,9 @@ struct PreparedNote {
 }
 
 type ExportFileWriter<'a> = dyn FnMut(&SafeDirectory, &str, &[u8]) -> Result<(), CommandError> + 'a;
+type StagingCreator<'a> =
+    dyn FnMut(&SafeDirectory, &str) -> Result<SafeDirectory, CommandError> + 'a;
+type EntryReader<'a> = dyn FnMut(&SafeDirectory) -> Result<Vec<String>, CommandError> + 'a;
 
 pub fn export_library(
     paths: &StoragePaths,
@@ -113,6 +117,24 @@ fn export_library_using(
     app_version: &str,
     write_file: &mut ExportFileWriter<'_>,
 ) -> Result<ExportReport, CommandError> {
+    export_library_with_operations(
+        paths,
+        destination,
+        app_version,
+        write_file,
+        &mut |parent, name| parent.create_child_no_replace(name),
+        &mut SafeDirectory::entry_names,
+    )
+}
+
+fn export_library_with_operations(
+    paths: &StoragePaths,
+    destination: &Path,
+    app_version: &str,
+    write_file: &mut ExportFileWriter<'_>,
+    create_staging: &mut StagingCreator<'_>,
+    read_entries: &mut EntryReader<'_>,
+) -> Result<ExportReport, CommandError> {
     let destination = validate_destination(paths.root(), destination)?;
     let destination_parent = SafeDirectory::open(&destination, &[], false)?;
     let source_root = SafeDirectory::open(paths.root(), &[], false)?;
@@ -126,21 +148,14 @@ fn export_library_using(
     note_ids.sort_by_key(ToString::to_string);
 
     let staging_name = format!("{STAGING_PREFIX}{}.partial", Uuid::now_v7());
-    let output = match destination_parent.create_child_no_replace(&staging_name) {
+    let output = match create_staging(&destination_parent, &staging_name) {
         Ok(output) => output,
-        Err(error) => {
-            let retained = destination_parent
-                .entry_names()
-                .ok()
-                .is_some_and(|names| names.iter().any(|name| name == &staging_name));
-            if retained {
-                return Ok(incomplete_report(
-                    empty_report(),
-                    &destination.join(&staging_name),
-                    "The export staging folder could not be created durably.",
-                ));
-            }
-            return Err(error);
+        Err(_) => {
+            return Ok(incomplete_report(
+                empty_report(),
+                &destination.join(&staging_name),
+                "The export staging folder could not be created durably.",
+            ))
         }
     };
 
@@ -156,6 +171,22 @@ fn export_library_using(
     };
     let mut manifest_notes = BTreeMap::new();
     let mut allocated_notes: HashMap<Vec<String>, HashSet<String>> = HashMap::new();
+
+    let mut logical_folders = folder_paths
+        .values()
+        .map(|folder| folder.portable.clone())
+        .collect::<Vec<_>>();
+    logical_folders
+        .sort_by(|left, right| left.len().cmp(&right.len()).then_with(|| left.cmp(right)));
+    for folder in logical_folders {
+        if open_or_create(&output, &folder).is_err() {
+            return Ok(incomplete_report(
+                report,
+                &destination.join(&staging_name),
+                "The export folder structure could not be written.",
+            ));
+        }
+    }
 
     for note_id in note_ids {
         let result = prepare_note(&notes_root, note_id, &folder_paths, &mut allocated_notes);
@@ -213,8 +244,17 @@ fn export_library_using(
     report
         .failed
         .sort_by_key(|failure| failure.note_id.to_string());
-    let mut used = destination_parent
-        .entry_names()?
+    let entries = match read_entries(&destination_parent) {
+        Ok(entries) => entries,
+        Err(_) => {
+            return Ok(incomplete_report(
+                report,
+                &destination.join(&staging_name),
+                "The export destination could not be enumerated before publication.",
+            ))
+        }
+    };
+    let mut used = entries
         .into_iter()
         .map(|name| portable_key(&name))
         .collect::<HashSet<_>>();
@@ -317,8 +357,14 @@ fn prepare_note(
     };
     let stem = sanitize_component(&document.title);
     let used = allocated_notes.entry(folder.portable.clone()).or_default();
-    let portable_stem = allocate_unique(&stem, used);
+    let portable_stem = allocate_unique_with_limits(
+        &stem,
+        used,
+        MAX_PORTABLE_COMPONENT_BYTES - "-assets".len(),
+        MAX_PORTABLE_COMPONENT_UTF16 - "-assets".encode_utf16().count(),
+    );
     let markdown_name = format!("{portable_stem}.md");
+    validate_portable_component(&markdown_name)?;
     let original_relative = join_relative(
         &folder
             .original
@@ -346,14 +392,17 @@ fn prepare_note(
         .map(|plan| {
             (
                 format!("assets/{}", join_relative(&plan.source)),
-                format!(
+                encode_markdown_destination(&format!(
                     "{portable_stem}-assets/{}",
                     join_relative(&plan.destination)
-                ),
+                )),
             )
         })
         .collect::<HashMap<_, _>>();
     let assets_name = (!asset_plans.is_empty()).then(|| format!("{portable_stem}-assets"));
+    if let Some(assets_name) = &assets_name {
+        validate_portable_component(assets_name)?;
+    }
     let mut prepared_assets = Vec::new();
     if let Some(assets_name) = &assets_name {
         let source_assets = source_note.open_child("assets", false)?;
@@ -392,7 +441,7 @@ fn prepare_note(
             });
         }
     }
-    document.markdown = rewrite_asset_references(&document.markdown, &asset_references);
+    document.markdown = rewrite_asset_references(&document.markdown, &asset_references)?;
     let serialized = serialize_document(&document)?;
     let mut renamed_paths = prepared_assets
         .iter()
@@ -552,50 +601,71 @@ fn collect_asset_plans(
     Ok(())
 }
 
-fn rewrite_asset_references(markdown: &str, replacements: &HashMap<String, String>) -> String {
+fn rewrite_asset_references(
+    markdown: &str,
+    replacements: &HashMap<String, String>,
+) -> Result<String, CommandError> {
     let mut edits = Vec::new();
-    for (event, range) in Parser::new(markdown).into_offset_iter() {
+    let parser = Parser::new(markdown);
+    let reference_definitions = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| (definition.dest.to_string(), definition.span.clone()))
+        .collect::<Vec<_>>();
+    for (event, range) in parser.into_offset_iter() {
         let destination = match event {
             Event::Start(Tag::Image { dest_url, .. })
             | Event::Start(Tag::Link { dest_url, .. }) => dest_url,
             _ => continue,
         };
-        let Some(replacement) = replacements.get(destination.as_ref()) else {
+        let Some(replacement) = replacement_for_destination(destination.as_ref(), replacements)?
+        else {
             continue;
         };
         let fragment = &markdown[range.clone()];
-        if let Some(offset) = inline_destination_offset(fragment, destination.as_ref()) {
+        if let Some(destination_span) = inline_destination_span(fragment) {
             edits.push((
-                range.start + offset,
-                range.start + offset + destination.len(),
-                replacement.clone(),
+                range.start + destination_span.start,
+                range.start + destination_span.end,
+                replacement,
+            ));
+        }
+    }
+    for (destination, definition_span) in reference_definitions {
+        let Some(replacement) = replacement_for_destination(&destination, replacements)? else {
+            continue;
+        };
+        let fragment = &markdown[definition_span.clone()];
+        if let Some(destination_span) = reference_destination_span(fragment) {
+            edits.push((
+                definition_span.start + destination_span.start,
+                definition_span.start + destination_span.end,
+                replacement,
             ));
         }
     }
     let mut rewritten = markdown.to_owned();
     edits.sort_by_key(|edit| edit.0);
+    edits.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
     for (start, end, replacement) in edits.into_iter().rev() {
         rewritten.replace_range(start..end, &replacement);
     }
-    rewrite_reference_definitions(&rewritten, replacements)
+    Ok(rewritten)
 }
 
-fn inline_destination_offset(fragment: &str, destination: &str) -> Option<usize> {
+fn inline_destination_span(fragment: &str) -> Option<Range<usize>> {
+    if fragment.starts_with('<') && fragment.ends_with('>') {
+        return Some(1..fragment.len() - 1);
+    }
     if let Some(after_delimiter) = inline_destination_start(fragment) {
         let whitespace = fragment[after_delimiter..]
             .chars()
             .take_while(|character| character.is_whitespace())
             .map(char::len_utf8)
             .sum::<usize>();
-        let mut start = after_delimiter + whitespace;
-        if fragment[start..].starts_with('<') {
-            start += 1;
-        }
-        return fragment[start..].starts_with(destination).then_some(start);
+        return destination_span_from(fragment, after_delimiter + whitespace, true);
     }
-    fragment
-        .strip_prefix('<')
-        .and_then(|inner| inner.starts_with(destination).then_some(1))
+    None
 }
 
 fn inline_destination_start(fragment: &str) -> Option<usize> {
@@ -631,51 +701,205 @@ fn inline_destination_start(fragment: &str) -> Option<usize> {
     None
 }
 
-fn rewrite_reference_definitions(markdown: &str, replacements: &HashMap<String, String>) -> String {
-    let mut rewritten = markdown.to_owned();
-    let mut edits = Vec::new();
-    let mut line_start = 0;
-    for line in markdown.split_inclusive('\n') {
-        let content = line.strip_suffix('\n').unwrap_or(line);
-        let leading = content.len() - content.trim_start().len();
-        let definition = &content[leading..];
-        let Some(separator) = definition.find("]:") else {
-            line_start += line.len();
-            continue;
-        };
-        if !definition.starts_with('[') {
-            line_start += line.len();
+fn reference_destination_span(fragment: &str) -> Option<Range<usize>> {
+    let leading = fragment
+        .chars()
+        .take_while(|character| *character == ' ')
+        .map(char::len_utf8)
+        .sum::<usize>();
+    if leading > 3 || fragment.as_bytes().get(leading) != Some(&b'[') {
+        return None;
+    }
+    let label_end = matching_label_end(fragment, leading)?;
+    if fragment.as_bytes().get(label_end) != Some(&b':') {
+        return None;
+    }
+    let after_colon = label_end + 1;
+    let whitespace = fragment[after_colon..]
+        .chars()
+        .take_while(|character| character.is_whitespace())
+        .map(char::len_utf8)
+        .sum::<usize>();
+    destination_span_from(fragment, after_colon + whitespace, false)
+}
+
+fn matching_label_end(fragment: &str, label_start: usize) -> Option<usize> {
+    let mut depth = 0_u32;
+    let mut escaped = false;
+    for (offset, character) in fragment[label_start..].char_indices() {
+        if escaped {
+            escaped = false;
             continue;
         }
-        let after_separator = leading + separator + 2;
-        let destination_start = after_separator
-            + content[after_separator..]
-                .chars()
-                .take_while(|character| character.is_whitespace())
-                .map(char::len_utf8)
-                .sum::<usize>();
-        let remainder = &content[destination_start..];
-        let (destination, wrapper) = if let Some(inner) = remainder.strip_prefix('<') {
-            match inner.find('>') {
-                Some(end) => (&inner[..end], 1),
-                None => {
-                    line_start += line.len();
-                    continue;
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        match character {
+            '[' => depth = depth.saturating_add(1),
+            ']' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(label_start + offset + character.len_utf8());
                 }
             }
-        } else {
-            (remainder.split_whitespace().next().unwrap_or(""), 0)
-        };
-        if let Some(replacement) = replacements.get(destination) {
-            let start = line_start + destination_start + wrapper;
-            edits.push((start, start + destination.len(), replacement));
+            _ => {}
         }
-        line_start += line.len();
     }
-    for (start, end, replacement) in edits.into_iter().rev() {
-        rewritten.replace_range(start..end, replacement);
+    None
+}
+
+fn destination_span_from(fragment: &str, start: usize, inline: bool) -> Option<Range<usize>> {
+    if fragment.get(start..)?.starts_with('<') {
+        let inner_start = start + 1;
+        let end = fragment[inner_start..].find('>')? + inner_start;
+        return Some(inner_start..end);
     }
-    rewritten
+    let mut escaped = false;
+    let mut parentheses = 0_u32;
+    for (offset, character) in fragment[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        match character {
+            '(' => parentheses = parentheses.saturating_add(1),
+            ')' if parentheses > 0 => parentheses -= 1,
+            ')' if inline => return Some(start..start + offset),
+            character if character.is_whitespace() && parentheses == 0 => {
+                return Some(start..start + offset)
+            }
+            _ => {}
+        }
+    }
+    (!inline && start < fragment.len()).then_some(start..fragment.len())
+}
+
+fn replacement_for_destination(
+    destination: &str,
+    replacements: &HashMap<String, String>,
+) -> Result<Option<String>, CommandError> {
+    let suffix_start = destination.find(['?', '#']).unwrap_or(destination.len());
+    let (encoded_path, suffix) = destination.split_at(suffix_start);
+    if is_external_destination(encoded_path) {
+        return Ok(None);
+    }
+    let decoded_path = match percent_decode_path(encoded_path) {
+        Ok(path) => path,
+        Err(error)
+            if encoded_path
+                .split('/')
+                .any(|component| component == "assets") =>
+        {
+            return Err(error)
+        }
+        Err(_) => return Ok(None),
+    };
+    let raw_components = decoded_path.split('/').collect::<Vec<_>>();
+    let asset_candidate = raw_components.contains(&"assets");
+    if !asset_candidate {
+        return Ok(None);
+    }
+    if decoded_path.starts_with('/') || decoded_path.contains('\\') {
+        return Err(CommandError::validation(
+            "asset reference escapes the note assets directory",
+        ));
+    }
+    let mut normalized = Vec::new();
+    for component in raw_components {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if normalized.pop().is_none() {
+                    return Err(CommandError::validation(
+                        "asset reference escapes the note assets directory",
+                    ));
+                }
+            }
+            component => normalized.push(component),
+        }
+    }
+    if normalized.first() != Some(&"assets") {
+        return Err(CommandError::validation(
+            "asset reference escapes the note assets directory",
+        ));
+    }
+    let normalized = normalized.join("/");
+    Ok(replacements
+        .get(&normalized)
+        .map(|replacement| format!("{replacement}{suffix}")))
+}
+
+fn is_external_destination(value: &str) -> bool {
+    if value.starts_with("//") {
+        return true;
+    }
+    let Some(colon) = value.find(':') else {
+        return false;
+    };
+    let scheme = &value[..colon];
+    !scheme.is_empty()
+        && scheme
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+        && scheme.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        })
+}
+
+fn percent_decode_path(value: &str) -> Result<String, CommandError> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes.get(index + 1).and_then(|byte| hex_value(*byte));
+            let low = bytes.get(index + 2).and_then(|byte| hex_value(*byte));
+            let (Some(high), Some(low)) = (high, low) else {
+                return Err(CommandError::validation(
+                    "asset reference contains invalid percent encoding",
+                ));
+            };
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| CommandError::validation("asset reference is not valid UTF-8"))
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn encode_markdown_destination(value: &str) -> String {
+    let mut encoded = String::new();
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric()
+            || matches!(character, '-' | '.' | '_' | '~' | '/')
+            || !character.is_ascii()
+        {
+            encoded.push(character);
+        } else {
+            for byte in character.to_string().as_bytes() {
+                encoded.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    encoded
 }
 
 fn write_owned_file(
@@ -781,20 +1005,61 @@ fn is_windows_reserved(value: &str) -> bool {
 }
 
 fn allocate_unique(base: &str, used: &mut HashSet<String>) -> String {
-    let mut candidate = portable_with_suffix(base, "");
+    allocate_unique_with_limits(
+        base,
+        used,
+        MAX_PORTABLE_COMPONENT_BYTES,
+        MAX_PORTABLE_COMPONENT_UTF16,
+    )
+}
+
+fn allocate_unique_with_limits(
+    base: &str,
+    used: &mut HashSet<String>,
+    byte_limit: usize,
+    utf16_limit: usize,
+) -> String {
+    let mut candidate = portable_with_suffix(base, "", byte_limit, utf16_limit);
     let mut suffix = 2_u32;
     while !used.insert(portable_key(&candidate)) {
-        candidate = portable_with_suffix(base, &format!(" ({suffix})"));
+        candidate = portable_with_suffix(base, &format!(" ({suffix})"), byte_limit, utf16_limit);
         suffix = suffix.saturating_add(1);
     }
     candidate
 }
 
-fn portable_with_suffix(base: &str, suffix: &str) -> String {
-    let byte_budget = MAX_PORTABLE_COMPONENT_BYTES.saturating_sub(suffix.len());
-    let utf16_budget = MAX_PORTABLE_COMPONENT_UTF16.saturating_sub(suffix.encode_utf16().count());
-    let base = finalize_component(truncate_component(base, byte_budget, utf16_budget));
-    finalize_component(format!("{base}{suffix}"))
+fn portable_with_suffix(base: &str, suffix: &str, byte_limit: usize, utf16_limit: usize) -> String {
+    let mut byte_budget = byte_limit.saturating_sub(suffix.len());
+    let mut utf16_budget = utf16_limit.saturating_sub(suffix.encode_utf16().count());
+    loop {
+        let base = finalize_component(truncate_component(base, byte_budget, utf16_budget));
+        let candidate = finalize_component(format!("{base}{suffix}"));
+        if component_fits(&candidate, byte_limit, utf16_limit) {
+            return candidate;
+        }
+        byte_budget = byte_budget.saturating_sub(1);
+        utf16_budget = utf16_budget.saturating_sub(1);
+    }
+}
+
+fn validate_portable_component(value: &str) -> Result<(), CommandError> {
+    if !component_fits(
+        value,
+        MAX_PORTABLE_COMPONENT_BYTES,
+        MAX_PORTABLE_COMPONENT_UTF16,
+    ) || value.is_empty()
+        || value.ends_with([' ', '.'])
+        || is_windows_reserved(value)
+    {
+        return Err(CommandError::validation(
+            "portable export component exceeds platform limits",
+        ));
+    }
+    Ok(())
+}
+
+fn component_fits(value: &str, byte_limit: usize, utf16_limit: usize) -> bool {
+    value.len() <= byte_limit && value.encode_utf16().count() <= utf16_limit
 }
 
 fn portable_key(value: &str) -> String {
@@ -951,6 +1216,61 @@ mod tests {
             ),
             parent.join("Simple Notes Export")
         );
+    }
+
+    #[test]
+    fn final_enumeration_failure_returns_the_staged_manifest_as_incomplete() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
+        let destination = sandbox.path().join("exports");
+        fs::create_dir(&destination).unwrap();
+
+        let report = export_library_with_operations(
+            &paths,
+            &destination,
+            "0.1.0",
+            &mut write_owned_file,
+            &mut |parent, name| parent.create_child_no_replace(name),
+            &mut |_| Err(CommandError::io("injected final enumeration failure")),
+        )
+        .unwrap();
+
+        assert!(!report.completed, "{report:?}");
+        assert_eq!(report.notes_exported, 0);
+        assert_eq!(report.assets_exported, 0);
+        assert!(report.output_root.is_none());
+        let incomplete = PathBuf::from(report.incomplete_root.expect("incomplete root"));
+        assert!(incomplete.join(EXPORT_MANIFEST).exists());
+        assert!(!destination.join(EXPORT_ROOT_NAME).exists());
+    }
+
+    #[test]
+    fn staging_creation_partial_failure_returns_the_known_incomplete_root() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
+        let destination = sandbox.path().join("exports");
+        fs::create_dir(&destination).unwrap();
+
+        let report = export_library_with_operations(
+            &paths,
+            &destination,
+            "0.1.0",
+            &mut write_owned_file,
+            &mut |parent, name| {
+                let _created = parent.create_child_no_replace(name)?;
+                Err(CommandError::io("injected staging pin failure"))
+            },
+            &mut SafeDirectory::entry_names,
+        )
+        .unwrap();
+
+        assert!(!report.completed, "{report:?}");
+        assert_eq!(report.notes_exported, 0);
+        assert_eq!(report.assets_exported, 0);
+        assert!(report.output_root.is_none());
+        let incomplete = PathBuf::from(report.incomplete_root.expect("known staging root"));
+        assert!(incomplete.is_dir());
+        assert!(!destination.join(EXPORT_ROOT_NAME).exists());
     }
 
     fn all_descendants(root: &Path) -> Vec<PathBuf> {

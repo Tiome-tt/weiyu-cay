@@ -81,14 +81,45 @@ describe('ExportLibrary', () => {
     expect(screen.getByRole('list', { name: 'Notes that could not be exported' })).toHaveTextContent('019c0000-0000-7000-8000-000000000401')
   })
 
-  it('shows selection and command failures without issuing a second operation', async () => {
+  it('shows an opaque command failure without promising that no staging files exist', async () => {
     const exporter: ExportPort = { exportLibrary: vi.fn().mockRejectedValue(new Error('private path')) }
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')} />)
 
     await user.click(screen.getByRole('button', { name: 'Export complete library' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('The library could not be exported. Existing files were left unchanged.')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The export command failed. Check the selected parent folder for incomplete export files before retrying.',
+    )
+    expect(screen.getByRole('alert')).not.toHaveTextContent('files were left unchanged')
     expect(exporter.exportLibrary).toHaveBeenCalledTimes(1)
   })
+
+  it('ignores a deferred export result after its stable owner unmounts', async () => {
+    const pending = deferred<ExportReport>()
+    const exporter: ExportPort = { exportLibrary: vi.fn(() => pending.promise) }
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const user = userEvent.setup()
+    const rendered = render(
+      <ExportLibrary
+        exporter={exporter}
+        chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+
+    rendered.unmount()
+    pending.resolve(emptyReport)
+    await pending.promise
+    await Promise.resolve()
+
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
 })
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((complete) => { resolve = complete })
+  return { promise, resolve }
+}

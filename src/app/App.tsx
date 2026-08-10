@@ -9,6 +9,7 @@ import { isCanonicalUuidV7 } from '../domain/ids'
 import { StickyWindow } from '../features/temporary/StickyWindow'
 import type { AppSettings } from '../domain/ports'
 import { SettingsView } from '../features/settings/SettingsView'
+import { useExportLibraryController } from '../features/settings/ExportLibrary'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeStyle } from '../features/settings/theme'
 
 const defaultServices = createAppServices()
@@ -28,6 +29,11 @@ function MainApplication({ services }: { services: AppServices }) {
   const settingsRevision = useRef(0)
   const libraryRef = useRef<LibraryLayoutHandle>(null)
   const systemScheme = useSystemColorScheme()
+  const chooseExportDestination = useCallback(
+    () => services.exportDestinationPicker?.chooseExportDestination() ?? Promise.resolve(null),
+    [services.exportDestinationPicker],
+  )
+  const exportController = useExportLibraryController(services.exporter, chooseExportDestination)
   const loadSettings = useCallback(async () => {
     if (services.settings === undefined) return
     const revision = settingsRevision.current
@@ -64,7 +70,7 @@ function MainApplication({ services }: { services: AppServices }) {
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
         {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
       </div>
-      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exporter={services.exporter} exportDestinationPicker={services.exportDestinationPicker} />}
+      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} />}
     </main>
   )
 }
