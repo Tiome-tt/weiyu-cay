@@ -2,7 +2,7 @@ use crate::{
     commands::storage::{StorageCommandState, StorageConsumer},
     domain::{NoteKind, SaveImageInput, SavedImage},
     error::CommandError,
-    platform::{NewFilePublishState, SafeDirectory},
+    platform::{IndexMutationLock, NewFilePublishState, SafeDirectory},
     storage::{paths::StoragePaths, repository::NoteRepository},
     windows::sticky::authorize_asset_caller,
 };
@@ -132,7 +132,16 @@ where
     S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
 {
     let mut before_publish = |_directory: &SafeDirectory, _staging: &str, _filename: &str| {};
-    save_image_to_with_publish_hook(paths, input, next_uuid, write, &mut before_publish, sync)
+    let guard = IndexMutationLock::acquire(paths.root())?;
+    save_image_to_with_publish_hook_locked(
+        paths,
+        input,
+        next_uuid,
+        write,
+        &mut before_publish,
+        sync,
+        &guard,
+    )
 }
 
 #[doc(hidden)]
@@ -150,8 +159,35 @@ where
     B: FnMut(&SafeDirectory, &str, &str),
     S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
 {
+    let guard = IndexMutationLock::acquire(paths.root())?;
+    save_image_to_with_publish_hook_locked(
+        paths,
+        input,
+        next_uuid,
+        write,
+        before_publish,
+        sync,
+        &guard,
+    )
+}
+
+fn save_image_to_with_publish_hook_locked<N, W, B, S>(
+    paths: &StoragePaths,
+    input: SaveImageInput,
+    next_uuid: &mut N,
+    write: &mut W,
+    before_publish: &mut B,
+    sync: &mut S,
+    guard: &IndexMutationLock,
+) -> Result<SavedImage, CommandError>
+where
+    N: FnMut() -> Uuid,
+    W: FnMut(&mut File, &[u8]) -> Result<(), CommandError>,
+    B: FnMut(&SafeDirectory, &str, &str),
+    S: FnMut(&SafeDirectory, &str) -> Result<(), CommandError>,
+{
     let validated = validate_image(&input.media_type, &input.bytes)?;
-    let owner = NoteRepository::new(paths.clone()).load(input.note_id)?;
+    let owner = NoteRepository::new(paths.clone()).load_locked(input.note_id, guard)?;
     let collection = match owner.kind {
         NoteKind::Formal => "notes",
         NoteKind::Temporary => "temporary",

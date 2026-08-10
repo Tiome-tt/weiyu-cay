@@ -91,7 +91,7 @@ pub struct AppSettings {
     pub data_root: DataRootSetting,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StickySettings {
     pub theme: AppTheme,
@@ -344,6 +344,49 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
         self.load_unlocked()
     }
 
+    /// Reads only persisted sticky-window appearance fields. This intentionally avoids
+    /// shortcut/autostart reconciliation: sticky windows need no OS preference authority.
+    pub fn load_sticky_settings(&self) -> Result<StickySettings, CommandError> {
+        let _transaction = self
+            .transaction
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.store.load()? {
+            Some(value) => match serde_json::from_value::<StickySettings>(value)
+                .map_err(|source| {
+                    CommandError::validation(format!(
+                        "sticky appearance settings are invalid: {source}"
+                    ))
+                })
+                .and_then(validate_sticky_settings)
+            {
+                Ok(settings) => Ok(settings),
+                Err(_error)
+                    if matches!(
+                        self.store.load_data_root_backup()?,
+                        Some(DataRootSetting::Custom { .. })
+                    ) =>
+                {
+                    Err(CommandError::conflict(
+                        "application settings are damaged; the last known custom library location was preserved",
+                    ))
+                }
+                Err(error) => Err(error),
+            },
+            None
+                if matches!(
+                    self.store.load_data_root_backup()?,
+                    Some(DataRootSetting::Custom { .. })
+                ) =>
+            {
+                Err(CommandError::conflict(
+                    "application settings are missing; the last known custom library location was preserved",
+                ))
+            }
+            None => Ok(StickySettings::from(&AppSettings::default())),
+        }
+    }
+
     fn load_unlocked(&self) -> Result<AppSettings, CommandError> {
         let value = self.store.load()?;
         if let Some(value) = value {
@@ -470,13 +513,14 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
                     "injected crash after storage staging creation",
                 ));
             }
-            write_new_marker(&staging_directory, &marker)?;
+            let marker_bytes = write_new_marker(&staging_directory, &marker)?;
             source_record.phase = SourceMovePhase::StagingPrepared;
             write_source_move_record(self.paths.root(), &source_record)?;
 
             let source_directory = SafeDirectory::open(self.paths.root(), &[], false)?;
             let copied = copy_tree(&source_directory, &staging_directory)?;
-            verify_copy_layout(&staging_directory, &copied)?;
+            let copied_paths = collect_copyable_source_paths(&source_directory)?;
+            verify_copy_layout(&staging_directory, &copied_paths)?;
             verify_copied_bytes(&source_directory, &staging_directory, &copied)?;
             if self.failure == StorageMoveFailurePoint::AfterCopy {
                 return Err(CommandError::io("injected failure after storage copy"));
@@ -485,7 +529,8 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
             if let Some(hook) = &self.before_index_snapshot {
                 hook();
             }
-            backup_index_snapshot(self.paths.database(), &staging_directory)?;
+            let index_snapshot_bytes =
+                backup_index_snapshot(self.paths.database(), &staging_directory)?;
             staging_directory.ensure_path_identity()?;
             source_record.phase = SourceMovePhase::DestinationVerified;
             write_source_move_record(self.paths.root(), &source_record)?;
@@ -505,7 +550,14 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
             }
             // Re-open both source and staging through pinned, no-follow directories just before
             // publication so a same-length replacement cannot be published undetected.
+            verify_source_layout(&source_directory, &copied_paths)?;
             verify_copied_bytes(&source_directory, &staging_directory, &copied)?;
+            verify_final_staging_layout(&staging_directory, &copied_paths)?;
+            verify_relocation_owned_files(
+                &staging_directory,
+                &marker_bytes,
+                &index_snapshot_bytes,
+            )?;
             staging_directory.ensure_path_identity()?;
             staging_directory
                 .move_self_no_replace(&parent, destination_name)
@@ -738,6 +790,20 @@ fn validate_settings(mut settings: AppSettings) -> Result<AppSettings, CommandEr
             ));
         }
     }
+    Ok(settings)
+}
+
+fn validate_sticky_settings(mut settings: StickySettings) -> Result<StickySettings, CommandError> {
+    settings.body_font = validate_font(settings.body_font)?;
+    settings.code_font = validate_font(settings.code_font)?;
+    if !settings.font_size.is_finite() || !settings.line_height.is_finite() {
+        return Err(CommandError::validation(
+            "settings contain non-finite values",
+        ));
+    }
+    settings.font_size = settings.font_size.clamp(12.0, 28.0);
+    settings.line_height = settings.line_height.clamp(1.2, 2.2);
+    settings.autosave_delay_ms = settings.autosave_delay_ms.clamp(150, 2_000);
     Ok(settings)
 }
 
@@ -988,12 +1054,14 @@ fn verify_copied_bytes(
     Ok(())
 }
 
-fn verify_copy_layout(destination: &SafeDirectory, copied: &[PathBuf]) -> Result<(), CommandError> {
-    let expected = copied.iter().cloned().collect::<BTreeSet<_>>();
+fn verify_copy_layout(
+    destination: &SafeDirectory,
+    expected: &BTreeSet<PathBuf>,
+) -> Result<(), CommandError> {
     let mut actual = BTreeSet::new();
-    collect_destination_files(destination, Path::new(""), &mut actual)?;
+    collect_destination_paths(destination, Path::new(""), &mut actual)?;
     actual.remove(Path::new(MOVE_MARKER));
-    if actual != expected {
+    if &actual != expected {
         return Err(CommandError::validation(
             "destination storage layout does not match the source",
         ));
@@ -1001,21 +1069,112 @@ fn verify_copy_layout(destination: &SafeDirectory, copied: &[PathBuf]) -> Result
     Ok(())
 }
 
-fn collect_destination_files(
+fn verify_source_layout(
+    source: &SafeDirectory,
+    expected: &BTreeSet<PathBuf>,
+) -> Result<(), CommandError> {
+    let actual = collect_copyable_source_paths(source)?;
+    if actual != *expected {
+        return Err(CommandError::conflict(
+            "source storage layout changed after relocation copy",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_final_staging_layout(
+    staging: &SafeDirectory,
+    copied_paths: &BTreeSet<PathBuf>,
+) -> Result<(), CommandError> {
+    let mut expected = copied_paths.clone();
+    expected.insert(PathBuf::from(MOVE_MARKER));
+    expected.insert(PathBuf::from("index.sqlite"));
+    let mut actual = BTreeSet::new();
+    collect_destination_paths(staging, Path::new(""), &mut actual)?;
+    if actual != expected {
+        return Err(CommandError::conflict(
+            "staging storage layout changed before relocation publication",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_relocation_owned_files(
+    staging: &SafeDirectory,
+    marker_bytes: &[u8],
+    index_snapshot_bytes: &[u8],
+) -> Result<(), CommandError> {
+    let marker = staging.read(MOVE_MARKER, marker_bytes.len() as u64 + 1)?;
+    if marker != marker_bytes {
+        return Err(CommandError::conflict(
+            "relocation marker changed before publication",
+        ));
+    }
+    let index = staging.read("index.sqlite", index_snapshot_bytes.len() as u64 + 1)?;
+    if index != index_snapshot_bytes {
+        return Err(CommandError::conflict(
+            "relocation index snapshot changed before publication",
+        ));
+    }
+    Ok(())
+}
+
+fn collect_copyable_source_paths(
+    source: &SafeDirectory,
+) -> Result<BTreeSet<PathBuf>, CommandError> {
+    let mut paths = BTreeSet::new();
+    collect_copyable_source_paths_in(source, Path::new(""), true, &mut paths)?;
+    Ok(paths)
+}
+
+fn collect_copyable_source_paths_in(
     directory: &SafeDirectory,
     relative_parent: &Path,
-    files: &mut BTreeSet<PathBuf>,
+    root: bool,
+    paths: &mut BTreeSet<PathBuf>,
 ) -> Result<(), CommandError> {
     for name in directory.entry_names()? {
+        if root
+            && matches!(
+                name.as_str(),
+                MUTATION_LOCK
+                    | MOVE_MARKER
+                    | SOURCE_MOVE_MARKER
+                    | "settings.json"
+                    | "index.sqlite"
+                    | "index.sqlite-wal"
+                    | "index.sqlite-shm"
+            )
+        {
+            continue;
+        }
         let relative = relative_parent.join(&name);
+        paths.insert(relative.clone());
         match directory.entry_kind(&name)? {
             SafeEntryKind::Directory => {
                 let child = directory.open_child(&name, false)?;
-                collect_destination_files(&child, &relative, files)?;
+                collect_copyable_source_paths_in(&child, &relative, false, paths)?;
             }
-            SafeEntryKind::RegularFile => {
-                files.insert(relative);
+            SafeEntryKind::RegularFile => {}
+        }
+    }
+    Ok(())
+}
+
+fn collect_destination_paths(
+    directory: &SafeDirectory,
+    relative_parent: &Path,
+    paths: &mut BTreeSet<PathBuf>,
+) -> Result<(), CommandError> {
+    for name in directory.entry_names()? {
+        let relative = relative_parent.join(&name);
+        paths.insert(relative.clone());
+        match directory.entry_kind(&name)? {
+            SafeEntryKind::Directory => {
+                let child = directory.open_child(&name, false)?;
+                collect_destination_paths(&child, &relative, paths)?;
             }
+            SafeEntryKind::RegularFile => {}
         }
     }
     Ok(())
@@ -1026,7 +1185,7 @@ type WindowStateRow = (Vec<u8>, i64, f64, f64, f64, f64, i64);
 fn backup_index_snapshot(
     source_path: &Path,
     destination: &SafeDirectory,
-) -> Result<(), CommandError> {
+) -> Result<Vec<u8>, CommandError> {
     let source = Database::open(source_path)?;
     source.migrate()?;
     let mut snapshot = rusqlite::Connection::open_in_memory().map_err(|error| {
@@ -1056,8 +1215,9 @@ fn backup_index_snapshot(
     let serialized = snapshot.serialize(rusqlite::MAIN_DB).map_err(|error| {
         CommandError::database(format!("could not serialize index snapshot: {error}"))
     })?;
+    let snapshot_bytes = serialized.to_vec();
     let mut file = destination.create_new("index.sqlite")?;
-    file.write_all(&serialized).map_err(|error| {
+    file.write_all(&snapshot_bytes).map_err(|error| {
         CommandError::io(format!(
             "could not write destination index snapshot: {error}"
         ))
@@ -1073,7 +1233,7 @@ fn backup_index_snapshot(
         CommandError::database(format!("could not close memory index snapshot: {error}"))
     })?;
     source.close()?;
-    Ok(())
+    Ok(snapshot_bytes)
 }
 
 fn read_window_state_rows(path: &Path) -> Result<Vec<WindowStateRow>, CommandError> {
@@ -1326,7 +1486,10 @@ fn write_marker(destination: &Path, marker: &MoveMarker) -> Result<(), CommandEr
     }
 }
 
-fn write_new_marker(destination: &SafeDirectory, marker: &MoveMarker) -> Result<(), CommandError> {
+fn write_new_marker(
+    destination: &SafeDirectory,
+    marker: &MoveMarker,
+) -> Result<Vec<u8>, CommandError> {
     let bytes = serde_json::to_vec(marker).map_err(|source| {
         CommandError::validation(format!("could not encode move marker: {source}"))
     })?;
@@ -1335,7 +1498,8 @@ fn write_new_marker(destination: &SafeDirectory, marker: &MoveMarker) -> Result<
         .map_err(|source| CommandError::io(format!("could not write move marker: {source}")))?;
     file.sync_all()
         .map_err(|source| CommandError::io(format!("could not sync move marker: {source}")))?;
-    destination.sync()
+    destination.sync()?;
+    Ok(bytes)
 }
 
 fn read_relocation_marker(paths: &StoragePaths) -> Result<Option<MoveMarker>, CommandError> {
@@ -1707,10 +1871,7 @@ pub fn load_sticky_settings(
     state: tauri::State<'_, SettingsCommandState>,
 ) -> Result<StickySettings, CommandError> {
     authorize_sticky_settings_caller(window.label())?;
-    state
-        .service()
-        .load()
-        .map(|settings| StickySettings::from(&settings))
+    state.service().load_sticky_settings()
 }
 
 #[tauri::command]

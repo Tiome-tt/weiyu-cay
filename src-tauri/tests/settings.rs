@@ -65,6 +65,9 @@ struct MemoryStore {
     value: Arc<Mutex<Option<Value>>>,
     fail_save: Arc<Mutex<bool>>,
     root_backup: Arc<Mutex<Option<DataRootSetting>>>,
+    load_count: Arc<AtomicUsize>,
+    backup_read_count: Arc<AtomicUsize>,
+    save_count: Arc<AtomicUsize>,
 }
 
 impl MemoryStore {
@@ -82,10 +85,12 @@ impl MemoryStore {
 
 impl SettingsStore for MemoryStore {
     fn load(&self) -> Result<Option<Value>, CommandError> {
+        self.load_count.fetch_add(1, Ordering::SeqCst);
         Ok(self.value.lock().unwrap().clone())
     }
 
     fn save_bundle(&self, value: &Value, root: &DataRootSetting) -> Result<(), CommandError> {
+        self.save_count.fetch_add(1, Ordering::SeqCst);
         if std::mem::take(&mut *self.fail_save.lock().unwrap()) {
             return Err(CommandError::io("injected settings save failure"));
         }
@@ -95,8 +100,95 @@ impl SettingsStore for MemoryStore {
     }
 
     fn load_data_root_backup(&self) -> Result<Option<DataRootSetting>, CommandError> {
+        self.backup_read_count.fetch_add(1, Ordering::SeqCst);
         Ok(self.root_backup.lock().unwrap().clone())
     }
+}
+
+#[derive(Clone, Default)]
+struct AutostartReadFailureSystem {
+    launch_at_startup_calls: Arc<AtomicUsize>,
+}
+
+impl SystemSettings for AutostartReadFailureSystem {
+    fn shortcut(&self) -> Result<String, CommandError> {
+        Err(CommandError::io(
+            "shortcut should not be read for sticky appearance",
+        ))
+    }
+
+    fn rebind_shortcut(&self, _shortcut: &str) -> Result<(), CommandError> {
+        Err(CommandError::io(
+            "shortcut should not be rebound for sticky appearance",
+        ))
+    }
+
+    fn launch_at_startup(&self) -> Result<bool, CommandError> {
+        self.launch_at_startup_calls.fetch_add(1, Ordering::SeqCst);
+        Err(CommandError::io("injected autostart read failure"))
+    }
+
+    fn set_launch_at_startup(&self, _enabled: bool) -> Result<(), CommandError> {
+        Err(CommandError::io(
+            "autostart should not be changed for sticky appearance",
+        ))
+    }
+}
+
+#[test]
+fn sticky_read_uses_valid_persisted_appearance_without_system_or_store_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let store = MemoryStore::default();
+    let persisted = AppSettings {
+        theme: simple_notes_lib::commands::settings::AppTheme::Sand,
+        font_size: 19.0,
+        ..AppSettings::default()
+    };
+    let mut raw = serde_json::to_value(&persisted).unwrap();
+    raw["shortcut"] = serde_json::json!({ "invalid": "main-only" });
+    raw["launchAtStartup"] = serde_json::json!("not a sticky setting");
+    raw["dataRoot"] = serde_json::json!(["not", "a", "sticky", "setting"]);
+    *store.value.lock().unwrap() = Some(raw);
+    let system = AutostartReadFailureSystem::default();
+    let service = SettingsService::new(
+        StoragePaths::open(root.path()).unwrap(),
+        store.clone(),
+        system.clone(),
+    );
+
+    assert_eq!(
+        service.load_sticky_settings().unwrap(),
+        StickySettings::from(&persisted)
+    );
+    assert_eq!(store.load_count.load(Ordering::SeqCst), 1);
+    assert_eq!(store.backup_read_count.load(Ordering::SeqCst), 0);
+    assert_eq!(store.save_count.load(Ordering::SeqCst), 0);
+    assert_eq!(system.launch_at_startup_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn sticky_read_missing_primary_with_custom_lkg_conflicts_without_defaulting() {
+    let root = tempfile::tempdir().unwrap();
+    let store = MemoryStore::default();
+    *store.root_backup.lock().unwrap() = Some(DataRootSetting::Custom {
+        path: root
+            .path()
+            .join("custom-library")
+            .to_string_lossy()
+            .into_owned(),
+    });
+    let system = AutostartReadFailureSystem::default();
+    let service = SettingsService::new(
+        StoragePaths::open(root.path()).unwrap(),
+        store.clone(),
+        system.clone(),
+    );
+
+    assert!(service.load_sticky_settings().is_err());
+    assert_eq!(store.load_count.load(Ordering::SeqCst), 1);
+    assert_eq!(store.backup_read_count.load(Ordering::SeqCst), 1);
+    assert_eq!(store.save_count.load(Ordering::SeqCst), 0);
+    assert_eq!(system.launch_at_startup_calls.load(Ordering::SeqCst), 0);
 }
 
 #[derive(Clone)]
@@ -926,6 +1018,129 @@ fn same_length_source_file_replacement_is_rejected_before_publish() {
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
+}
+
+fn relocation_staging_directory(parent: &std::path::Path) -> PathBuf {
+    fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".simple-notes-relocation-")
+        })
+        .unwrap()
+}
+
+#[test]
+fn source_tree_file_added_after_copy_is_rejected_before_relocation_publish() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(source.path()).unwrap();
+    let source_notes = paths.notes().to_path_buf();
+    let service = SettingsService::new_with_staging_publish_hook(
+        paths,
+        MemoryStore::default(),
+        FakeSystem::default(),
+        move || fs::write(source_notes.join("late-durable.bin"), b"late durable bytes").unwrap(),
+    );
+    let destination = parent.path().join("must-not-publish-late-tree-file");
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
+}
+
+#[test]
+fn unknown_root_file_added_after_copy_is_rejected_before_relocation_publish() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(source.path()).unwrap();
+    let source_root = paths.root().to_path_buf();
+    let service = SettingsService::new_with_staging_publish_hook(
+        paths,
+        MemoryStore::default(),
+        FakeSystem::default(),
+        move || fs::write(source_root.join("late-unknown.bin"), b"late root bytes").unwrap(),
+    );
+    let destination = parent.path().join("must-not-publish-late-root-file");
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
+}
+
+#[test]
+fn extra_staging_file_after_copy_is_rejected_before_relocation_publish() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let parent_path = parent.path().to_path_buf();
+    let service = SettingsService::new_with_staging_publish_hook(
+        StoragePaths::open(source.path()).unwrap(),
+        MemoryStore::default(),
+        FakeSystem::default(),
+        move || {
+            fs::write(
+                relocation_staging_directory(&parent_path).join("injected.bin"),
+                b"unexpected staging file",
+            )
+            .unwrap();
+        },
+    );
+    let destination = parent.path().join("must-not-publish-extra-staging-file");
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
+}
+
+#[test]
+fn extra_empty_staging_directory_after_copy_is_rejected_before_relocation_publish() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let parent_path = parent.path().to_path_buf();
+    let service = SettingsService::new_with_staging_publish_hook(
+        StoragePaths::open(source.path()).unwrap(),
+        MemoryStore::default(),
+        FakeSystem::default(),
+        move || {
+            fs::create_dir(relocation_staging_directory(&parent_path).join("injected-empty"))
+                .unwrap();
+        },
+    );
+    let destination = parent
+        .path()
+        .join("must-not-publish-extra-staging-directory");
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
+}
+
+#[test]
+fn relocation_owned_marker_and_index_tampering_are_rejected_before_publish() {
+    for target in [".simple-notes-storage-move.json", "index.sqlite"] {
+        let source = tempfile::tempdir().unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let parent_path = parent.path().to_path_buf();
+        let tampered = target.to_owned();
+        let service = SettingsService::new_with_staging_publish_hook(
+            StoragePaths::open(source.path()).unwrap(),
+            MemoryStore::default(),
+            FakeSystem::default(),
+            move || {
+                fs::write(
+                    relocation_staging_directory(&parent_path).join(&tampered),
+                    b"tampered relocation-owned bytes",
+                )
+                .unwrap();
+            },
+        );
+        let destination = parent.path().join(format!("must-not-publish-{target}"));
+
+        assert!(
+            service.move_storage_root(&destination).is_err(),
+            "tampering {target} must reject publication"
+        );
+        assert!(!destination.exists());
+    }
 }
 
 #[test]

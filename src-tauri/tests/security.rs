@@ -9,7 +9,11 @@ use simple_notes_lib::{
     error::CommandErrorCode,
     storage::{database::Database, repository::NoteRepository},
 };
-use std::io::{Cursor, Write};
+use std::{
+    io::{Cursor, Write},
+    sync::{mpsc, Arc, Condvar, Mutex},
+    time::Duration,
+};
 use support::TestStore;
 
 const FORMAL_ID: &str = "019c0000-0000-7000-8000-000000000071";
@@ -90,6 +94,62 @@ fn persists_assets_for_formal_and_temporary_notes_without_overwrite_or_absolute_
         .unwrap()
         .join(&temporary.relative_path)
         .exists());
+}
+
+#[test]
+fn image_save_holds_the_mutation_lock_through_asset_publication() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let paths = store.paths.clone();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let release_for_save = release.clone();
+    let save = std::thread::spawn(move || {
+        let mut next_uuid = uuid::Uuid::now_v7;
+        let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
+            file.write_all(bytes)
+                .and_then(|()| file.sync_all())
+                .map_err(|source| {
+                    simple_notes_lib::error::CommandError::io(format!(
+                        "could not persist image asset: {source}"
+                    ))
+                })
+        };
+        let mut before_publish = |_directory: &simple_notes_lib::platform::SafeDirectory,
+                                  _staging: &str,
+                                  _filename: &str| {
+            entered_tx.send(()).unwrap();
+            let (released, wake) = &*release_for_save;
+            let mut released = released.lock().unwrap();
+            while !*released {
+                released = wake.wait(released).unwrap();
+            }
+        };
+        let mut sync =
+            |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+        save_image_to_with_publish_hook(
+            &paths,
+            input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+            &mut next_uuid,
+            &mut write,
+            &mut before_publish,
+            &mut sync,
+        )
+    });
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    assert!(
+        simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+            store.paths.root(),
+            Duration::from_millis(25),
+        )
+        .is_err(),
+        "an image save must keep relocation from beginning after its note lookup"
+    );
+    let (released, wake) = &*release;
+    *released.lock().unwrap() = true;
+    wake.notify_one();
+    save.join().unwrap().unwrap();
 }
 
 #[test]
