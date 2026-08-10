@@ -16,7 +16,14 @@ use simple_notes_lib::{
         repository::NoteRepository,
     },
 };
-use std::fs;
+use std::{
+    fs,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread,
+};
 use support::RecoveryFixture;
 
 #[test]
@@ -275,6 +282,45 @@ fn marker_failure_keeps_corrupt_live_index_untouched_and_all_repository_consumer
         assert!(storage.paths_for(consumer).is_err());
     }
     assert_eq!(fs::read(fixture.store.paths.database()).unwrap(), before);
+}
+
+#[test]
+fn overlapping_retries_are_single_flight_and_never_run_a_second_finalizer() {
+    let fixture = RecoveryFixture::with_document(1, "durable body");
+    let readiness = StartupRecoveryReadiness::new();
+    let state = Arc::new(StartupRecoveryState::initialize(
+        fixture.store.paths.clone(),
+        readiness,
+    ));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let first_state = state.clone();
+    let first = thread::spawn(move || {
+        first_state.retry_with(|| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    entered_rx.recv().unwrap();
+
+    let second_finalizer_ran = Arc::new(AtomicBool::new(false));
+    let second_probe = second_finalizer_ran.clone();
+    let second = state.retry_with(|| {
+        second_probe.store(true, Ordering::SeqCst);
+        Err(CommandError::io("overlapping retry finalizer must not run"))
+    });
+    release_tx.send(()).unwrap();
+    let first = first.join().unwrap();
+
+    assert!(first.is_ok());
+    assert_eq!(
+        second.unwrap_err().code(),
+        simple_notes_lib::error::CommandErrorCode::Conflict
+    );
+    assert!(!second_finalizer_ran.load(Ordering::SeqCst));
+    assert!(state.ensure_ready().is_ok());
+    assert!(state.report().failure.is_none());
 }
 
 #[test]

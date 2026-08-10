@@ -30,6 +30,8 @@ function MainApplication({ services }: { services: AppServices }) {
   const [recoveryNotice, setRecoveryNotice] = useState<StatusNoticeState>({ status: 'idle' })
   const settingsRevision = useRef(0)
   const libraryRef = useRef<LibraryLayoutHandle>(null)
+  const recoveryRequest = useRef(0)
+  const recoveryBusy = useRef(false)
   const systemScheme = useSystemColorScheme()
   const chooseExportDestination = useCallback(
     () => services.exportDestinationPicker?.chooseExportDestination() ?? Promise.resolve(null),
@@ -69,22 +71,31 @@ function MainApplication({ services }: { services: AppServices }) {
     const recovery = services.recovery
     if (recovery === undefined) return
     let active = true
-    const show = async (report: StartupRecoveryReport, refreshLibrary = false) => {
-      if (!active) return
+    const isCurrent = (request: number) => active && recoveryRequest.current === request
+    const retry = async () => {
+      if (recoveryBusy.current) return
+      recoveryBusy.current = true
+      const request = ++recoveryRequest.current
+      setRecoveryNotice({ status: 'error', message: '本地索引恢复未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复', busy: true })
+      try {
+        const report = await recovery.retry()
+        if (!isCurrent(request)) return
+        await show(report, true, request)
+      } catch {
+        if (isCurrent(request)) setRecoveryNotice({ status: 'error', message: '本地索引恢复仍未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
+      } finally {
+        if (recoveryRequest.current === request) recoveryBusy.current = false
+      }
+    }
+    const show = async (report: StartupRecoveryReport, refreshLibrary: boolean, request: number) => {
+      if (!isCurrent(request)) return
       if (report.failure != null) {
-        const retry = async () => {
-          try {
-            await show(await recovery.retry(), true)
-          } catch {
-            if (active) setRecoveryNotice({ status: 'error', message: '本地索引恢复仍未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
-          }
-        }
         setRecoveryNotice({ status: 'error', message: '本地索引恢复未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
         return
       }
       const actions = report.recovered.length + report.quarantined.length + (report.indexRebuilt ? 1 : 0)
       if (refreshLibrary) await libraryRef.current?.refreshAfterRecovery()
-      if (!active) return
+      if (!isCurrent(request)) return
       if (actions === 0) {
         setRecoveryNotice({ status: 'idle' })
         return
@@ -93,14 +104,19 @@ function MainApplication({ services }: { services: AppServices }) {
       setRecoveryNotice({ status: 'success', message: `${recovered}${report.indexRebuilt ? '并重建本地索引' : ''}${report.quarantined.length > 0 ? `；隔离 ${report.quarantined.length} 个不安全候选` : ''}` })
     }
     const load = async () => {
+      const request = ++recoveryRequest.current
       try {
-        await show(await recovery.load())
+        await show(await recovery.load(), false, request)
       } catch {
-        if (active) setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void load(), retryLabel: '重试读取恢复报告' })
+        if (isCurrent(request)) setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void load(), retryLabel: '重试读取恢复报告' })
       }
     }
     void load()
-    return () => { active = false }
+    return () => {
+      active = false
+      recoveryRequest.current += 1
+      recoveryBusy.current = false
+    }
   }, [services.recovery])
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>

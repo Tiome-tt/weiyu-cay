@@ -2,9 +2,9 @@ use crate::{
     commands::temporary::TemporaryCommandState,
     error::CommandError,
     shortcuts::{
-        CaptureEventRouter, CaptureTrigger, ShortcutError, ShortcutEvent, ShortcutIdentity,
-        ShortcutRegistrationStatus, ShortcutService, TauriCaptureBackend, TauriShortcutBackend,
-        TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
+        CaptureEventRouter, CaptureTrigger, RecoveryGatedCaptureBackend, ShortcutError,
+        ShortcutEvent, ShortcutIdentity, ShortcutRegistrationStatus, ShortcutService,
+        TauriCaptureBackend, TauriShortcutBackend, TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
     },
 };
 use serde::Serialize;
@@ -109,9 +109,9 @@ pub fn setup(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let temporary = app.state::<TemporaryCommandState>();
     let service = ShortcutService::new(TauriShortcutBackend::new(app.handle().clone()));
-    let trigger = CaptureTrigger::new(TauriCaptureBackend::new(
-        temporary.paths().clone(),
-        temporary.backend().clone(),
+    let trigger = CaptureTrigger::new(RecoveryGatedCaptureBackend::new(
+        TauriCaptureBackend::new(temporary.paths().clone(), temporary.backend().clone()),
+        temporary.readiness(),
     ));
     let router = CaptureEventRouter::new(service.clone(), trigger);
     let (sender, receiver) = mpsc::channel();
@@ -136,7 +136,10 @@ pub fn setup(
 
 fn spawn_worker(
     app: tauri::AppHandle,
-    router: CaptureEventRouter<TauriShortcutBackend, TauriCaptureBackend>,
+    router: CaptureEventRouter<
+        TauriShortcutBackend,
+        RecoveryGatedCaptureBackend<TauriCaptureBackend>,
+    >,
     receiver: Receiver<PluginShortcutEvent>,
     stop: Arc<AtomicBool>,
 ) -> Result<thread::JoinHandle<()>, std::io::Error> {

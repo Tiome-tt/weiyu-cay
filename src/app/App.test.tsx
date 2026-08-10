@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import userEvent from '@testing-library/user-event'
@@ -133,6 +133,48 @@ describe('App', () => {
 
     await userEvent.setup().click(screen.getAllByRole('treeitem')[0])
     expect(await screen.findByText('Recovered formal note')).toBeVisible()
+  })
+
+  it('keeps recovery retry single-flight while the retry and its refresh are deferred', async () => {
+    const retryResult = deferred<{
+      recovered: never[]; quarantined: never[]; ambiguous: never[]; indexRebuilt: boolean
+      indexQuarantine: null; failure: null
+    }>()
+    const refreshFolders = deferred<never[]>()
+    const listFolders = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => refreshFolders.promise)
+    const retry = vi.fn(() => retryResult.promise)
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort({ listFolders }), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      recovery: {
+        load: vi.fn().mockResolvedValue({
+          recovered: [], quarantined: [], ambiguous: [], indexRebuilt: false, indexQuarantine: null,
+          failure: { code: 'database', message: 'The local note index is unavailable.' },
+        }),
+        retry,
+      },
+    }} />)
+
+    const retryButton = await screen.findByRole('button', { name: '重试启动恢复' })
+    fireEvent.click(retryButton)
+    fireEvent.click(retryButton)
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(retryButton).toBeDisabled()
+
+    retryResult.resolve({
+      recovered: [], quarantined: [], ambiguous: [], indexRebuilt: true,
+      indexQuarantine: null, failure: null,
+    })
+    await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(2))
+    fireEvent.click(retryButton)
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(retryButton).toBeDisabled()
+
+    refreshFolders.resolve([])
+    expect(await screen.findByText(/重建本地索引/)).toHaveAttribute('role', 'status')
+    expect(screen.queryByRole('button', { name: '重试启动恢复' })).not.toBeInTheDocument()
   })
 
   it('loads application settings, applies their theme, and opens settings from the main window', async () => {

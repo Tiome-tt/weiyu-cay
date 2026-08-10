@@ -4,7 +4,10 @@ mod tauri_backend;
 pub use adapter::{map_accelerator_for_platform, AcceleratorPlatform};
 pub use tauri_backend::{TauriCaptureBackend, TauriShortcutBackend};
 
-use crate::{domain::NoteId, error::CommandError, windows::sticky::temporary_window_label};
+use crate::{
+    domain::NoteId, error::CommandError, storage::recovery::StartupRecoveryReadiness,
+    windows::sticky::temporary_window_label,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -677,6 +680,28 @@ pub struct ActivationIdentity {
 pub trait CaptureBackend: Clone + Send + Sync + 'static {
     fn create(&self) -> Result<NoteId, CommandError>;
     fn show(&self, note_id: NoteId) -> Result<(), CommandError>;
+}
+
+#[derive(Clone)]
+pub struct RecoveryGatedCaptureBackend<C> {
+    inner: C,
+    readiness: StartupRecoveryReadiness,
+}
+
+impl<C> RecoveryGatedCaptureBackend<C> {
+    pub fn new(inner: C, readiness: StartupRecoveryReadiness) -> Self {
+        Self { inner, readiness }
+    }
+}
+
+impl<C: CaptureBackend> CaptureBackend for RecoveryGatedCaptureBackend<C> {
+    fn create(&self) -> Result<NoteId, CommandError> {
+        self.readiness.with_ready(|| self.inner.create())
+    }
+
+    fn show(&self, note_id: NoteId) -> Result<(), CommandError> {
+        self.readiness.with_ready(|| self.inner.show(note_id))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

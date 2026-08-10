@@ -1,7 +1,7 @@
 export type StatusNoticeState =
   | { status: 'idle' }
   | { status: 'status' | 'success'; message: string }
-  | { status: 'error'; message: string; retry?: () => void; retryLabel?: string }
+  | { status: 'error'; message: string; retry?: () => void; retryLabel?: string; busy?: boolean }
 
 interface StatusNoticeProps {
   state: StatusNoticeState
@@ -15,7 +15,7 @@ export function StatusNotice({ state, className }: StatusNoticeProps) {
       <span className={className} role="alert">
         <span>{state.message}</span>
         {state.retry && (
-          <button type="button" aria-label={state.retryLabel ?? '重试保存'} onClick={state.retry}>
+          <button type="button" aria-label={state.retryLabel ?? '重试保存'} disabled={state.busy} onClick={state.retry}>
             重试
           </button>
         )}

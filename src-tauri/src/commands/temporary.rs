@@ -32,6 +32,10 @@ impl TemporaryCommandState {
         &self.backend
     }
 
+    pub(crate) fn readiness(&self) -> StartupRecoveryReadiness {
+        self.readiness.clone()
+    }
+
     fn ensure_ready(&self) -> Result<(), CommandError> {
         self.readiness.ensure_ready()
     }

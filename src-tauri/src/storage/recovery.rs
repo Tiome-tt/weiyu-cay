@@ -13,10 +13,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use std::{
     path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex, RwLock, RwLockWriteGuard, TryLockError},
 };
 use uuid::Uuid;
 
@@ -64,7 +61,7 @@ pub struct QuarantinedCandidate {
 
 #[derive(Clone, Default)]
 pub struct StartupRecoveryReadiness {
-    ready: Arc<AtomicBool>,
+    ready: Arc<RwLock<bool>>,
 }
 
 impl StartupRecoveryReadiness {
@@ -73,19 +70,48 @@ impl StartupRecoveryReadiness {
     }
 
     pub fn ensure_ready(&self) -> Result<(), CommandError> {
-        if self.ready.load(Ordering::Acquire) {
-            Ok(())
-        } else {
-            Err(CommandError::database("startup recovery is incomplete"))
+        self.with_ready(|| Ok(()))
+    }
+
+    pub fn with_ready<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
+        let ready = match self.ready.try_read() {
+            Ok(ready) => ready,
+            Err(TryLockError::WouldBlock) => {
+                return Err(CommandError::database("startup recovery is in progress"))
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(CommandError::io(
+                    "startup recovery readiness state poisoned",
+                ))
+            }
+        };
+        if !*ready {
+            return Err(CommandError::database("startup recovery is incomplete"));
         }
+        operation()
     }
 
     fn mark_ready(&self) {
-        self.ready.store(true, Ordering::Release);
+        *self
+            .ready
+            .write()
+            .expect("startup recovery readiness poisoned") = true;
     }
 
     fn mark_incomplete(&self) {
-        self.ready.store(false, Ordering::Release);
+        *self
+            .ready
+            .write()
+            .expect("startup recovery readiness poisoned") = false;
+    }
+
+    fn begin_recovery(&self) -> Result<RwLockWriteGuard<'_, bool>, CommandError> {
+        self.ready
+            .write()
+            .map_err(|_| CommandError::io("startup recovery readiness state poisoned"))
     }
 }
 
@@ -93,6 +119,7 @@ pub struct StartupRecoveryState {
     paths: StoragePaths,
     readiness: StartupRecoveryReadiness,
     report: Mutex<StartupRecoveryReport>,
+    retry: Mutex<()>,
 }
 
 impl StartupRecoveryState {
@@ -111,6 +138,7 @@ impl StartupRecoveryState {
             paths,
             readiness,
             report: Mutex::new(report),
+            retry: Mutex::new(()),
         }
     }
 
@@ -133,7 +161,19 @@ impl StartupRecoveryState {
     where
         F: FnOnce() -> Result<(), CommandError>,
     {
-        self.readiness.mark_incomplete();
+        let _retry = match self.retry.try_lock() {
+            Ok(retry) => retry,
+            Err(TryLockError::WouldBlock) => {
+                return Err(CommandError::conflict(
+                    "startup recovery retry is already in progress",
+                ))
+            }
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(CommandError::io("startup recovery retry state poisoned"))
+            }
+        };
+        let mut readiness = self.readiness.begin_recovery()?;
+        *readiness = false;
         let result = recover_startup(&self.paths).and_then(|report| {
             finish_setup()?;
             Ok(report)
@@ -153,7 +193,7 @@ impl StartupRecoveryState {
             .report
             .lock()
             .map_err(|_| CommandError::io("startup recovery state poisoned"))? = report.clone();
-        self.readiness.mark_ready();
+        *readiness = true;
         Ok(report)
     }
 }

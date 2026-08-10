@@ -3,11 +3,14 @@ use simple_notes_lib::{
     error::CommandError,
     shortcuts::{
         map_accelerator_for_platform, shortcut_identity_from_accelerator, AcceleratorPlatform,
-        CaptureBackend, CaptureEventRouter, CaptureTrigger, ShortcutBackend, ShortcutError,
-        ShortcutEvent, ShortcutIdentity, ShortcutRegistrationStatus, ShortcutService,
-        TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
+        CaptureBackend, CaptureEventRouter, CaptureTrigger, RecoveryGatedCaptureBackend,
+        ShortcutBackend, ShortcutError, ShortcutEvent, ShortcutIdentity,
+        ShortcutRegistrationStatus, ShortcutService, TriggerOutcome, DEFAULT_CAPTURE_SHORTCUT,
     },
-    storage::paths::StoragePaths,
+    storage::{
+        paths::StoragePaths,
+        recovery::{StartupRecoveryReadiness, StartupRecoveryState},
+    },
     windows::sticky::{
         temporary_window_label, InMemoryTemporaryWindowBackend, TemporaryRepository,
         TemporaryWindowService,
@@ -21,6 +24,7 @@ use std::{
         mpsc, Arc, Barrier, Mutex,
     },
     thread,
+    time::Duration,
 };
 use tauri_plugin_global_shortcut::Shortcut;
 
@@ -498,6 +502,98 @@ fn durable_trigger() -> (
         windows: windows.clone(),
     });
     (temporary, trigger, windows, paths)
+}
+
+#[test]
+fn recovery_gated_capture_backend_never_touches_storage_until_the_same_gate_is_ready() {
+    let temporary = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(temporary.path().join("app-data")).unwrap();
+    let windows = InMemoryTemporaryWindowBackend::default();
+    let readiness = StartupRecoveryReadiness::new();
+    let backend = RecoveryGatedCaptureBackend::new(
+        DurableCaptureBackend {
+            paths: paths.clone(),
+            windows: windows.clone(),
+        },
+        readiness.clone(),
+    );
+    let trigger = CaptureTrigger::new(backend);
+
+    let blocked = trigger.activate();
+    assert!(
+        matches!(blocked, TriggerOutcome::CreateFailed { ref error } if error.code() == simple_notes_lib::error::CommandErrorCode::Database)
+    );
+    assert!(!paths.database().exists());
+    assert_eq!(fs::read_dir(paths.temporary()).unwrap().count(), 0);
+    assert_eq!(windows.show_count(), 0);
+
+    let _recovery = StartupRecoveryState::initialize(paths.clone(), readiness);
+    assert!(matches!(trigger.activate(), TriggerOutcome::Shown { .. }));
+    assert_eq!(TemporaryRepository::new(paths).list().unwrap().len(), 1);
+    assert_eq!(windows.show_count(), 1);
+}
+
+#[derive(Clone)]
+struct BlockingCaptureBackend {
+    entered: mpsc::Sender<()>,
+    release: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl CaptureBackend for BlockingCaptureBackend {
+    fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        Ok(simple_notes_lib::domain::NoteId::now_v7())
+    }
+
+    fn show(&self, _note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn capture_operation_and_recovery_retry_are_linearized_by_the_readiness_lease() {
+    let temporary = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(temporary.path().join("app-data")).unwrap();
+    let readiness = StartupRecoveryReadiness::new();
+    let recovery = Arc::new(StartupRecoveryState::initialize(paths, readiness.clone()));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let trigger = CaptureTrigger::new(RecoveryGatedCaptureBackend::new(
+        BlockingCaptureBackend {
+            entered: entered_tx,
+            release: Arc::new(Mutex::new(release_rx)),
+        },
+        readiness,
+    ));
+    let capture = thread::spawn(move || trigger.activate());
+    entered_rx.recv().unwrap();
+
+    let (finalizer_tx, finalizer_rx) = mpsc::channel();
+    let retry_state = recovery.clone();
+    let retry = thread::spawn(move || {
+        retry_state.retry_with(|| {
+            finalizer_tx.send(()).unwrap();
+            Ok(())
+        })
+    });
+    let finalizer_raced_capture = finalizer_rx
+        .recv_timeout(Duration::from_millis(100))
+        .is_ok();
+    release_tx.send(()).unwrap();
+    assert!(matches!(
+        capture.join().unwrap(),
+        TriggerOutcome::Shown { .. } | TriggerOutcome::ShowFailed { .. }
+    ));
+    if !finalizer_raced_capture {
+        finalizer_rx.recv().unwrap();
+    }
+    assert!(retry.join().unwrap().is_ok());
+
+    assert!(
+        !finalizer_raced_capture,
+        "recovery finalization raced an authorized capture operation"
+    );
 }
 
 #[test]
