@@ -38,7 +38,9 @@ pub struct CaptureShortcutStatus {
 
 impl CaptureShortcutState {
     pub(crate) fn rebind(&self, accelerator: &str) -> Result<(), ShortcutError> {
-        self.service.rebind(accelerator).map(|_| ())
+        let result = self.service.rebind(accelerator).map(|_| ());
+        clear_startup_error_after_success(&self.startup_error, &result);
+        result
     }
 
     pub(crate) fn current(&self) -> Option<String> {
@@ -186,7 +188,6 @@ pub fn rebind_capture_shortcut(
     authorize_main(window.label())
         .map_err(|_| ShortcutError::validation("shortcut management requires the main window"))?;
     state.rebind(&accelerator)?;
-    *lock_recover(&state.startup_error) = None;
     Ok(state.status())
 }
 
@@ -204,4 +205,36 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn clear_startup_error_after_success<T>(
+    startup_error: &Mutex<Option<ShortcutError>>,
+    result: &Result<T, ShortcutError>,
+) {
+    if result.is_ok() {
+        *lock_recover(startup_error) = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clear_startup_error_after_success;
+    use crate::shortcuts::ShortcutError;
+    use std::sync::Mutex;
+
+    #[test]
+    fn successful_rebind_clears_a_previous_startup_error() {
+        let error = Mutex::new(Some(ShortcutError::backend("startup conflict")));
+        clear_startup_error_after_success(&error, &Ok::<(), ShortcutError>(()));
+        assert!(error.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_rebind_retains_the_previous_startup_error() {
+        let startup = ShortcutError::backend("startup conflict");
+        let error = Mutex::new(Some(startup.clone()));
+        let result = Err::<(), _>(ShortcutError::backend("new conflict"));
+        clear_startup_error_after_success(&error, &result);
+        assert_eq!(error.lock().unwrap().as_ref(), Some(&startup));
+    }
 }

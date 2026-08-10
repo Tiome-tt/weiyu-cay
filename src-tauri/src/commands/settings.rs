@@ -1,8 +1,10 @@
 use crate::{
     error::CommandError,
     platform::{IndexMutationLock, SafeDirectory, SafeEntryKind},
-    shortcuts::{normalize_accelerator, DEFAULT_CAPTURE_SHORTCUT},
-    storage::{database::Database, paths::StoragePaths, rebuild::rebuild_index_strict},
+    shortcuts::normalize_accelerator,
+    storage::{
+        database::Database, paths::StoragePaths, rebuild::rebuild_index_strict_with_validator,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,7 +13,7 @@ use std::{
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 use tauri::{Emitter, Manager};
@@ -89,28 +91,48 @@ pub struct AppSettings {
     pub data_root: DataRootSetting,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickySettings {
+    pub theme: AppTheme,
+    pub sticky_color_mode: StickyColorMode,
+    pub body_font: String,
+    pub code_font: String,
+    pub font_size: f64,
+    pub line_height: f64,
+    pub autosave_delay_ms: u64,
+}
+
+impl From<&AppSettings> for StickySettings {
+    fn from(settings: &AppSettings) -> Self {
+        Self {
+            theme: settings.theme,
+            sticky_color_mode: settings.sticky_color_mode,
+            body_font: settings.body_font.clone(),
+            code_font: settings.code_font.clone(),
+            font_size: settings.font_size,
+            line_height: settings.line_height,
+            autosave_delay_ms: settings.autosave_delay_ms,
+        }
+    }
+}
+
 const fn settings_version() -> u32 {
     SETTINGS_VERSION
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        Self {
-            version: SETTINGS_VERSION,
-            theme: AppTheme::Forest,
-            sticky_color_mode: StickyColorMode::FollowTheme,
-            body_font: "system-ui, sans-serif".to_owned(),
-            code_font: "ui-monospace, SFMono-Regular, Consolas, monospace".to_owned(),
-            font_size: 16.0,
-            line_height: 1.6,
-            shortcut: DEFAULT_CAPTURE_SHORTCUT.to_owned(),
-            launch_at_startup: false,
-            default_editor_mode: EditorMode::Source,
-            autosave_delay_ms: 500,
-            data_root: DataRootSetting::Default,
-        }
+        DEFAULT_APP_SETTINGS.clone()
     }
 }
+
+static DEFAULT_APP_SETTINGS: LazyLock<AppSettings> = LazyLock::new(|| {
+    let settings: AppSettings =
+        serde_json::from_str(include_str!("../../../src/shared/settings-defaults.json"))
+            .expect("shared settings defaults must match the Rust settings contract");
+    validate_settings(settings).expect("shared settings defaults must satisfy Rust validation")
+});
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -153,9 +175,8 @@ pub struct PreviousStorageCleanup {
 
 pub trait SettingsStore: Clone + Send + Sync + 'static {
     fn load(&self) -> Result<Option<Value>, CommandError>;
-    fn save(&self, value: &Value) -> Result<(), CommandError>;
     fn load_data_root_backup(&self) -> Result<Option<DataRootSetting>, CommandError>;
-    fn save_data_root_backup(&self, root: &DataRootSetting) -> Result<(), CommandError>;
+    fn save_bundle(&self, value: &Value, root: &DataRootSetting) -> Result<(), CommandError>;
 }
 
 #[doc(hidden)]
@@ -166,7 +187,14 @@ pub fn load_bootstrap_settings<S: SettingsStore>(store: &S) -> Result<AppSetting
             .and_then(|settings| validate_settings(settings).ok())
         {
             Some(settings) => {
-                store.save_data_root_backup(&settings.data_root)?;
+                store.save_bundle(
+                    &serde_json::to_value(&settings).map_err(|source| {
+                        CommandError::validation(format!(
+                            "could not encode application settings: {source}"
+                        ))
+                    })?,
+                    &settings.data_root,
+                )?;
                 Ok(settings)
             }
             None
@@ -181,6 +209,16 @@ pub fn load_bootstrap_settings<S: SettingsStore>(store: &S) -> Result<AppSetting
             }
             None => Ok(AppSettings::default()),
         },
+        None
+            if matches!(
+                store.load_data_root_backup()?,
+                Some(DataRootSetting::Custom { .. })
+            ) =>
+        {
+            Err(CommandError::conflict(
+                "application settings are missing; the last known custom library location was preserved",
+            ))
+        }
         None => Ok(AppSettings::default()),
     }
 }
@@ -322,6 +360,13 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
                     "application settings are damaged; the last known custom library location was preserved",
                 ));
             }
+        } else if matches!(
+            self.store.load_data_root_backup()?,
+            Some(DataRootSetting::Custom { .. })
+        ) {
+            return Err(CommandError::conflict(
+                "application settings are missing; the last known custom library location was preserved",
+            ));
         }
         let defaults = AppSettings::default();
         self.persist(&defaults)?;
@@ -406,6 +451,7 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
         let mut source_record = SourceMoveRecord {
             marker: marker.clone(),
             staging: staging.to_string_lossy().into_owned(),
+            quarantine: None,
             phase: SourceMovePhase::Preparing,
         };
         write_source_move_record(self.paths.root(), &source_record)?;
@@ -430,7 +476,8 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
 
             let source_directory = SafeDirectory::open(self.paths.root(), &[], false)?;
             let copied = copy_tree(&source_directory, &staging_directory)?;
-            verify_copy(&staging_directory, &copied)?;
+            verify_copy_layout(&staging_directory, &copied)?;
+            verify_copied_bytes(&source_directory, &staging_directory, &copied)?;
             if self.failure == StorageMoveFailurePoint::AfterCopy {
                 return Err(CommandError::io("injected failure after storage copy"));
             }
@@ -456,6 +503,10 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
             if let Some(hook) = &self.before_staging_publish {
                 hook();
             }
+            // Re-open both source and staging through pinned, no-follow directories just before
+            // publication so a same-length replacement cannot be published undetected.
+            verify_copied_bytes(&source_directory, &staging_directory, &copied)?;
+            staging_directory.ensure_path_identity()?;
             staging_directory
                 .move_self_no_replace(&parent, destination_name)
                 .map_err(|failure| failure.into_error())?;
@@ -519,8 +570,7 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
         let value = serde_json::to_value(settings).map_err(|source| {
             CommandError::validation(format!("could not encode settings: {source}"))
         })?;
-        self.store.save_data_root_backup(&settings.data_root)?;
-        self.store.save(&value)
+        self.store.save_bundle(&value, &settings.data_root)
     }
 
     fn reconcile_system(&self, mut settings: AppSettings) -> Result<AppSettings, CommandError> {
@@ -847,7 +897,7 @@ fn reject_existing_path_links(path: &Path) -> Result<(), CommandError> {
 fn copy_tree(
     source: &SafeDirectory,
     destination: &SafeDirectory,
-) -> Result<Vec<(PathBuf, u64)>, CommandError> {
+) -> Result<Vec<PathBuf>, CommandError> {
     let mut copied = Vec::new();
     copy_directory(source, destination, Path::new(""), true, &mut copied)?;
     Ok(copied)
@@ -858,7 +908,7 @@ fn copy_directory(
     destination: &SafeDirectory,
     relative_parent: &Path,
     root: bool,
-    copied: &mut Vec<(PathBuf, u64)>,
+    copied: &mut Vec<PathBuf>,
 ) -> Result<(), CommandError> {
     for name in source.entry_names()? {
         if root
@@ -867,6 +917,7 @@ fn copy_directory(
                 MUTATION_LOCK
                     | MOVE_MARKER
                     | SOURCE_MOVE_MARKER
+                    | "settings.json"
                     | "index.sqlite"
                     | "index.sqlite-wal"
                     | "index.sqlite-shm"
@@ -883,8 +934,8 @@ fn copy_directory(
                 destination_child.sync()?;
             }
             SafeEntryKind::RegularFile => {
-                let bytes = source.copy_regular_file_to(&name, destination)?;
-                copied.push((relative, bytes));
+                source.copy_regular_file_to(&name, destination)?;
+                copied.push(relative);
             }
         }
     }
@@ -892,8 +943,12 @@ fn copy_directory(
     Ok(())
 }
 
-fn verify_copy(destination: &SafeDirectory, copied: &[(PathBuf, u64)]) -> Result<(), CommandError> {
-    for (relative, expected_bytes) in copied {
+fn verify_copied_bytes(
+    source: &SafeDirectory,
+    destination: &SafeDirectory,
+    copied: &[PathBuf],
+) -> Result<(), CommandError> {
+    for relative in copied {
         let components = relative
             .iter()
             .map(|component| {
@@ -905,27 +960,36 @@ fn verify_copy(destination: &SafeDirectory, copied: &[(PathBuf, u64)]) -> Result
         let (file, parents) = components
             .split_last()
             .ok_or_else(|| CommandError::validation("copied path is empty"))?;
-        let mut nested: Option<SafeDirectory> = None;
+        let mut source_nested: Option<SafeDirectory> = None;
+        let mut destination_nested: Option<SafeDirectory> = None;
         for parent in parents {
-            nested = Some(match nested.as_ref() {
+            source_nested = Some(match source_nested.as_ref() {
+                Some(directory) => directory.open_child(parent, false)?,
+                None => source.open_child(parent, false)?,
+            });
+            destination_nested = Some(match destination_nested.as_ref() {
                 Some(directory) => directory.open_child(parent, false)?,
                 None => destination.open_child(parent, false)?,
             });
         }
-        let actual_bytes = match nested.as_ref() {
-            Some(directory) => directory.regular_file_len(file)?,
-            None => destination.regular_file_len(file)?,
+        let equal = match (source_nested.as_ref(), destination_nested.as_ref()) {
+            (Some(source), Some(destination)) => {
+                source.regular_file_bytes_equal(file, destination, file)?
+            }
+            (None, None) => source.regular_file_bytes_equal(file, destination, file)?,
+            _ => unreachable!("source and destination use identical relative paths"),
         };
-        if actual_bytes != *expected_bytes {
+        if !equal {
             return Err(CommandError::io(
-                "destination file byte count does not match its copied source",
+                "destination file bytes do not match their copied source",
             ));
         }
     }
-    let expected = copied
-        .iter()
-        .map(|(path, _)| path.clone())
-        .collect::<BTreeSet<_>>();
+    Ok(())
+}
+
+fn verify_copy_layout(destination: &SafeDirectory, copied: &[PathBuf]) -> Result<(), CommandError> {
+    let expected = copied.iter().cloned().collect::<BTreeSet<_>>();
     let mut actual = BTreeSet::new();
     collect_destination_files(destination, Path::new(""), &mut actual)?;
     actual.remove(Path::new(MOVE_MARKER));
@@ -1088,6 +1152,8 @@ enum SourceMovePhase {
 struct SourceMoveRecord {
     marker: MoveMarker,
     staging: String,
+    #[serde(default)]
+    quarantine: Option<String>,
     phase: SourceMovePhase,
 }
 
@@ -1151,8 +1217,36 @@ pub fn recover_interrupted_source_relocation(paths: &StoragePaths) -> Result<(),
     let staging = PathBuf::from(&record.staging);
     if destination.exists() {
         cleanup_created_destination(&destination, &record.marker)?;
-    } else if staging.exists() && operation_marker_exists_safely(&staging)? {
-        cleanup_created_destination(&staging, &record.marker)?;
+    } else if staging.exists() {
+        let parent_path = staging
+            .parent()
+            .ok_or_else(|| CommandError::validation("staging entry has no parent"))?;
+        if operation_marker_exists_safely(&staging)? {
+            cleanup_created_destination(&staging, &record.marker)?;
+            record.quarantine = Some(
+                parent_path
+                    .join(format!(
+                        ".simple-notes-incomplete-{}",
+                        record.marker.operation_id
+                    ))
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        } else {
+            let source_name = staging
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| CommandError::validation("staging entry name is invalid"))?;
+            let quarantine_name = format!(".simple-notes-orphan-{}", record.marker.operation_id);
+            let parent = SafeDirectory::open(parent_path, &[], false)?;
+            parent.quarantine_entry_no_follow(source_name, &quarantine_name)?;
+            record.quarantine = Some(
+                parent_path
+                    .join(quarantine_name)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
     }
     record.phase = SourceMovePhase::Quarantined;
     write_source_move_record(paths.root(), &record)
@@ -1298,13 +1392,15 @@ pub fn finalize_reopened_relocation(paths: &StoragePaths) -> Result<(), CommandE
         return Ok(());
     }
     let expected_window_states = read_window_state_rows(paths.database())?;
-    rebuild_index_strict(paths)?;
-    let rebuilt_window_states = read_window_state_rows(paths.database())?;
-    if rebuilt_window_states != expected_window_states {
-        return Err(CommandError::database(
-            "reopened storage did not preserve every sticky window state",
-        ));
-    }
+    rebuild_index_strict_with_validator(paths, |replacement| {
+        let rebuilt_window_states = read_window_state_rows(replacement)?;
+        if rebuilt_window_states != expected_window_states {
+            return Err(CommandError::database(
+                "reopened storage did not preserve every sticky window state",
+            ));
+        }
+        Ok(())
+    })?;
     marker.phase = RelocationPhase::ReadyForCleanup;
     write_marker(paths.root(), &marker)
 }
@@ -1406,10 +1502,6 @@ impl SettingsStore for TauriSettingsStore {
         Ok(self.store.get(SETTINGS_KEY))
     }
 
-    fn save(&self, value: &Value) -> Result<(), CommandError> {
-        self.save_key(SETTINGS_KEY, value.clone())
-    }
-
     fn load_data_root_backup(&self) -> Result<Option<DataRootSetting>, CommandError> {
         self.store
             .get(DATA_ROOT_BACKUP_KEY)
@@ -1422,33 +1514,34 @@ impl SettingsStore for TauriSettingsStore {
             })
     }
 
-    fn save_data_root_backup(&self, root: &DataRootSetting) -> Result<(), CommandError> {
-        let value = serde_json::to_value(root).map_err(|source| {
+    fn save_bundle(&self, value: &Value, root: &DataRootSetting) -> Result<(), CommandError> {
+        let root = serde_json::to_value(root).map_err(|source| {
             CommandError::validation(format!(
                 "could not encode last known library location: {source}"
             ))
         })?;
-        self.save_key(DATA_ROOT_BACKUP_KEY, value)
-    }
-}
-
-impl TauriSettingsStore {
-    fn save_key(&self, key: &str, value: Value) -> Result<(), CommandError> {
-        let previous = self.store.get(key);
-        self.store.set(key, value);
+        let previous_settings = self.store.get(SETTINGS_KEY);
+        let previous_root = self.store.get(DATA_ROOT_BACKUP_KEY);
+        self.store.set(SETTINGS_KEY, value.clone());
+        self.store.set(DATA_ROOT_BACKUP_KEY, root);
         if let Err(source) = self.store.save() {
-            match previous {
-                Some(previous) => self.store.set(key, previous),
-                None => {
-                    self.store.delete(key);
-                }
-            }
+            restore_store_value(&self.store, SETTINGS_KEY, previous_settings);
+            restore_store_value(&self.store, DATA_ROOT_BACKUP_KEY, previous_root);
             let _ = self.store.save();
             return Err(CommandError::io(format!(
                 "could not persist application settings: {source}"
             )));
         }
         Ok(())
+    }
+}
+
+fn restore_store_value(store: &Store<tauri::Wry>, key: &str, value: Option<Value>) {
+    match value {
+        Some(value) => store.set(key, value),
+        None => {
+            store.delete(key);
+        }
     }
 }
 
@@ -1574,6 +1667,17 @@ pub fn authorize_settings_caller(label: &str) -> Result<(), CommandError> {
 }
 
 #[doc(hidden)]
+pub fn authorize_sticky_settings_caller(label: &str) -> Result<(), CommandError> {
+    if label == "main" || crate::windows::sticky::parse_temporary_window_label(label).is_ok() {
+        Ok(())
+    } else {
+        Err(CommandError::validation(
+            "sticky appearance settings require the main or a temporary window",
+        ))
+    }
+}
+
+#[doc(hidden)]
 pub fn authorize_restart_request(
     label: &str,
     relocation_pending: bool,
@@ -1598,6 +1702,18 @@ pub fn load_settings(
 }
 
 #[tauri::command]
+pub fn load_sticky_settings(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SettingsCommandState>,
+) -> Result<StickySettings, CommandError> {
+    authorize_sticky_settings_caller(window.label())?;
+    state
+        .service()
+        .load()
+        .map(|settings| StickySettings::from(&settings))
+}
+
+#[tauri::command]
 pub fn update_settings(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, SettingsCommandState>,
@@ -1605,7 +1721,12 @@ pub fn update_settings(
 ) -> Result<AppSettings, CommandError> {
     authorize_settings_caller(window.label())?;
     let settings = state.service().update(patch)?;
-    let _ = state.app.emit("settings-updated", settings.clone());
+    let _ = state
+        .app
+        .emit_to("main", "settings-updated", settings.clone());
+    let _ = state
+        .app
+        .emit("sticky-settings-updated", StickySettings::from(&settings));
     Ok(settings)
 }
 
@@ -1616,7 +1737,12 @@ pub fn reset_settings(
 ) -> Result<AppSettings, CommandError> {
     authorize_settings_caller(window.label())?;
     let settings = state.service().reset()?;
-    let _ = state.app.emit("settings-updated", settings.clone());
+    let _ = state
+        .app
+        .emit_to("main", "settings-updated", settings.clone());
+    let _ = state
+        .app
+        .emit("sticky-settings-updated", StickySettings::from(&settings));
     Ok(settings)
 }
 

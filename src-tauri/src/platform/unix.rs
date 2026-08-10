@@ -237,6 +237,26 @@ impl SafeDirectory {
         self.open_child(name, false)
     }
 
+    pub(crate) fn quarantine_entry_no_follow(
+        &self,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), CommandError> {
+        validate_child_name(source)?;
+        validate_child_name(destination)?;
+        if statat(&self.fd, destination, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
+            return Err(CommandError::conflict(
+                "contained quarantine destination already exists",
+            ));
+        }
+        renameat(&self.fd, source, &self.fd, destination).map_err(|source| {
+            CommandError::io(format!(
+                "could not quarantine unverified operation entry: {source}"
+            ))
+        })?;
+        self.sync()
+    }
+
     pub(crate) fn move_self_no_replace(
         self,
         destination_parent: &SafeDirectory,
@@ -365,24 +385,69 @@ impl SafeDirectory {
         Ok(copied)
     }
 
-    pub(crate) fn regular_file_len(&self, name: &str) -> Result<u64, CommandError> {
-        validate_child_name(name)?;
-        let file = openat(
-            &self.fd,
-            name,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|source| CommandError::io(format!("could not open contained file: {source}")))?;
-        let stat = fstat(&file).map_err(|source| {
-            CommandError::io(format!("could not inspect contained file: {source}"))
-        })?;
-        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_size < 0 {
-            return Err(CommandError::validation(
-                "contained entry is not a regular file",
-            ));
+    /// Compares two regular files through no-follow handles rooted in pinned directories.
+    pub(crate) fn regular_file_bytes_equal(
+        &self,
+        name: &str,
+        other: &SafeDirectory,
+        other_name: &str,
+    ) -> Result<bool, CommandError> {
+        let open_regular =
+            |directory: &SafeDirectory, entry: &str| -> Result<fs::File, CommandError> {
+                validate_child_name(entry)?;
+                let file = openat(
+                    &directory.fd,
+                    entry,
+                    OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|source| {
+                    CommandError::io(format!("could not open contained file: {source}"))
+                })?;
+                let stat = fstat(&file).map_err(|source| {
+                    CommandError::io(format!("could not inspect contained file: {source}"))
+                })?;
+                if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+                    return Err(CommandError::validation(
+                        "contained entry is not a regular file",
+                    ));
+                }
+                Ok(file.into())
+            };
+
+        let mut left = open_regular(self, name)?;
+        let mut right = open_regular(other, other_name)?;
+        if left
+            .metadata()
+            .map_err(|source| {
+                CommandError::io(format!("could not inspect contained file: {source}"))
+            })?
+            .len()
+            != right
+                .metadata()
+                .map_err(|source| {
+                    CommandError::io(format!("could not inspect contained file: {source}"))
+                })?
+                .len()
+        {
+            return Ok(false);
         }
-        Ok(stat.st_size as u64)
+        let mut left_buffer = [0_u8; 64 * 1024];
+        let mut right_buffer = [0_u8; 64 * 1024];
+        loop {
+            let left_read = left.read(&mut left_buffer).map_err(|source| {
+                CommandError::io(format!("could not read contained file: {source}"))
+            })?;
+            let right_read = right.read(&mut right_buffer).map_err(|source| {
+                CommandError::io(format!("could not read contained file: {source}"))
+            })?;
+            if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+                return Ok(false);
+            }
+            if left_read == 0 {
+                return Ok(true);
+            }
+        }
     }
 
     pub fn open(root: &Path, segments: &[&str], create: bool) -> Result<Self, CommandError> {

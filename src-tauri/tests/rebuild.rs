@@ -8,7 +8,7 @@ use simple_notes_lib::{
     error::CommandError,
     storage::{
         atomic_file::{atomic_replace_contained, PublishResult},
-        rebuild::{rebuild_index, rebuild_index_with_hook},
+        rebuild::{rebuild_index, rebuild_index_strict_with_validator, rebuild_index_with_hook},
         repository::NoteRepository,
     },
 };
@@ -168,6 +168,63 @@ fn preconstructed_note_repository_does_not_hold_the_live_index_open_during_rebui
 
     rebuild.join().unwrap().unwrap();
     save.join().unwrap().unwrap();
+}
+
+#[test]
+fn strict_validation_failure_never_publishes_or_mutates_the_active_index() {
+    let mut store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
+    let mut document = note_without_folder();
+    document.revision = 0;
+    repository.create(document).unwrap();
+    drop(repository);
+    store.close_database();
+
+    let connection = Connection::open(store.paths.database()).unwrap();
+    connection.pragma_update(None, "user_version", 73).unwrap();
+    drop(connection);
+    let active_before = fs::read(store.paths.database()).unwrap();
+    let wal = store.paths.root().join("index.sqlite-wal");
+    let shm = store.paths.root().join("index.sqlite-shm");
+    fs::write(&wal, b"retained wal evidence").unwrap();
+    fs::write(&shm, b"retained shm evidence").unwrap();
+
+    for _ in 0..2 {
+        let error = rebuild_index_strict_with_validator(&store.paths, |replacement| {
+            let candidate = Connection::open(replacement).map_err(|source| {
+                CommandError::database(format!("could not inspect replacement: {source}"))
+            })?;
+            let note_count = query_count(&candidate, "notes");
+            assert_eq!(note_count, 1, "validator must see the complete replacement");
+            let user_version: i64 = candidate
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+            if user_version != 73 {
+                return Err(CommandError::database(
+                    "replacement did not preserve required relocation state",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.code(),
+            simple_notes_lib::error::CommandErrorCode::Database
+        );
+        assert_eq!(fs::read(store.paths.database()).unwrap(), active_before);
+        assert_eq!(fs::read(&wal).unwrap(), b"retained wal evidence");
+        assert_eq!(fs::read(&shm).unwrap(), b"retained shm evidence");
+    }
+
+    fs::remove_file(wal).unwrap();
+    fs::remove_file(shm).unwrap();
+    let active = Connection::open(store.paths.database()).unwrap();
+    let user_version: i64 = active
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(user_version, 73);
+    assert_eq!(query_count(&active, "notes"), 1);
 }
 
 #[test]

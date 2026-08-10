@@ -11,6 +11,7 @@
     "allow-save-temporary",
     "allow-hide-temporary-window",
     "allow-set-temporary-always-on-top",
-    "allow-save-image"
+    "allow-save-image",
+    "allow-load-sticky-settings"
   ]
 }

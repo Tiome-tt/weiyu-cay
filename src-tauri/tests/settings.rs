@@ -1,11 +1,11 @@
 use serde_json::Value;
 use simple_notes_lib::{
     commands::settings::{
-        authorize_restart_request, authorize_settings_caller, finalize_reopened_relocation,
-        load_bootstrap_settings, open_configured_storage,
+        authorize_restart_request, authorize_settings_caller, authorize_sticky_settings_caller,
+        finalize_reopened_relocation, load_bootstrap_settings, open_configured_storage,
         quarantine_incomplete_destination_with_hook, recover_interrupted_source_relocation,
         AppSettings, DataRootSetting, SettingsPatch, SettingsService, SettingsStore,
-        StorageMoveFailurePoint, SystemSettings,
+        StickySettings, StorageMoveFailurePoint, SystemSettings,
     },
     error::CommandError,
     storage::paths::StoragePaths,
@@ -22,6 +22,43 @@ use std::{
     },
     time::Duration,
 };
+
+#[test]
+fn sticky_settings_expose_only_shared_appearance_fields() {
+    let full = AppSettings::default();
+    let sticky = StickySettings::from(&full);
+    let value = serde_json::to_value(sticky).unwrap();
+    assert_eq!(
+        value
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            "autosaveDelayMs",
+            "bodyFont",
+            "codeFont",
+            "fontSize",
+            "lineHeight",
+            "stickyColorMode",
+            "theme",
+        ]
+    );
+    assert!(!value.to_string().contains("shortcut"));
+    assert!(!value.to_string().contains("dataRoot"));
+    assert!(!value.to_string().contains("launchAtStartup"));
+}
+
+#[test]
+fn sticky_settings_are_authorized_only_for_main_and_canonical_temporary_windows() {
+    let id = uuid::Uuid::now_v7();
+    assert!(authorize_sticky_settings_caller("main").is_ok());
+    assert!(authorize_sticky_settings_caller(&format!("temporary-{id}")).is_ok());
+    assert!(authorize_sticky_settings_caller("temporary-not-a-uuid").is_err());
+    assert!(authorize_sticky_settings_caller(&format!("temporary-{id}-extra")).is_err());
+    assert!(authorize_sticky_settings_caller("other").is_err());
+}
 
 #[derive(Clone, Default)]
 struct MemoryStore {
@@ -48,21 +85,17 @@ impl SettingsStore for MemoryStore {
         Ok(self.value.lock().unwrap().clone())
     }
 
-    fn save(&self, value: &Value) -> Result<(), CommandError> {
+    fn save_bundle(&self, value: &Value, root: &DataRootSetting) -> Result<(), CommandError> {
         if std::mem::take(&mut *self.fail_save.lock().unwrap()) {
             return Err(CommandError::io("injected settings save failure"));
         }
         *self.value.lock().unwrap() = Some(value.clone());
+        *self.root_backup.lock().unwrap() = Some(root.clone());
         Ok(())
     }
 
     fn load_data_root_backup(&self) -> Result<Option<DataRootSetting>, CommandError> {
         Ok(self.root_backup.lock().unwrap().clone())
-    }
-
-    fn save_data_root_backup(&self, root: &DataRootSetting) -> Result<(), CommandError> {
-        *self.root_backup.lock().unwrap() = Some(root.clone());
-        Ok(())
     }
 }
 
@@ -80,7 +113,7 @@ impl SettingsStore for DeferredFirstSaveStore {
         Ok(self.value.lock().unwrap().clone())
     }
 
-    fn save(&self, value: &Value) -> Result<(), CommandError> {
+    fn save_bundle(&self, value: &Value, root: &DataRootSetting) -> Result<(), CommandError> {
         if self.save_count.fetch_add(1, Ordering::SeqCst) == 0 {
             self.first_save_entered.send(()).unwrap();
             let (released, wake) = &*self.first_save_release;
@@ -90,16 +123,12 @@ impl SettingsStore for DeferredFirstSaveStore {
             }
         }
         *self.value.lock().unwrap() = Some(value.clone());
+        *self.root_backup.lock().unwrap() = Some(root.clone());
         Ok(())
     }
 
     fn load_data_root_backup(&self) -> Result<Option<DataRootSetting>, CommandError> {
         Ok(self.root_backup.lock().unwrap().clone())
-    }
-
-    fn save_data_root_backup(&self, root: &DataRootSetting) -> Result<(), CommandError> {
-        *self.root_backup.lock().unwrap() = Some(root.clone());
-        Ok(())
     }
 }
 
@@ -167,10 +196,8 @@ fn defaults_and_numeric_bounds_are_explicit() {
     assert_eq!(defaults.autosave_delay_ms, 500);
     assert_eq!(
         serde_json::to_value(&defaults).unwrap(),
-        serde_json::from_str::<Value>(include_str!(
-            "../../src/shared/settings-defaults.json"
-        ))
-        .unwrap(),
+        serde_json::from_str::<Value>(include_str!("../../src/shared/settings-defaults.json"))
+            .unwrap(),
         "Rust and TypeScript must consume the same canonical default vector"
     );
 
@@ -225,6 +252,27 @@ fn corrupted_settings_never_overwrite_the_last_known_custom_root() {
     assert_eq!(store.load().unwrap().unwrap(), original);
     assert_eq!(store.load_data_root_backup().unwrap(), Some(custom));
     assert!(load_bootstrap_settings(&store).is_err());
+}
+
+#[test]
+fn missing_settings_never_overwrite_or_bypass_the_last_known_custom_root() {
+    let root = tempfile::tempdir().unwrap();
+    let store = MemoryStore::default();
+    let custom = DataRootSetting::Custom {
+        path: root
+            .path()
+            .join("preserved-library")
+            .to_string_lossy()
+            .into_owned(),
+    };
+    *store.root_backup.lock().unwrap() = Some(custom.clone());
+
+    assert!(service(&root, store.clone(), FakeSystem::default())
+        .load()
+        .is_err());
+    assert!(load_bootstrap_settings(&store).is_err());
+    assert!(store.load().unwrap().is_none());
+    assert_eq!(store.load_data_root_backup().unwrap(), Some(custom));
 }
 
 #[test]
@@ -291,6 +339,40 @@ fn persistence_failure_rolls_back_system_changes() {
     assert_eq!(system.shortcut().unwrap(), "CommandOrControl+Shift+Space");
     assert!(!system.launch_at_startup().unwrap());
     assert_eq!(service.load().unwrap(), AppSettings::default());
+}
+
+#[test]
+fn custom_root_and_main_settings_publish_atomically_or_neither_changes() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let store = MemoryStore::default();
+    *store.value.lock().unwrap() = Some(serde_json::to_value(AppSettings::default()).unwrap());
+    *store.root_backup.lock().unwrap() = Some(DataRootSetting::Default);
+    store.fail_next_save();
+    let destination = parent.path().join("atomic-settings-failure");
+    let service = SettingsService::new(
+        StoragePaths::open(source.path()).unwrap(),
+        store.clone(),
+        FakeSystem::default(),
+    );
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
+    assert_eq!(
+        store.load_data_root_backup().unwrap(),
+        Some(DataRootSetting::Default)
+    );
+    assert_eq!(
+        serde_json::from_value::<AppSettings>(store.load().unwrap().unwrap())
+            .unwrap()
+            .data_root,
+        DataRootSetting::Default
+    );
+    assert!(fs::read_dir(parent.path()).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".simple-notes-incomplete-")));
 }
 
 #[test]
@@ -590,6 +672,8 @@ fn settings_commands_are_main_only_and_capabilities_exclude_sticky_windows() {
         assert!(main.contains(command));
         assert!(!sticky.contains(command));
     }
+    assert!(main.contains("allow-load-sticky-settings"));
+    assert!(sticky.contains("allow-load-sticky-settings"));
     assert!(authorize_restart_request("main", true).is_ok());
     assert!(authorize_restart_request("main", false).is_err());
     assert!(authorize_restart_request("temporary-note", true).is_err());
@@ -697,6 +781,69 @@ fn crash_before_staging_marker_never_occupies_the_requested_destination() {
 
     recover_interrupted_source_relocation(&paths).unwrap();
     assert!(!destination.exists());
+    assert!(!fs::read_dir(parent.path()).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".simple-notes-relocation-")));
+    assert!(fs::read_dir(parent.path()).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".simple-notes-orphan-")));
+    SettingsService::new(paths, store, FakeSystem::default())
+        .move_storage_root(&destination)
+        .unwrap();
+    assert!(destination.exists());
+}
+
+#[test]
+fn restart_quarantines_an_unmarked_staging_link_without_following_it() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let sentinel = outside.path().join("outside-sentinel.bin");
+    fs::write(&sentinel, b"never move or delete").unwrap();
+    let paths = StoragePaths::open(source.path()).unwrap();
+    let store = MemoryStore::default();
+    let destination = parent.path().join("still-retryable-after-link-swap");
+    let crashed = SettingsService::new_with_failure(
+        paths.clone(),
+        store.clone(),
+        FakeSystem::default(),
+        StorageMoveFailurePoint::CrashAfterStagingCreate,
+    );
+    assert!(crashed.move_storage_root(&destination).is_err());
+    let staging = fs::read_dir(parent.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".simple-notes-relocation-")
+        })
+        .unwrap();
+    let parked = parent.path().join("parked-original-staging");
+    fs::rename(&staging, &parked).unwrap();
+    create_directory_link(outside.path(), &staging).unwrap();
+
+    recover_interrupted_source_relocation(&paths).unwrap();
+
+    assert_eq!(fs::read(&sentinel).unwrap(), b"never move or delete");
+    assert!(!staging.exists());
+    assert!(!destination.exists());
+    let orphan = fs::read_dir(parent.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".simple-notes-orphan-")
+        })
+        .unwrap();
+    remove_directory_link(&orphan).unwrap();
     SettingsService::new(paths, store, FakeSystem::default())
         .move_storage_root(&destination)
         .unwrap();
@@ -729,6 +876,56 @@ fn quarantine_rejects_a_destination_replaced_by_an_external_directory_link() {
     assert!(result.is_err());
     assert_eq!(fs::read(&sentinel).unwrap(), b"never move or delete");
     remove_directory_link(&destination).unwrap();
+}
+
+#[test]
+fn same_length_staging_file_replacement_is_rejected_before_publish() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(source.path()).unwrap();
+    fs::write(paths.notes().join("content.bin"), b"trusted-content").unwrap();
+    let parent_for_hook = parent.path().to_path_buf();
+    let service = SettingsService::new_with_staging_publish_hook(
+        paths,
+        MemoryStore::default(),
+        FakeSystem::default(),
+        move || {
+            let staging = fs::read_dir(&parent_for_hook)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(".simple-notes-relocation-")
+                })
+                .unwrap();
+            fs::write(staging.join("notes/content.bin"), b"tampered-value!").unwrap();
+        },
+    );
+    let destination = parent.path().join("must-not-publish");
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
+}
+
+#[test]
+fn same_length_source_file_replacement_is_rejected_before_publish() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(source.path()).unwrap();
+    let source_file = paths.notes().join("content.bin");
+    fs::write(&source_file, b"trusted-content").unwrap();
+    let service = SettingsService::new_with_staging_publish_hook(
+        paths,
+        MemoryStore::default(),
+        FakeSystem::default(),
+        move || fs::write(&source_file, b"tampered-value!").unwrap(),
+    );
+    let destination = parent.path().join("must-not-publish-source-change");
+
+    assert!(service.move_storage_root(&destination).is_err());
+    assert!(!destination.exists());
 }
 
 #[test]
@@ -990,6 +1187,11 @@ fn restart_opens_the_verified_custom_root_with_complete_bytes() {
     )
     .unwrap();
     fs::write(
+        source.path().join("unknown-durable.bin"),
+        b"copy unknown bytes",
+    )
+    .unwrap();
+    fs::write(
         source.path().join("settings.json"),
         b"must never be offered",
     )
@@ -1003,6 +1205,11 @@ fn restart_opens_the_verified_custom_root_with_complete_bytes() {
     assert_eq!(
         fs::read(reopened.notes().join("restart.bin")).unwrap(),
         b"complete before restart"
+    );
+    assert!(!reopened.root().join("settings.json").exists());
+    assert_eq!(
+        fs::read(reopened.root().join("unknown-durable.bin")).unwrap(),
+        b"copy unknown bytes"
     );
     let relocation_path = reopened.root().join(".simple-notes-storage-move.json");
     let relocation: Value = serde_json::from_slice(&fs::read(&relocation_path).unwrap()).unwrap();
@@ -1033,6 +1240,58 @@ fn restart_opens_the_verified_custom_root_with_complete_bytes() {
         .candidates
         .iter()
         .any(|candidate| candidate.relative_path == "settings.json"));
+    assert!(!cleanup
+        .candidates
+        .iter()
+        .any(|candidate| candidate.relative_path == "unknown-durable.bin"));
+}
+
+#[test]
+fn failed_reopen_window_state_validation_preserves_active_index_and_retryable_marker() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(source.path()).unwrap();
+    let temporary = TemporaryRepository::new(paths.clone()).create().unwrap();
+    let database = rusqlite::Connection::open(paths.database()).unwrap();
+    database
+        .execute_batch(
+            "PRAGMA foreign_keys=OFF;
+             DROP TABLE temporary_windows;
+             CREATE TABLE temporary_windows (
+                note_id BLOB,
+                visible INTEGER,
+                x REAL,
+                y REAL,
+                width REAL,
+                height REAL,
+                always_on_top INTEGER
+             );",
+        )
+        .unwrap();
+    database
+        .execute(
+            "INSERT INTO temporary_windows (note_id, visible, x, y, width, height, always_on_top) VALUES (?1, 0, 12, 18, -1, 410, 0)",
+            [uuid::Uuid::parse_str(&temporary.id.to_string())
+                .unwrap()
+                .as_bytes()
+                .to_vec()],
+        )
+        .unwrap();
+    drop(database);
+    let destination = parent.path().join("window-state-validation");
+    SettingsService::new(paths, MemoryStore::default(), FakeSystem::default())
+        .move_storage_root(&destination)
+        .unwrap();
+    let reopened = StoragePaths::open(&destination).unwrap();
+    let index_before = fs::read(reopened.database()).unwrap();
+    let marker_path = destination.join(".simple-notes-storage-move.json");
+
+    for _ in 0..2 {
+        assert!(finalize_reopened_relocation(&reopened).is_err());
+        assert_eq!(fs::read(reopened.database()).unwrap(), index_before);
+        let marker: Value = serde_json::from_slice(&fs::read(&marker_path).unwrap()).unwrap();
+        assert_eq!(marker["phase"], "awaiting_restart");
+    }
 }
 
 #[test]

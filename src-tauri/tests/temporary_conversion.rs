@@ -1824,6 +1824,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-show-temporary-window",
             "allow-get-capture-shortcut",
             "allow-rebind-capture-shortcut",
+            "allow-load-sticky-settings",
             "allow-load-settings",
             "allow-update-settings",
             "allow-reset-settings",
@@ -1842,7 +1843,8 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-save-temporary",
             "allow-hide-temporary-window",
             "allow-set-temporary-always-on-top",
-            "allow-save-image"
+            "allow-save-image",
+            "allow-load-sticky-settings"
         ])
     );
 }

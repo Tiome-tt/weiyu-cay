@@ -44,7 +44,13 @@ struct FolderRecord {
 
 pub fn rebuild_index(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
     let guard = platform::IndexMutationLock::acquire(paths.root())?;
-    rebuild_index_with_policy_locked(paths, |_| Ok(()), RebuildPolicy::AllowPartial, &guard)
+    rebuild_index_with_policy_locked(
+        paths,
+        |_| Ok(()),
+        |_| Ok(()),
+        RebuildPolicy::AllowPartial,
+        &guard,
+    )
 }
 
 pub fn rebuild_index_strict(paths: &StoragePaths) -> Result<RebuildReport, CommandError> {
@@ -56,7 +62,31 @@ pub(crate) fn rebuild_index_strict_locked(
     paths: &StoragePaths,
     guard: &platform::IndexMutationLock,
 ) -> Result<RebuildReport, CommandError> {
-    rebuild_index_with_policy_locked(paths, |_| Ok(()), RebuildPolicy::RequireComplete, guard)
+    rebuild_index_with_policy_locked(
+        paths,
+        |_| Ok(()),
+        |_| Ok(()),
+        RebuildPolicy::RequireComplete,
+        guard,
+    )
+}
+
+#[doc(hidden)]
+pub fn rebuild_index_strict_with_validator<F>(
+    paths: &StoragePaths,
+    validate_replacement: F,
+) -> Result<RebuildReport, CommandError>
+where
+    F: FnOnce(&Path) -> Result<(), CommandError>,
+{
+    let guard = platform::IndexMutationLock::acquire(paths.root())?;
+    rebuild_index_with_policy_locked(
+        paths,
+        validate_replacement,
+        |_| Ok(()),
+        RebuildPolicy::RequireComplete,
+        &guard,
+    )
 }
 
 #[doc(hidden)]
@@ -68,7 +98,13 @@ where
     F: FnOnce(&Path) -> Result<(), CommandError>,
 {
     let guard = platform::IndexMutationLock::acquire(paths.root())?;
-    rebuild_index_with_policy_locked(paths, before_publish, RebuildPolicy::AllowPartial, &guard)
+    rebuild_index_with_policy_locked(
+        paths,
+        |_| Ok(()),
+        before_publish,
+        RebuildPolicy::AllowPartial,
+        &guard,
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -77,13 +113,15 @@ enum RebuildPolicy {
     RequireComplete,
 }
 
-fn rebuild_index_with_policy_locked<F>(
+fn rebuild_index_with_policy_locked<V, F>(
     paths: &StoragePaths,
+    validate_replacement: V,
     before_publish: F,
     policy: RebuildPolicy,
     _guard: &platform::IndexMutationLock,
 ) -> Result<RebuildReport, CommandError>
 where
+    V: FnOnce(&Path) -> Result<(), CommandError>,
     F: FnOnce(&Path) -> Result<(), CommandError>,
 {
     let root = platform::SafeDirectory::open(paths.root(), &[], false)?;
@@ -138,6 +176,10 @@ where
         return Err(error);
     }
     root.sync_file(&replacement_name)?;
+    if let Err(error) = validate_replacement(&replacement) {
+        cleanup_replacement_files(&root, &replacement_name);
+        return Err(error);
+    }
     before_publish(paths.root())?;
 
     let backup_name = format!(".index.sqlite.{}.rebuild-backup", Uuid::now_v7());

@@ -709,6 +709,32 @@ impl SafeDirectory {
         Ok(Self { path, _pins: pins })
     }
 
+    pub(crate) fn quarantine_entry_no_follow(
+        &self,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), CommandError> {
+        let source_path = self.child_path(source)?;
+        let destination_path = self.child_path(destination)?;
+        if fs::symlink_metadata(&destination_path).is_ok() {
+            return Err(CommandError::conflict(
+                "contained quarantine destination already exists",
+            ));
+        }
+        let source = OpenOptions::new()
+            .access_mode(DELETE_ACCESS | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+            .open(source_path)
+            .map_err(|source| {
+                CommandError::io(format!(
+                    "could not pin unverified operation entry: {source}"
+                ))
+            })?;
+        rename_pinned_directory_no_replace(&source, &destination_path)?;
+        self.sync()
+    }
+
     pub(crate) fn move_self_no_replace(
         mut self,
         destination_parent: &SafeDirectory,
@@ -818,21 +844,63 @@ impl SafeDirectory {
         Ok(copied)
     }
 
-    pub(crate) fn regular_file_len(&self, name: &str) -> Result<u64, CommandError> {
-        let path = self.child_path(name)?;
-        let file = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-            .map_err(|source| {
-                CommandError::io(format!("could not open contained file: {source}"))
+    /// Compares two regular files through no-follow handles rooted in pinned directories.
+    pub(crate) fn regular_file_bytes_equal(
+        &self,
+        name: &str,
+        other: &SafeDirectory,
+        other_name: &str,
+    ) -> Result<bool, CommandError> {
+        let open_regular = |directory: &SafeDirectory, entry: &str| -> Result<File, CommandError> {
+            let path = directory.child_path(entry)?;
+            let file = OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(path)
+                .map_err(|source| {
+                    CommandError::io(format!("could not open contained file: {source}"))
+                })?;
+            let metadata = file.metadata().map_err(|source| {
+                CommandError::io(format!("could not inspect contained file: {source}"))
             })?;
-        let metadata = file.metadata().map_err(|source| {
-            CommandError::io(format!("could not inspect contained file: {source}"))
-        })?;
-        validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
-        Ok(metadata.len())
+            validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+            Ok(file)
+        };
+
+        let mut left = open_regular(self, name)?;
+        let mut right = open_regular(other, other_name)?;
+        if left
+            .metadata()
+            .map_err(|source| {
+                CommandError::io(format!("could not inspect contained file: {source}"))
+            })?
+            .len()
+            != right
+                .metadata()
+                .map_err(|source| {
+                    CommandError::io(format!("could not inspect contained file: {source}"))
+                })?
+                .len()
+        {
+            return Ok(false);
+        }
+        let mut left_buffer = [0_u8; 64 * 1024];
+        let mut right_buffer = [0_u8; 64 * 1024];
+        loop {
+            let left_read = left.read(&mut left_buffer).map_err(|source| {
+                CommandError::io(format!("could not read contained file: {source}"))
+            })?;
+            let right_read = right.read(&mut right_buffer).map_err(|source| {
+                CommandError::io(format!("could not read contained file: {source}"))
+            })?;
+            if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+                return Ok(false);
+            }
+            if left_read == 0 {
+                return Ok(true);
+            }
+        }
     }
 
     pub fn open(root: &Path, segments: &[&str], create: bool) -> Result<Self, CommandError> {

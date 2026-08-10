@@ -43,9 +43,9 @@ pub fn run() {
                 .state::<commands::settings::SettingsCommandState>()
                 .paths()
                 .clone();
-            commands::settings::finalize_reopened_relocation(&paths)?;
             commands::notes::setup(app)?;
             commands::temporary::setup(app)?;
+            commands::settings::finalize_reopened_relocation(&paths)?;
             commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
             Ok(())
         })
@@ -84,6 +84,7 @@ pub fn run() {
             commands::shortcuts::get_capture_shortcut,
             commands::shortcuts::rebind_capture_shortcut,
             commands::settings::load_settings,
+            commands::settings::load_sticky_settings,
             commands::settings::update_settings,
             commands::settings::reset_settings,
             commands::settings::get_storage_info,
