@@ -1,4 +1,4 @@
-use super::{NewFilePublishState, SafeEntryKind};
+use super::{CreateChildFailure, NewFilePublishState, SafeEntryKind};
 use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -230,20 +230,53 @@ impl SafeDirectory {
     }
 
     pub(crate) fn create_child_no_replace(&self, name: &str) -> Result<Self, CommandError> {
-        validate_child_name(name)?;
+        self.create_child_no_replace_stateful(name)
+            .map_err(CreateChildFailure::into_error)
+    }
+
+    pub(crate) fn create_child_no_replace_stateful(
+        &self,
+        name: &str,
+    ) -> Result<Self, CreateChildFailure> {
+        self.create_child_no_replace_stateful_using(name, || Ok(()))
+    }
+
+    #[cfg(test)]
+    fn create_child_no_replace_stateful_with_hook<F>(
+        &self,
+        name: &str,
+        after_create: F,
+    ) -> Result<Self, CreateChildFailure>
+    where
+        F: FnOnce() -> Result<(), CommandError>,
+    {
+        self.create_child_no_replace_stateful_using(name, after_create)
+    }
+
+    fn create_child_no_replace_stateful_using<F>(
+        &self,
+        name: &str,
+        after_create: F,
+    ) -> Result<Self, CreateChildFailure>
+    where
+        F: FnOnce() -> Result<(), CommandError>,
+    {
+        validate_child_name(name).map_err(CreateChildFailure::definitely_not_created)?;
         mkdirat(&self.fd, name, Mode::from_bits_truncate(0o700)).map_err(|source| {
-            if source == rustix::io::Errno::EXIST {
+            CreateChildFailure::definitely_not_created(if source == rustix::io::Errno::EXIST {
                 CommandError::conflict("contained directory already exists")
             } else {
                 CommandError::io(format!("could not create contained directory: {source}"))
-            }
+            })
         })?;
+        after_create().map_err(CreateChildFailure::created_recovery_required)?;
         fsync(&self.fd).map_err(|source| {
-            CommandError::io(format!(
+            CreateChildFailure::created_recovery_required(CommandError::io(format!(
                 "could not sync contained directory parent: {source}"
-            ))
+            )))
         })?;
         self.open_child(name, false)
+            .map_err(CreateChildFailure::created_recovery_required)
     }
 
     pub(crate) fn quarantine_entry_no_follow(
@@ -1108,6 +1141,43 @@ fn regular_identity_from_file(file: &fs::File) -> Result<(u64, u64), CommandErro
 mod tests {
     use crate::storage::atomic_file::PublishState;
     use std::fs;
+
+    #[test]
+    fn create_child_no_replace_reports_existing_names_as_definitely_not_created() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("existing")).unwrap();
+        let parent = super::SafeDirectory::open(root.path(), &[], false).unwrap();
+
+        let failure = parent
+            .create_child_no_replace_stateful("existing")
+            .unwrap_err();
+
+        assert_eq!(
+            failure.state(),
+            crate::platform::CreateChildFailureState::DefinitelyNotCreated
+        );
+        assert!(root.path().join("existing").is_dir());
+    }
+
+    #[test]
+    fn create_child_no_replace_reports_post_create_failure_as_recovery_required() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = super::SafeDirectory::open(root.path(), &[], false).unwrap();
+
+        let failure = parent
+            .create_child_no_replace_stateful_with_hook("partial", || {
+                Err(crate::error::CommandError::io(
+                    "injected parent sync failure",
+                ))
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            failure.state(),
+            crate::platform::CreateChildFailureState::CreatedRecoveryRequired
+        );
+        assert!(root.path().join("partial").is_dir());
+    }
 
     #[test]
     fn safe_directory_clone_keeps_the_same_directory_handle_after_path_replacement() {

@@ -62,8 +62,27 @@ describe('ExportLibrary', () => {
     await user.click(screen.getByRole('button', { name: 'Export complete library' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The export was not published.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Incomplete files may remain at')
     expect(screen.getByRole('alert')).toHaveTextContent('.simple-notes-export-019c.partial')
     expect(screen.getByRole('alert')).toHaveTextContent('The export manifest could not be written.')
+  })
+
+  it('does not identify the selected path as leftovers when staging was definitely not created', async () => {
+    const exporter: ExportPort = { exportLibrary: vi.fn().mockResolvedValue({
+      ...emptyReport,
+      completed: false,
+      outputRoot: null,
+      incompleteRoot: null,
+      globalFailure: 'The export staging folder could not be created.',
+    }) }
+    const user = userEvent.setup()
+    render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\User Folder')} />)
+
+    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No retained output location was available.')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('D:\\User Folder')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Incomplete files may remain at')
   })
 
   it('keeps partial failures explicit by note without hiding successful counts', async () => {

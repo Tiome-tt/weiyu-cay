@@ -102,7 +102,7 @@ fn export_rewrites_parser_confirmed_asset_variants_and_preserves_suffixes_and_co
         note_id,
         "Variants",
         None,
-        "![percent](assets/space%20file.png)\n![escaped](assets/a\\(b\\).png)\n![dot](./assets/plain.png)\n![lexical](assets/sub/../plain.png)\n![suffix](assets/plain.png?download=1#preview)\n![external](https://cdn.example/assets/plain.png)\n[relative](docs/100%ready)\n![reference][asset]\n\n    [code]: assets/plain.png\n\n[asset]: <assets/space%20file.png?raw=1#reference> \"kept title\"",
+        "![percent](assets/space%20file.png)\n![escaped](assets/a\\(b\\).png)\n![dot](./assets/plain.png)\n![lexical](assets/sub/../plain.png)\n![normalized-root](docs/../assets/plain.png)\n![encoded-root](%61ssets/plain.png)\n![suffix](assets/plain.png?download=1#preview)\n![external](https://cdn.example/assets/plain.png)\n[relative](docs/100%ready)\n![reference][asset]\n\n    [code]: assets/plain.png\n\n[asset]: <assets/space%20file.png?raw=1#reference> \"kept title\"",
     );
     let assets = store.paths.assets_dir(note_id, NoteKind::Formal).unwrap();
     fs::create_dir(&assets).unwrap();
@@ -120,12 +120,36 @@ fn export_rewrites_parser_confirmed_asset_variants_and_preserves_suffixes_and_co
     assert!(exported.contains("![escaped](Variants-assets/a%28b%29.png)"));
     assert!(exported.contains("![dot](Variants-assets/plain.png)"));
     assert!(exported.contains("![lexical](Variants-assets/plain.png)"));
+    assert!(exported.contains("![normalized-root](Variants-assets/plain.png)"));
+    assert!(exported.contains("![encoded-root](Variants-assets/plain.png)"));
     assert!(exported.contains("![suffix](Variants-assets/plain.png?download=1#preview)"));
     assert!(exported.contains("![external](https://cdn.example/assets/plain.png)"));
     assert!(exported.contains("[relative](docs/100%ready)"));
     assert!(exported
         .contains("[asset]: <Variants-assets/space%20file.png?raw=1#reference> \"kept title\""));
     assert!(exported.contains("    [code]: assets/plain.png"));
+}
+
+#[test]
+fn export_preserves_unmanaged_relative_paths_with_a_later_assets_component() {
+    let store = TestStore::new();
+    create_formal_note(
+        &store,
+        note_id(FIRST_ID),
+        "Documentation",
+        None,
+        "[documentation](docs/assets/diagram.png)\n[second](reference/assets/index.html)",
+    );
+    let destination = tempfile::tempdir().unwrap();
+
+    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let output = successful_output(&report);
+    let exported = fs::read_to_string(output.join("Documentation.md")).unwrap();
+
+    assert_eq!(report.notes_exported, 1, "{report:?}");
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert!(exported.contains("[documentation](docs/assets/diagram.png)"));
+    assert!(exported.contains("[second](reference/assets/index.html)"));
 }
 
 #[test]
@@ -145,6 +169,13 @@ fn export_rejects_raw_and_percent_encoded_asset_traversal() {
         None,
         "![escape](assets/%2e%2e/secret.png)",
     );
+    create_formal_note(
+        &store,
+        note_id("019c0000-0000-7000-8000-000000000403"),
+        "Encoded leading traversal",
+        None,
+        "![escape](%2e%2e/assets/plain.png)",
+    );
     let destination = tempfile::tempdir().unwrap();
 
     let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
@@ -153,7 +184,7 @@ fn export_rejects_raw_and_percent_encoded_asset_traversal() {
         serde_json::from_slice(&fs::read(output.join("export-manifest.json")).unwrap()).unwrap();
 
     assert_eq!(report.notes_exported, 0, "{report:?}");
-    assert_eq!(report.failed.len(), 2, "{report:?}");
+    assert_eq!(report.failed.len(), 3, "{report:?}");
     assert_eq!(manifest["notes"], serde_json::json!({}));
 }
 

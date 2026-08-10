@@ -1,4 +1,4 @@
-use super::{NewFilePublishState, SafeEntryKind};
+use super::{CreateChildFailure, NewFilePublishState, SafeEntryKind};
 use crate::{
     error::CommandError,
     storage::atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -702,17 +702,56 @@ impl SafeDirectory {
     }
 
     pub(crate) fn create_child_no_replace(&self, name: &str) -> Result<Self, CommandError> {
-        let path = self.child_path(name)?;
+        self.create_child_no_replace_stateful(name)
+            .map_err(CreateChildFailure::into_error)
+    }
+
+    pub(crate) fn create_child_no_replace_stateful(
+        &self,
+        name: &str,
+    ) -> Result<Self, CreateChildFailure> {
+        self.create_child_no_replace_stateful_using(name, || Ok(()))
+    }
+
+    #[cfg(test)]
+    fn create_child_no_replace_stateful_with_hook<F>(
+        &self,
+        name: &str,
+        after_create: F,
+    ) -> Result<Self, CreateChildFailure>
+    where
+        F: FnOnce() -> Result<(), CommandError>,
+    {
+        self.create_child_no_replace_stateful_using(name, after_create)
+    }
+
+    fn create_child_no_replace_stateful_using<F>(
+        &self,
+        name: &str,
+        after_create: F,
+    ) -> Result<Self, CreateChildFailure>
+    where
+        F: FnOnce() -> Result<(), CommandError>,
+    {
+        let path = self
+            .child_path(name)
+            .map_err(CreateChildFailure::definitely_not_created)?;
         fs::create_dir(&path).map_err(|source| {
-            if source.kind() == std::io::ErrorKind::AlreadyExists {
-                CommandError::conflict("contained directory already exists")
-            } else {
-                CommandError::io(format!("could not create contained directory: {source}"))
-            }
+            CreateChildFailure::definitely_not_created(
+                if source.kind() == std::io::ErrorKind::AlreadyExists {
+                    CommandError::conflict("contained directory already exists")
+                } else {
+                    CommandError::io(format!("could not create contained directory: {source}"))
+                },
+            )
         })?;
-        self.sync()?;
+        after_create().map_err(CreateChildFailure::created_recovery_required)?;
+        self.sync()
+            .map_err(CreateChildFailure::created_recovery_required)?;
         let mut pins = self._pins.clone();
-        pins.push(Arc::new(open_pinned_directory(&path)?));
+        pins.push(Arc::new(
+            open_pinned_directory(&path).map_err(CreateChildFailure::created_recovery_required)?,
+        ));
         Ok(Self { path, _pins: pins })
     }
 
@@ -1462,6 +1501,43 @@ mod tests {
     };
     use crate::storage::atomic_file::PublishState;
     use std::{collections::VecDeque, fs, io::Write, path::Path};
+
+    #[test]
+    fn create_child_no_replace_reports_existing_names_as_definitely_not_created() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("existing")).unwrap();
+        let parent = super::SafeDirectory::open(root.path(), &[], false).unwrap();
+
+        let failure = parent
+            .create_child_no_replace_stateful("existing")
+            .unwrap_err();
+
+        assert_eq!(
+            failure.state(),
+            crate::platform::CreateChildFailureState::DefinitelyNotCreated
+        );
+        assert!(root.path().join("existing").is_dir());
+    }
+
+    #[test]
+    fn create_child_no_replace_reports_post_create_failure_as_recovery_required() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = super::SafeDirectory::open(root.path(), &[], false).unwrap();
+
+        let failure = parent
+            .create_child_no_replace_stateful_with_hook("partial", || {
+                Err(crate::error::CommandError::io(
+                    "injected parent sync failure",
+                ))
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            failure.state(),
+            crate::platform::CreateChildFailureState::CreatedRecoveryRequired
+        );
+        assert!(root.path().join("partial").is_dir());
+    }
 
     #[test]
     fn safe_directory_clone_retains_all_ancestor_pins() {

@@ -64,7 +64,7 @@ export function useExportLibraryController(
       } else {
         const retained = next.incompleteRoot === null
           ? 'No retained output location was available.'
-          : `Incomplete files remain at ${next.incompleteRoot}.`
+          : `Incomplete files may remain at ${next.incompleteRoot}.`
         setError(`The export was not published. ${retained} ${next.globalFailure ?? 'The operation did not complete.'}`)
       }
     } catch {

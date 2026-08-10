@@ -1,7 +1,7 @@
 use crate::{
     domain::{FolderId, NoteId, NoteKind},
     error::CommandError,
-    platform::{SafeDirectory, SafeEntryKind},
+    platform::{CreateChildFailure, CreateChildFailureState, SafeDirectory, SafeEntryKind},
     storage::{
         atomic_file::PublishState,
         paths::StoragePaths,
@@ -100,7 +100,7 @@ struct PreparedNote {
 
 type ExportFileWriter<'a> = dyn FnMut(&SafeDirectory, &str, &[u8]) -> Result<(), CommandError> + 'a;
 type StagingCreator<'a> =
-    dyn FnMut(&SafeDirectory, &str) -> Result<SafeDirectory, CommandError> + 'a;
+    dyn FnMut(&SafeDirectory, &str) -> Result<SafeDirectory, CreateChildFailure> + 'a;
 type EntryReader<'a> = dyn FnMut(&SafeDirectory) -> Result<Vec<String>, CommandError> + 'a;
 
 pub fn export_library(
@@ -122,7 +122,7 @@ fn export_library_using(
         destination,
         app_version,
         write_file,
-        &mut |parent, name| parent.create_child_no_replace(name),
+        &mut |parent, name| parent.create_child_no_replace_stateful(name),
         &mut SafeDirectory::entry_names,
     )
 }
@@ -150,12 +150,17 @@ fn export_library_with_operations(
     let staging_name = format!("{STAGING_PREFIX}{}.partial", Uuid::now_v7());
     let output = match create_staging(&destination_parent, &staging_name) {
         Ok(output) => output,
-        Err(_) => {
-            return Ok(incomplete_report(
-                empty_report(),
-                &destination.join(&staging_name),
-                "The export staging folder could not be created durably.",
-            ))
+        Err(failure) => {
+            return Ok(match failure.state() {
+                CreateChildFailureState::DefinitelyNotCreated => failed_without_output_report(
+                    "The export staging folder could not be created.",
+                ),
+                CreateChildFailureState::CreatedRecoveryRequired => incomplete_report(
+                    empty_report(),
+                    &destination.join(&staging_name),
+                    "The export staging folder may have been created but could not be verified durably.",
+                ),
+            })
         }
     };
 
@@ -296,6 +301,13 @@ fn empty_report() -> ExportReport {
         assets_exported: 0,
         renamed_paths: Vec::new(),
         failed: Vec::new(),
+    }
+}
+
+fn failed_without_output_report(global_failure: &str) -> ExportReport {
+    ExportReport {
+        global_failure: Some(global_failure.to_owned()),
+        ..empty_report()
     }
 }
 
@@ -800,33 +812,44 @@ fn replacement_for_destination(
         Err(_) => return Ok(None),
     };
     let raw_components = decoded_path.split('/').collect::<Vec<_>>();
-    let asset_candidate = raw_components.contains(&"assets");
-    if !asset_candidate {
+    if decoded_path.starts_with('/') || decoded_path.contains('\\') {
+        if raw_components.contains(&"assets") {
+            return Err(CommandError::validation(
+                "asset reference escapes the note assets directory",
+            ));
+        }
         return Ok(None);
     }
-    if decoded_path.starts_with('/') || decoded_path.contains('\\') {
-        return Err(CommandError::validation(
-            "asset reference escapes the note assets directory",
-        ));
-    }
+    let first_effective = raw_components
+        .iter()
+        .copied()
+        .find(|component| !matches!(*component, "" | "."));
+    let managed_from_start = first_effective == Some("assets");
     let mut normalized = Vec::new();
+    let mut escaped_above_root = false;
     for component in raw_components {
         match component {
             "" | "." => {}
             ".." => {
-                if normalized.pop().is_none() {
+                if managed_from_start && normalized.len() <= 1 {
                     return Err(CommandError::validation(
                         "asset reference escapes the note assets directory",
                     ));
+                }
+                if normalized.pop().is_none() {
+                    escaped_above_root = true;
                 }
             }
             component => normalized.push(component),
         }
     }
-    if normalized.first() != Some(&"assets") {
+    if escaped_above_root && normalized.contains(&"assets") {
         return Err(CommandError::validation(
             "asset reference escapes the note assets directory",
         ));
+    }
+    if normalized.first() != Some(&"assets") {
+        return Ok(None);
     }
     let normalized = normalized.join("/");
     Ok(replacements
@@ -1230,7 +1253,7 @@ mod tests {
             &destination,
             "0.1.0",
             &mut write_owned_file,
-            &mut |parent, name| parent.create_child_no_replace(name),
+            &mut |parent, name| parent.create_child_no_replace_stateful(name),
             &mut |_| Err(CommandError::io("injected final enumeration failure")),
         )
         .unwrap();
@@ -1257,8 +1280,10 @@ mod tests {
             "0.1.0",
             &mut write_owned_file,
             &mut |parent, name| {
-                let _created = parent.create_child_no_replace(name)?;
-                Err(CommandError::io("injected staging pin failure"))
+                let _created = parent.create_child_no_replace(name).unwrap();
+                Err(CreateChildFailure::created_recovery_required(
+                    CommandError::io("injected staging pin failure"),
+                ))
             },
             &mut SafeDirectory::entry_names,
         )
@@ -1271,6 +1296,51 @@ mod tests {
         let incomplete = PathBuf::from(report.incomplete_root.expect("known staging root"));
         assert!(incomplete.is_dir());
         assert!(!destination.join(EXPORT_ROOT_NAME).exists());
+    }
+
+    #[test]
+    fn staging_creation_permission_failure_does_not_claim_an_incomplete_root() {
+        assert_precreate_staging_failure_has_no_incomplete_root(CommandError::io(
+            "injected staging permission failure",
+        ));
+    }
+
+    #[test]
+    fn staging_creation_existing_name_does_not_claim_user_content_as_incomplete() {
+        assert_precreate_staging_failure_has_no_incomplete_root(CommandError::conflict(
+            "injected existing staging name",
+        ));
+    }
+
+    fn assert_precreate_staging_failure_has_no_incomplete_root(error: CommandError) {
+        let sandbox = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
+        let destination = sandbox.path().join("exports");
+        fs::create_dir(&destination).unwrap();
+        let before = fs::read_dir(&destination).unwrap().count();
+        let mut error = Some(error);
+
+        let report = export_library_with_operations(
+            &paths,
+            &destination,
+            "0.1.0",
+            &mut write_owned_file,
+            &mut |_, _| {
+                Err(CreateChildFailure::definitely_not_created(
+                    error.take().expect("creation called once"),
+                ))
+            },
+            &mut SafeDirectory::entry_names,
+        )
+        .unwrap();
+
+        assert!(!report.completed, "{report:?}");
+        assert_eq!(report.notes_exported, 0);
+        assert_eq!(report.assets_exported, 0);
+        assert!(report.output_root.is_none());
+        assert!(report.incomplete_root.is_none(), "{report:?}");
+        assert!(report.global_failure.is_some(), "{report:?}");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), before);
     }
 
     fn all_descendants(root: &Path) -> Vec<PathBuf> {
