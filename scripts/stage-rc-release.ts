@@ -1,7 +1,15 @@
 import { readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { ReleaseAsset } from './validate-release-metadata'
+
+interface SemverModule {
+  gt(left: string, right: string): boolean
+  valid(version: string): string | null
+}
+
+const semver = createRequire(import.meta.url)('semver') as SemverModule
 
 interface PlatformMetadata {
   signature: string
@@ -31,16 +39,12 @@ export function stageRcMetadata(options: { endpoint: string, metadata: RcMetadat
 }
 
 function compareVersions(candidate: string, previous: string): number {
-  const parse = (version: string) => {
-    const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/)
-    if (match === null) throw new Error('RC versions must use MAJOR.MINOR.PATCH-rc.N.')
-    return match.slice(1).map((value) => value === undefined ? -1 : Number(value))
+  if (!/^\d+\.\d+\.\d+-rc\.\d+$/.test(candidate) || semver.valid(candidate) !== candidate) {
+    throw new Error('RC candidate version must use MAJOR.MINOR.PATCH-rc.N.')
   }
-  const [candidateMajor, candidateMinor, candidatePatch, candidateRc] = parse(candidate)
-  const [previousMajor, previousMinor, previousPatch, previousRc] = parse(previous)
-  for (const [left, right] of [[candidateMajor, previousMajor], [candidateMinor, previousMinor], [candidatePatch, previousPatch], [candidateRc, previousRc]] as const) {
-    if (left !== right) return left > right ? 1 : -1
-  }
+  if (semver.valid(previous) !== previous) throw new Error('Staged baseline must be a valid semantic version.')
+  if (semver.gt(candidate, previous)) return 1
+  if (semver.gt(previous, candidate)) return -1
   return 0
 }
 

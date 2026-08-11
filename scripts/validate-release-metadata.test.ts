@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateReleaseMetadata, type ReleaseAsset } from './validate-release-metadata'
+import { createVerifiedReleaseAssetManifest, validateReleaseMetadata, type ReleaseAsset } from './validate-release-metadata'
 
 const repository = 'acme/simple-notes'
 const tag = 'v0.1.1-rc.1'
@@ -83,6 +83,88 @@ describe('validateReleaseMetadata', () => {
     aliased.platforms['darwin-x86_64'] = { ...aliased.platforms['darwin-aarch64'] }
 
     expect(() => validateReleaseMetadata({ metadata: aliased, repository, tag, releaseAssets: assets, downloadedAssets: files }))
-      .toThrow("reuses another platform's updater asset or signature")
+      .toThrow('does not match the required platform artifact')
+  })
+
+  it('rejects distinct macOS assets when both filenames contain arm64 and x64 architecture tokens', () => {
+    const ambiguousArmName = 'Simple Notes_aarch64-x64-one.app.tar.gz'
+    const ambiguousIntelName = 'Simple Notes_aarch64-x64-two.app.tar.gz'
+    const assets = updaterAssets.map((asset) => {
+      if (asset.name === 'Simple Notes_aarch64.app.tar.gz') return { ...asset, name: ambiguousArmName }
+      if (asset.name === 'Simple Notes_aarch64.app.tar.gz.sig') return { ...asset, name: `${ambiguousArmName}.sig` }
+      if (asset.name === 'Simple Notes_x64.app.tar.gz') return { ...asset, name: ambiguousIntelName }
+      if (asset.name === 'Simple Notes_x64.app.tar.gz.sig') return { ...asset, name: `${ambiguousIntelName}.sig` }
+      return asset
+    })
+    const files = new Map(downloaded)
+    files.delete('Simple Notes_aarch64.app.tar.gz')
+    files.delete('Simple Notes_aarch64.app.tar.gz.sig')
+    files.delete('Simple Notes_x64.app.tar.gz')
+    files.delete('Simple Notes_x64.app.tar.gz.sig')
+    files.set(ambiguousArmName, Buffer.from('arm'))
+    files.set(`${ambiguousArmName}.sig`, Buffer.from('arm-signature\n'))
+    files.set(ambiguousIntelName, Buffer.from('intel'))
+    files.set(`${ambiguousIntelName}.sig`, Buffer.from('intel-signature\n'))
+
+    expect(() => validateReleaseMetadata({ metadata: metadata(), repository, tag, releaseAssets: assets, downloadedAssets: files }))
+      .toThrow('does not match the required platform artifact')
+  })
+
+  it.each([
+    ['windows-x86_64', 'Simple Notes_darwin_x64_en-US.msi.zip'],
+    ['darwin-aarch64', 'Simple Notes_windows_aarch64.app.tar.gz'],
+    ['darwin-x86_64', 'Simple Notes_windows_x64.app.tar.gz'],
+    ['windows-x86_64', 'Simple Notes_x64-aarch64_en-US.msi.zip'],
+    ['windows-x86_64', 'Simple Notes_linux_x64_en-US.msi.zip'],
+    ['darwin-aarch64', 'Simple Notes_linux_arm64.app.tar.gz'],
+  ] as const)('rejects a %s asset with contradictory platform or architecture tokens', (platform, invalidName) => {
+    const current = metadata().platforms[platform]
+    const originalAsset = updaterAssets.find((asset) => asset.apiUrl === current.url)
+    if (originalAsset === undefined) throw new Error('test fixture lacks updater asset')
+    const assets = updaterAssets.map((asset) => asset.name === originalAsset.name
+      ? { ...asset, name: invalidName }
+      : asset.name === `${originalAsset.name}.sig`
+        ? { ...asset, name: `${invalidName}.sig` }
+        : asset)
+    const files = new Map(downloaded)
+    files.delete(originalAsset.name)
+    files.delete(`${originalAsset.name}.sig`)
+    files.set(invalidName, downloaded.get(originalAsset.name) ?? Buffer.from('updater'))
+    files.set(`${invalidName}.sig`, downloaded.get(`${originalAsset.name}.sig`) ?? Buffer.from(current.signature))
+
+    expect(() => validateReleaseMetadata({ metadata: metadata(), repository, tag, releaseAssets: assets, downloadedAssets: files }))
+      .toThrow('does not match the required platform artifact')
+  })
+
+  it('binds every downloaded release asset identity to its SHA-256 digest', () => {
+    expect(createVerifiedReleaseAssetManifest({ downloadedAssets: downloaded, releaseAssets: updaterAssets, repository, tag })).toEqual({
+      repository,
+      tag,
+      assets: [
+        { ...updaterAssets[0], sha256: '9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c' },
+        { ...updaterAssets[1], sha256: '35a33caaa2927b51859b944b9e842c10571e4419fa8df3dbebb45d4ad3b556bc' },
+        { ...updaterAssets[2], sha256: 'ddf7ff5ebd9d66ce161466c1c0262430fa04de32b0e420ee3f489e2e2112e386' },
+        { ...updaterAssets[3], sha256: '5f668f9607e38c3ccbaeb42220955d1e0e0a626b6030c539fb5c2bb00ea07328' },
+        { ...updaterAssets[4], sha256: '96eebba49dbbf422d245f02290f9d4ed0eb02da9daa6bbceefb162800ff42481' },
+        { ...updaterAssets[5], sha256: '3c60332c692740d0c0a73cc10357eb4c6313abc2fd75f86211359f64193bf9b3' },
+      ],
+    })
+  })
+
+  it('rejects release bytes changed after the verified identity manifest was created', () => {
+    const manifest = createVerifiedReleaseAssetManifest({ downloadedAssets: downloaded, releaseAssets: updaterAssets, repository, tag })
+    const changed = new Map(downloaded)
+    changed.set(updaterAssets[0].name, Buffer.from('changed-installer'))
+
+    expect(() => validateReleaseMetadata({ metadata: metadata(), repository, tag, releaseAssets: manifest.assets, downloadedAssets: changed }))
+      .toThrow('SHA-256 digest does not match')
+  })
+
+  it('refuses to create an identity manifest that omits a downloaded release asset', () => {
+    const unexpected = new Map(downloaded)
+    unexpected.set('unidentified-installer.bin', Buffer.from('unexpected'))
+
+    expect(() => createVerifiedReleaseAssetManifest({ downloadedAssets: unexpected, releaseAssets: updaterAssets, repository, tag }))
+      .toThrow('does not have a release asset identity')
   })
 })

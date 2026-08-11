@@ -253,6 +253,8 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    outputs:
+      verified-bundle-name: ${{ steps.bundle-name.outputs.name }}
     steps:
       - name: Check out release validation scripts
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -273,7 +275,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
-          node --experimental-strip-types scripts/validate-release-metadata.ts --directory release-assets --release-assets "$RUNNER_TEMP/release-assets.json" --repository "$REPOSITORY" --tag "$TAG_NAME"
+          node --experimental-strip-types scripts/validate-release-metadata.ts --directory release-assets --release-assets "$RUNNER_TEMP/release-assets.json" --repository "$REPOSITORY" --tag "$TAG_NAME" --identity-output release-assets/release-asset-identities.json
       - name: Generate, upload, and verify SHA256SUMS
         working-directory: release-assets
         env:
@@ -284,6 +286,18 @@ jobs:
           find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           sha256sum --check SHA256SUMS
           gh release upload "$TAG_NAME" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Name immutable verified release bundle
+        id: bundle-name
+        shell: bash
+        run: echo "name=verified-release-bundle-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable verified release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.bundle-name.outputs.name }}
+          path: release-assets
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   stage-rc:
     needs: [verify-tag, checksums]
@@ -296,9 +310,34 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: 11.16.0
+      - name: Set up Node.js
+        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download immutable verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.checksums.outputs.verified-bundle-name }}
+          path: release-assets
+      - name: Revalidate immutable verified release bundle
+        working-directory: release-assets
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS
+          node --experimental-strip-types ../scripts/validate-release-metadata.ts --directory . --release-assets release-asset-identities.json --repository "$REPOSITORY" --tag "$TAG_NAME"
       - name: Mirror signed RC candidate to the stable staging channel
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
           RELEASE_STAGING_ENDPOINT: ${{ vars.RELEASE_STAGING_ENDPOINT }}
           RELEASE_STAGING_UPLOAD_TOKEN: ${{ secrets.RELEASE_STAGING_UPLOAD_TOKEN }}
@@ -306,11 +345,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_STAGING_UPLOAD_TOKEN" || { echo 'RC staging upload token is required.' >&2; exit 1; }
-          mkdir release-assets
-          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets
-          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release-assets.json"
           curl --fail --silent --show-error "$RELEASE_STAGING_ENDPOINT/latest.json" -o "$RUNNER_TEMP/previous-rc-latest.json"
-          node --experimental-strip-types scripts/stage-rc-release.ts --metadata release-assets/latest.json --release-assets "$RUNNER_TEMP/release-assets.json" --previous "$RUNNER_TEMP/previous-rc-latest.json" --endpoint "$RELEASE_STAGING_ENDPOINT" --output "$RUNNER_TEMP/staged-rc-latest.json"
+          node --experimental-strip-types scripts/stage-rc-release.ts --metadata release-assets/latest.json --release-assets release-assets/release-asset-identities.json --previous "$RUNNER_TEMP/previous-rc-latest.json" --endpoint "$RELEASE_STAGING_ENDPOINT" --output "$RUNNER_TEMP/staged-rc-latest.json"
           while IFS= read -r encoded; do
             name="$(node --input-type=module -e 'console.log(decodeURIComponent(process.argv[1]))' "$encoded")"
             curl --fail --silent --show-error --request PUT --header "Authorization: Bearer $RELEASE_STAGING_UPLOAD_TOKEN" --upload-file "release-assets/$name" "$RELEASE_STAGING_ENDPOINT/assets/$encoded"

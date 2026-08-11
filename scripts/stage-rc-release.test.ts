@@ -34,4 +34,30 @@ describe('stageRcMetadata', () => {
     expect(() => stageRcMetadata({ metadata, releaseAssets: assets, endpoint, previousVersion: '0.1.2-rc.2' }))
       .toThrow('must be greater than the staged RC version')
   })
+
+  it.each([
+    ['a higher RC number', '0.1.2-rc.2', '0.1.2-rc.1'],
+    ['a higher patch RC above a stable release', '0.1.2-rc.1', '0.1.1'],
+    ['a later prerelease identifier', '0.1.2-rc.1', '0.1.2-beta.9'],
+  ])('accepts %s by standard SemVer precedence', (_case, candidate, previousVersion) => {
+    expect(stageRcMetadata({
+      metadata: { ...metadata, version: candidate },
+      releaseAssets: assets,
+      endpoint,
+      previousVersion,
+    }).version).toBe(candidate)
+  })
+
+  it.each([
+    ['a prerelease below the stable release with the same core', '0.1.2-rc.1', '0.1.2'],
+    ['a lower patch candidate', '0.1.2-rc.1', '0.1.3-rc.1'],
+    ['the same candidate', '0.1.2-rc.2', '0.1.2-rc.2'],
+  ])('rejects %s by standard SemVer precedence', (_case, candidate, previousVersion) => {
+    expect(() => stageRcMetadata({
+      metadata: { ...metadata, version: candidate },
+      releaseAssets: assets,
+      endpoint,
+      previousVersion,
+    })).toThrow('must be greater than the staged RC version')
+  })
 })

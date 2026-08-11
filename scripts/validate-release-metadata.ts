@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -6,6 +7,16 @@ export interface ReleaseAsset {
   apiUrl: string
   id: string
   name: string
+}
+
+export interface VerifiedReleaseAsset extends ReleaseAsset {
+  sha256: string
+}
+
+export interface VerifiedReleaseAssetManifest {
+  assets: VerifiedReleaseAsset[]
+  repository: string
+  tag: string
 }
 
 interface UpdaterPlatform {
@@ -37,6 +48,7 @@ export function validateReleaseMetadata(options: ValidateReleaseMetadataOptions)
     throw new Error('latest.json platforms is missing.')
   }
   const releaseAssets = new Map(options.releaseAssets.map((asset) => [assetApiUrl(asset, options.repository), asset]))
+  validateVerifiedAssetDigests(options.releaseAssets, options.downloadedAssets)
   const updaterNames = new Set<string>()
   const signatureNames = new Set<string>()
   for (const platformName of REQUIRED_PLATFORMS) {
@@ -73,6 +85,45 @@ export function validateReleaseMetadata(options: ValidateReleaseMetadataOptions)
   }
 }
 
+/** Captures the immutable release-asset identities and bytes handed from validation to staging. */
+export function createVerifiedReleaseAssetManifest(options: Pick<ValidateReleaseMetadataOptions, 'downloadedAssets' | 'releaseAssets' | 'repository' | 'tag'>): VerifiedReleaseAssetManifest {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(options.repository) || !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(options.tag)) {
+    throw new Error('Release repository or tag is invalid.')
+  }
+  const releaseAssets = options.releaseAssets.filter((asset) => asset.name !== 'SHA256SUMS')
+  const names = new Set<string>()
+  const apiUrls = new Set<string>()
+  const verifiedAssets = releaseAssets.map((asset) => {
+    if (!asset.id.trim() || !asset.name || /[\\/]/.test(asset.name)) throw new Error('Release asset identity is invalid.')
+    const apiUrl = assetApiUrl(asset, options.repository)
+    if (names.has(asset.name) || apiUrls.has(apiUrl)) throw new Error('Release asset identities must be unique.')
+    names.add(asset.name)
+    apiUrls.add(apiUrl)
+    const bytes = options.downloadedAssets.get(asset.name)
+    if (bytes === undefined) throw new Error(`${asset.name} release asset bytes are absent.`)
+    return { ...asset, apiUrl, sha256: sha256(bytes) }
+  }).sort((left, right) => left.name.localeCompare(right.name, 'en'))
+  for (const name of options.downloadedAssets.keys()) {
+    if (name !== 'SHA256SUMS' && !names.has(name)) throw new Error(`${name} does not have a release asset identity.`)
+  }
+  return { repository: options.repository, tag: options.tag, assets: verifiedAssets }
+}
+
+function validateVerifiedAssetDigests(assets: readonly ReleaseAsset[], downloadedAssets: ReadonlyMap<string, Uint8Array>): void {
+  const digests = assets.map((asset) => (asset as Partial<VerifiedReleaseAsset>).sha256)
+  if (!digests.some((digest) => digest !== undefined)) return
+  for (const [index, asset] of assets.entries()) {
+    const digest = digests[index]
+    if (digest === undefined || !/^[a-f0-9]{64}$/.test(digest)) throw new Error(`${asset.name} SHA-256 identity is invalid.`)
+    const bytes = downloadedAssets.get(asset.name)
+    if (bytes === undefined || sha256(bytes) !== digest) throw new Error(`${asset.name} SHA-256 digest does not match its verified identity.`)
+  }
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
 function assetApiUrl(asset: ReleaseAsset, repository: string): string {
   return apiAssetUrl(asset.apiUrl, repository)
 }
@@ -87,15 +138,29 @@ function apiAssetUrl(value: string, repository: string): string {
 }
 
 function isPlatformAsset(platform: typeof REQUIRED_PLATFORMS[number], name: string): boolean {
-  const architecture = platform === 'windows-x86_64' ? /(?:^|[_-])(x64|x86_64)(?:[_.-]|$)/i : platform === 'darwin-aarch64' ? /(?:^|[_-])aarch64(?:[_.-]|$)/i : /(?:^|[_-])(x64|x86_64)(?:[_.-]|$)/i
+  const x64 = /(?:^|[_-])(?:x64|x86_64)(?:[_.-]|$)/i
+  const arm64 = /(?:^|[_-])(?:arm64|aarch64)(?:[_.-]|$)/i
+  const architecture = platform === 'darwin-aarch64' ? arm64 : x64
+  const oppositeArchitecture = platform === 'darwin-aarch64' ? x64 : arm64
   const extension = platform === 'windows-x86_64' ? /\.msi\.zip$/i : /\.app\.tar\.gz$/i
-  return architecture.test(name) && extension.test(name)
+  const wrongPlatform = platform === 'windows-x86_64'
+    ? /(?:^|[_.-])(?:apple|darwin|linux|macos|osx)(?:[_.-]|$)/i
+    : /(?:^|[_.-])(?:exe|linux|msi|nsis|win32|win64|windows)(?:[_.-]|$)/i
+  return architecture.test(name) && !oppositeArchitecture.test(name) && extension.test(name) && !wrongPlatform.test(name)
 }
 
 function optionValue(name: string): string {
   const index = process.argv.indexOf(name)
   const value = index === -1 ? undefined : process.argv[index + 1]
   if (value === undefined || value.startsWith('--')) throw new Error(`${name} is required.`)
+  return value
+}
+
+function optionalOptionValue(name: string): string | undefined {
+  const index = process.argv.indexOf(name)
+  if (index === -1) return undefined
+  const value = process.argv[index + 1]
+  if (value === undefined || value.startsWith('--')) throw new Error(`${name} requires a value.`)
   return value
 }
 
@@ -112,6 +177,16 @@ function runCommand(): void {
     repository: optionValue('--repository'),
     tag: optionValue('--tag'),
   })
+  const identityOutput = optionalOptionValue('--identity-output')
+  if (identityOutput !== undefined) {
+    const manifest = createVerifiedReleaseAssetManifest({
+      downloadedAssets,
+      releaseAssets: assets.assets,
+      repository: optionValue('--repository'),
+      tag: optionValue('--tag'),
+    })
+    writeFileSync(identityOutput, `${JSON.stringify(manifest, null, 2)}\n`)
+  }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
