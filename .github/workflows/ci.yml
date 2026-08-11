@@ -48,6 +48,12 @@ jobs:
         run: pnpm typecheck
       - name: Test TypeScript
         run: pnpm test
+      - name: Install Playwright browser
+        run: pnpm exec playwright install chromium
+      - name: Test browser flows
+        run: pnpm test:e2e
+        env:
+          PLAYWRIGHT_CHANNEL: bundled
       - name: Build web UI
         run: pnpm build
       - name: Build unsigned desktop bundle

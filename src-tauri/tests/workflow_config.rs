@@ -77,6 +77,23 @@ fn shell_command_predicates_do_not_accept_misleading_echo_text() {
 }
 
 #[test]
+fn ci_and_signed_release_gates_execute_playwright_e2e() {
+    for (path, job_name) in [
+        ("../.github/workflows/ci.yml", "verify"),
+        ("../.github/workflows/release.yml", "verify-gates"),
+    ] {
+        let workflow: Workflow = parse(path);
+        let gate = job(&workflow, job_name);
+        assert_step_command(
+            gate,
+            "Install Playwright browser",
+            &["pnpm", "exec", "playwright", "install", "chromium"],
+        );
+        assert_step_command(gate, "Test browser flows", &["pnpm", "test:e2e"]);
+    }
+}
+
+#[test]
 fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers() {
     assert!(
         !Path::new("../scripts/workflow-config.test.ts").exists(),
@@ -240,6 +257,41 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
         "1",
     );
     assert!(!workflow.jobs.contains_key("publish-prerelease"));
+
+    let stable = job(&workflow, "prepare-stable-promotion");
+    assert_eq!(stable.needs.values(), ["verify-tag", "checksums"]);
+    assert_eq!(
+        stable.permissions,
+        Some(Permissions {
+            contents: "read".to_owned()
+        })
+    );
+    assert_step_uses(
+        stable,
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    );
+    assert_step_command(
+        stable,
+        "Verify public stable baseline and write promotion plan",
+        &[
+            "node",
+            "--experimental-strip-types",
+            "scripts/prepare-stable-promotion.ts",
+            "--candidate",
+            "release-assets/latest.json",
+            "--previous",
+            "$RUNNER_TEMP/previous-stable-latest.json",
+            "--release",
+            "$RUNNER_TEMP/candidate-stable-release.json",
+            "--repository",
+            "$REPOSITORY",
+            "--tag",
+            "$TAG_NAME",
+            "--output",
+            "stable-promotion-plan.json",
+        ],
+    );
+    assert_job_lacks_command(stable, &["gh", "release", "edit"]);
 
     let stage = job(&workflow, "stage-rc");
     assert_eq!(stage.needs.values(), ["verify-tag", "checksums"]);

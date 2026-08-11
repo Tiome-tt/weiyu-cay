@@ -1,7 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const port = 41737
-const channel = process.env.PLAYWRIGHT_CHANNEL ?? (process.platform === 'win32' ? 'chrome' : undefined)
+const requestedChannel = process.env.PLAYWRIGHT_CHANNEL
+const channel = requestedChannel === 'bundled'
+  ? undefined
+  : requestedChannel ?? (process.platform === 'win32' ? 'chrome' : undefined)
 
 export default defineConfig({
   testDir: './e2e',
