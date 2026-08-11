@@ -29,6 +29,45 @@ describe('App', () => {
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
   })
 
+  it('acknowledges a native close only after the dirty editor flushes behind a barrier', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const activeId = '019c0000-0000-7000-8000-000000000052' as NoteId
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([{ ...fakeNotePortDocument(activeId, 'Close-safe note'), excerpt: '' }]),
+      loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Close-safe note', 'old body')),
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    let requestClose!: () => void
+    const completeClose = vi.fn().mockResolvedValue(undefined)
+    const lifecycle = {
+      onCloseRequested: vi.fn(async (handler: () => void) => {
+        requestClose = handler
+        return () => undefined
+      }),
+      completeClose,
+    }
+    const services = {
+      notes, folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle,
+    }
+    const user = userEvent.setup()
+    render(<App services={services} />)
+    await user.click(await screen.findByRole('button', { name: /^Close-safe note/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty close draft' } }))
+    await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
+
+    act(() => requestClose())
+
+    await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
+    expect(completeClose).not.toHaveBeenCalled()
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    await act(async () => pendingSave.resolve({ ...fakeNotePortDocument(activeId, 'Close-safe note', 'dirty close draft'), revision: 2 }))
+    await waitFor(() => expect(completeClose).toHaveBeenCalledWith(true))
+  })
+
   it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
     const user = userEvent.setup()
     const check = vi.fn().mockResolvedValue({ version: '0.1.1', notes: 'Security fixes' })
@@ -68,6 +107,37 @@ describe('App', () => {
 
     expect(restart).toHaveBeenCalledOnce()
     expect(await screen.findByRole('alert')).toHaveTextContent('Update installed, but restart failed. Restart Simple Notes manually.')
+  })
+
+  it('flushes and locks a dirty editor before restarting into an installed update', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const activeId = '019c0000-0000-7000-8000-000000000053' as NoteId
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([{ ...fakeNotePortDocument(activeId, 'Update-safe note'), excerpt: '' }]),
+      loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Update-safe note', 'old body')),
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    const restart = vi.fn().mockResolvedValue(undefined)
+    const services = {
+      notes, folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
+    }
+    const user = userEvent.setup()
+    render(<App services={services} />)
+    await user.click(await screen.findByRole('button', { name: /^Update-safe note/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty update draft' } }))
+    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await user.click(await screen.findByRole('button', { name: 'Download and install version 0.1.1' }))
+    await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
+
+    await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
+    expect(restart).not.toHaveBeenCalled()
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    await act(async () => pendingSave.resolve({ ...fakeNotePortDocument(activeId, 'Update-safe note', 'dirty update draft'), revision: 2 }))
+    await waitFor(() => expect(restart).toHaveBeenCalledOnce())
   })
 
   it('announces the actual startup recovery report in the main application', async () => {
@@ -487,4 +557,18 @@ function deferred<T>() {
   let reject!: (reason?: unknown) => void
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
   return { promise, resolve, reject }
+}
+
+function fakeNotePortDocument(id: NoteId, title: string, markdown = ''): NoteDocument {
+  return {
+    id,
+    kind: 'formal',
+    title,
+    folderId: null,
+    tags: [],
+    markdown,
+    revision: 1,
+    createdAt: '2026-07-30T00:00:00Z',
+    updatedAt: '2026-07-30T00:00:00Z',
+  }
 }

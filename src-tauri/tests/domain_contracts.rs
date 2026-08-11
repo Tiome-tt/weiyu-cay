@@ -6,12 +6,18 @@ use simple_notes_lib::domain::{
 use simple_notes_lib::error::{CommandError, CommandErrorCode};
 
 #[test]
-fn create_note_command_accepts_the_renderer_folder_only_contract() {
+fn create_note_command_accepts_the_renderer_title_and_folder_contract() {
     let folder = "019c0000-0000-7000-8000-000000000001";
     let input: CreateNoteInput =
-        serde_json::from_value(serde_json::json!({ "folderId": folder })).unwrap();
+        serde_json::from_value(serde_json::json!({ "folderId": folder, "title": "发布检查" }))
+            .unwrap();
 
     assert_eq!(input.folder_id, Some(FolderId::parse_str(folder).unwrap()));
+    assert_eq!(input.title, "发布检查");
+    assert!(
+        serde_json::from_value::<CreateNoteInput>(serde_json::json!({ "folderId": folder }))
+            .is_err()
+    );
 }
 
 #[test]

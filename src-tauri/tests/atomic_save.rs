@@ -383,6 +383,29 @@ fn repository_create_load_list_and_move_preserve_identity_and_markdown() {
     assert_eq!(moved.revision, 1);
     assert_eq!(moved.markdown, markdown);
     assert_eq!(moved.folder_id.unwrap().to_string(), FOLDER_ID);
+    assert_ne!(moved.updated_at, "2026-07-30T00:01:00Z");
+
+    let renamed = repository
+        .rename_note(NoteId::parse_str(NOTE_ID).unwrap(), "Path | [draft]")
+        .unwrap();
+    assert_eq!(renamed.id.to_string(), NOTE_ID);
+    assert_eq!(renamed.revision, 2);
+    assert_eq!(renamed.title, "Path | [draft]");
+    assert_eq!(renamed.markdown, markdown);
+    assert_eq!(renamed.created_at, "2026-07-30T00:00:00Z");
+    assert_ne!(renamed.updated_at, moved.updated_at);
+    let indexed: (String, i64, String) = Connection::open(store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT title, revision, updated_at FROM notes WHERE id=?1",
+            [uuid::Uuid::parse_str(NOTE_ID)
+                .unwrap()
+                .as_bytes()
+                .as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(indexed, (renamed.title, 2, renamed.updated_at));
 }
 
 fn owned_temp_count(parent: &Path) -> usize {

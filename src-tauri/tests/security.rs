@@ -3,8 +3,10 @@ mod support;
 use image::{DynamicImage, ImageFormat};
 use simple_notes_lib::{
     commands::assets::{
-        save_image_to, save_image_to_with, save_image_to_with_publish_hook, validate_image,
+        read_image_asset_from, save_image_to, save_image_to_with, save_image_to_with_publish_hook,
+        validate_image,
     },
+    commands::external::validate_external_url,
     domain::{NoteDocument, NoteId, NoteKind, SaveImageInput},
     error::CommandErrorCode,
     storage::{database::Database, repository::NoteRepository},
@@ -102,15 +104,21 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
     for forbidden in [
         "allow-create-note",
         "allow-list-notes",
+        "allow-rename-note",
+        "allow-list-link-targets",
+        "allow-read-image-asset",
+        "allow-open-external-link",
+        "allow-complete-main-window-close",
         "allow-delete-temporary",
         "allow-convert-temporary",
         "allow-export-library",
         "allow-move-storage-root",
-        "opener:default",
     ] {
         assert!(!sticky_permissions.contains(forbidden));
-        assert!(main_permissions.contains(forbidden) || forbidden == "allow-delete-temporary");
+        assert!(main_permissions.contains(forbidden));
     }
+    assert!(!sticky_permissions.contains("opener:default"));
+    assert!(!main_permissions.contains("opener:default"));
 }
 
 #[test]
@@ -251,6 +259,125 @@ fn persists_assets_for_formal_and_temporary_notes_without_overwrite_or_absolute_
         .unwrap()
         .join(&temporary.relative_path)
         .exists());
+}
+
+#[test]
+fn reads_only_validated_owned_image_asset_labels() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let png = encoded(ImageFormat::Png, 2, 3);
+    let saved = save_image_to(&store.paths, input(FORMAL_ID, "image/png", png.clone())).unwrap();
+
+    let loaded = read_image_asset_from(&store.paths, id(FORMAL_ID), &saved.relative_path).unwrap();
+    assert_eq!(loaded.media_type, "image/png");
+    assert_eq!(loaded.bytes, png);
+    for invalid in [
+        "../outside.png",
+        "assets/../outside.png",
+        "assets/nested/image.png",
+        "assets/not-an-owned-name.png",
+        "https://example.invalid/image.png",
+    ] {
+        assert_eq!(
+            read_image_asset_from(&store.paths, id(FORMAL_ID), invalid)
+                .unwrap_err()
+                .code(),
+            CommandErrorCode::Validation,
+            "unexpected result for {invalid}"
+        );
+    }
+}
+
+#[test]
+fn external_urls_are_an_explicit_protocol_allowlist() {
+    for valid in [
+        "https://example.com/path",
+        "http://localhost:8080/a",
+        "mailto:person@example.com",
+    ] {
+        assert!(validate_external_url(valid).is_ok(), "rejected {valid}");
+    }
+    for invalid in [
+        "javascript:alert(1)",
+        "file:///private/note",
+        "../relative",
+        "https://",
+        "https://example.com/line\nbreak",
+    ] {
+        assert_eq!(
+            validate_external_url(invalid).unwrap_err().code(),
+            CommandErrorCode::Validation
+        );
+    }
+}
+
+#[test]
+fn desktop_csp_blocks_network_images_and_keeps_only_required_local_sources() {
+    let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+    let csp = config["app"]["security"]["csp"].as_str().unwrap();
+
+    assert!(!csp.trim().is_empty());
+    assert!(csp.contains("default-src 'self'"));
+    assert!(csp.contains("img-src 'self' blob:"));
+    assert!(csp.contains("script-src 'self'"));
+    let image_directive = csp
+        .split(';')
+        .find(|part| part.trim_start().starts_with("img-src "))
+        .unwrap();
+    assert!(!image_directive.contains("http:"));
+    assert!(!image_directive.contains("https:"));
+    assert!(!image_directive.contains("data:"));
+}
+
+#[cfg(unix)]
+#[test]
+fn image_read_rejects_an_asset_file_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let saved = save_image_to(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+    )
+    .unwrap();
+    let asset = store
+        .paths
+        .note_dir(id(FORMAL_ID), NoteKind::Formal)
+        .unwrap()
+        .join(&saved.relative_path);
+    std::fs::remove_file(&asset).unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    symlink(outside.path(), &asset).unwrap();
+
+    assert!(read_image_asset_from(&store.paths, id(FORMAL_ID), &saved.relative_path).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "creating a file symlink requires Windows Developer Mode or elevation"]
+fn image_read_rejects_an_asset_file_reparse_escape() {
+    use std::os::windows::fs::symlink_file;
+
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let saved = save_image_to(
+        &store.paths,
+        input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
+    )
+    .unwrap();
+    let asset = store
+        .paths
+        .note_dir(id(FORMAL_ID), NoteKind::Formal)
+        .unwrap()
+        .join(&saved.relative_path);
+    std::fs::remove_file(&asset).unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    symlink_file(outside.path(), &asset).unwrap();
+
+    assert!(read_image_asset_from(&store.paths, id(FORMAL_ID), &saved.relative_path).is_err());
 }
 
 #[test]

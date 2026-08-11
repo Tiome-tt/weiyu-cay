@@ -286,7 +286,7 @@ export function FolderTree(props: FolderTreeProps) {
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => void dropFolder(event, null)}
           >
-            <span aria-hidden="true">⌂</span> 所有笔记
+            <span aria-hidden="true">⌂</span> 未归档笔记
           </button>
         </li>
         {props.onTemporaryInbox && (

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-complete-main-window-close"
+description = "Enables the complete_main_window_close command without any pre-configured scope."
+commands.allow = ["complete_main_window_close"]
+
+[[permission]]
+identifier = "deny-complete-main-window-close"
+description = "Denies the complete_main_window_close command without any pre-configured scope."
+commands.deny = ["complete_main_window_close"]

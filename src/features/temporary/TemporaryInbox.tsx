@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import type { AssetPort, TemporaryPort } from '../../domain/ports'
+import type { AssetPort, ImageReadPort, SystemPort, TemporaryPort, TemporaryWindowPort } from '../../domain/ports'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { ConvertDialog } from './ConvertDialog'
@@ -8,6 +8,9 @@ interface TemporaryInboxProps {
   temporary: TemporaryPort
   folders: Folder[]
   assets?: AssetPort
+  assetReader?: ImageReadPort
+  windows?: Pick<TemporaryWindowPort, 'show'>
+  external?: Pick<SystemPort, 'openExternal'>
   autosaveDelayMs?: number
 }
 
@@ -21,7 +24,7 @@ export interface TemporaryInboxHandle {
 type LoadState = 'loading' | 'ready' | 'error'
 
 export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxProps>(function TemporaryInbox(
-  { temporary, folders, assets, autosaveDelayMs },
+  { temporary, folders, assets, assetReader, windows, external, autosaveDelayMs },
   ref,
 ) {
   const [items, setItems] = useState<NoteDocument[]>([])
@@ -78,30 +81,45 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     })
   }
 
+  const acquireEditorBarrier = async (required: boolean) => {
+    const editor = required ? editorRef.current : null
+    if (editor === null) return () => undefined
+    await editor.beginEditBarrier()
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      editor.endEditBarrier()
+    }
+  }
+
   const openCapture = async (noteId: NoteId) => {
     if (busyRef.current !== null) return
     const request = ++documentRequestRef.current
-    if (activeId !== null && !(await editorRef.current?.flush() ?? true)) {
-      if (request === documentRequestRef.current) {
-        setError('当前临时捕捉无法保存。请重试保存后再切换。')
+    const release = await acquireEditorBarrier(activeId !== null)
+    try {
+      if (activeId !== null && !(await editorRef.current?.flush() ?? true)) {
+        if (request === documentRequestRef.current) {
+          setError('当前临时捕捉无法保存。请重试保存后再切换。')
+        }
+        return
       }
-      return
-    }
-    if (request !== documentRequestRef.current || busyRef.current !== null) return
-    setError(null)
-    setActiveId(noteId)
-    setDocument(null)
-    setDocumentState('loading')
-    temporary.load(noteId).then(
-      (loaded) => {
+      if (request !== documentRequestRef.current || busyRef.current !== null) return
+      setError(null)
+      setActiveId(noteId)
+      setDocument(null)
+      setDocumentState('loading')
+      try {
+        const loaded = await temporary.load(noteId)
         if (request !== documentRequestRef.current || loaded.id !== noteId || loaded.kind !== 'temporary') return
         setDocument(loaded)
         setDocumentState('ready')
-      },
-      () => {
+      } catch {
         if (request === documentRequestRef.current) setDocumentState('error')
-      },
-    )
+      }
+    } finally {
+      release()
+    }
   }
 
   const flushOpenSelection = async (ids: readonly NoteId[]) => {
@@ -140,6 +158,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     busyRef.current = 'delete'
     setBusy('delete')
     setError(null)
+    const release = await acquireEditorBarrier(activeId !== null && ids.includes(activeId))
     try {
       if (!(await flushOpenSelection(ids))) {
         setError('请先解决保存错误，再删除临时捕捉。')
@@ -153,6 +172,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     } catch {
       setError('无法删除临时捕捉。')
     } finally {
+      release()
       busyRef.current = null
       setBusy(null)
     }
@@ -164,6 +184,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     busyRef.current = 'convert'
     setBusy('convert')
     setError(null)
+    const release = await acquireEditorBarrier(activeId !== null && ids.includes(activeId))
     try {
       if (!(await flushOpenSelection(ids))) {
         setError('请先解决保存错误，再转换临时捕捉。')
@@ -177,6 +198,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     } catch {
       setError('无法转换临时捕捉。')
     } finally {
+      release()
       busyRef.current = null
       setBusy(null)
     }
@@ -237,6 +259,19 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                   <span>{preview(item.markdown)}</span>
                   <time dateTime={item.updatedAt}>{formatDate(item.updatedAt)}</time>
                 </button>
+                {windows && (
+                  <button
+                    type="button"
+                    aria-label={`重新显示 ${title}`}
+                    disabled={busy !== null}
+                    onClick={() => void windows.show(item.id).then(
+                      () => setError(null),
+                      () => setError('无法重新显示便签窗口。'),
+                    )}
+                  >
+                    显示便签
+                  </button>
+                )}
               </li>
             )
           })}
@@ -245,7 +280,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       <div className="temporary-inbox__editor" aria-label="临时捕捉编辑器">
         {documentState === 'loading' && <p className="content-placeholder">正在打开临时捕捉…</p>}
         {documentState === 'error' && <p role="alert" className="content-placeholder content-placeholder--error">无法打开临时捕捉。</p>}
-        {document && <EditorPane ref={editorRef} key={`${document.id}:${document.revision}`} document={document} notes={temporaryNotes} assets={assets} autosaveDelayMs={autosaveDelayMs} onDocumentAdopt={(authoritative) => {
+        {document && <EditorPane ref={editorRef} key={`${document.id}:${document.revision}`} document={document} notes={temporaryNotes} assets={assets} assetReader={assetReader} external={external} autosaveDelayMs={autosaveDelayMs} onDocumentAdopt={(authoritative) => {
           setDocument(authoritative)
           setItems((current) => current.map((item) => item.id === authoritative.id ? authoritative : item))
         }} />}

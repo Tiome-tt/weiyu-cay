@@ -4,6 +4,7 @@ import { EditorView } from '@codemirror/view'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
+import type { TemporaryWindowPort } from '../../domain/ports'
 import { fakeTemporaryPort, twoCaptures } from '../../test/fakes'
 import { deriveTemporaryPreviewTitle, TemporaryInbox } from './TemporaryInbox'
 
@@ -21,6 +22,18 @@ function deferred<T>() {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('TemporaryInbox', () => {
+  it('reopens a hidden sticky window from the main temporary inbox', async () => {
+    const captures = twoCaptures()
+    const windows = {
+      show: vi.fn().mockResolvedValue({ noteId: captures[0].id, visible: true, x: 0, y: 0, width: 360, height: 420, alwaysOnTop: true }),
+    } as Pick<TemporaryWindowPort, 'show'>
+    render(<TemporaryInbox temporary={fakeTemporaryPort(captures)} folders={folderRows} windows={windows} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: '重新显示 发布前检查' }))
+
+    expect(windows.show).toHaveBeenCalledWith(captures[0].id)
+  })
+
   it('uses the configured autosave delay for the active temporary draft', async () => {
     vi.useFakeTimers()
     const captures = twoCaptures()
@@ -257,8 +270,11 @@ describe('TemporaryInbox', () => {
     deleteButton.click()
     deleteButton.click()
 
-    expect(save).toHaveBeenCalledOnce()
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
     expect(remove).not.toHaveBeenCalled()
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' must not race' } }))
+    expect(editor.state.doc.toString()).toBe('pending durable edit')
     await act(async () => pendingSave.resolve({ ...capture, markdown: 'pending durable edit', revision: 1 }))
     await waitFor(() => expect(remove).toHaveBeenCalledOnce())
   })
@@ -305,8 +321,9 @@ describe('TemporaryInbox', () => {
     confirm.click()
     confirm.click()
 
-    expect(save).toHaveBeenCalledOnce()
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
     expect(convert).not.toHaveBeenCalled()
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
     await act(async () => pendingSave.resolve({ ...captures[0], markdown: 'pending conversion edit', revision: 2 }))
     await waitFor(() => expect(convert).toHaveBeenCalledOnce())
     expect(convert).toHaveBeenCalledWith({ ids: [captures[0].id], folderId: project })
@@ -348,6 +365,7 @@ describe('TemporaryInbox', () => {
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'durable A' } }))
     screen.getByRole('button', { name: /接口异常处理/ }).click()
     expect(load).not.toHaveBeenCalledWith(captures[1].id)
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
     await act(async () => pendingSave.resolve({ ...captures[0], markdown: 'durable A', revision: 2 }))
     await waitFor(() => expect(load).toHaveBeenCalledWith(captures[1].id))
     screen.getByRole('button', { name: /third capture/ }).click()

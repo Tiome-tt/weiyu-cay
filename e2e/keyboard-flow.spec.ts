@@ -1,7 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
 
-const targetId = '019c0000-0000-7000-8000-000000000702'
-
 async function tabTo(page: Page, target: Locator, limit = 120) {
   for (let index = 0; index < limit; index += 1) {
     if (await target.evaluate((element) => element === document.activeElement).catch(() => false)) return
@@ -18,13 +16,20 @@ async function activate(page: Page, target: Locator) {
 test('completes the primary application flow with keyboard input only', async ({ page }) => {
   test.setTimeout(90_000)
   await page.goto('/')
-  await tabTo(page, page.getByRole('treeitem', { name: '所有笔记' }))
+  await tabTo(page, page.getByRole('treeitem', { name: '未归档笔记' }))
   await page.keyboard.press('End')
   await page.keyboard.press('Enter')
   await activate(page, page.getByRole('button', { name: '新建笔记' }))
+  const newTitle = page.getByRole('textbox', { name: '新笔记标题' })
+  await tabTo(page, newTitle)
+  await page.keyboard.type('键盘流程')
+  await page.keyboard.press('Enter')
   const editor = page.getByRole('textbox', { name: 'Markdown source' })
   await tabTo(page, editor)
-  await page.keyboard.type(`# 键盘流程\n\n[[用户认证|${targetId}]]`)
+  await page.keyboard.type('# 键盘流程\n\n')
+  const linkTarget = page.getByRole('combobox', { name: '内部链接目标' })
+  await expect(linkTarget.locator('option:checked')).toHaveText('用户认证')
+  await activate(page, page.getByRole('button', { name: '插入内部链接' }))
   await expect(page.getByRole('status').filter({ hasText: '已保存' })).toBeVisible()
 
   const search = page.getByRole('searchbox', { name: '搜索笔记' })

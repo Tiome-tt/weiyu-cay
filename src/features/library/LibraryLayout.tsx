@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { EditorMode, NoteId } from '../../domain/model'
-import type { AssetPort, FolderPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TrashPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { SearchBox } from '../search/SearchBox'
@@ -14,10 +14,11 @@ interface LibraryLayoutProps {
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
-  assets?: AssetPort
+  assets?: AssetPort & ImageReadPort
   search?: SearchPort
   links?: LinkPort
   temporary?: TemporaryPort
+  temporaryWindows?: Pick<TemporaryWindowPort, 'show'>
   trash?: TrashPort
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
@@ -25,15 +26,17 @@ interface LibraryLayoutProps {
 
 export interface LibraryLayoutHandle {
   prepareStorageMove(): Promise<(() => void) | null>
+  prepareExit(): Promise<(() => void) | null>
   refreshAfterRecovery(): Promise<void>
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, trash, defaultEditorMode, autosaveDelayMs }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs }, ref) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState(false)
+  const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
   const [deletingNoteId, setDeletingNoteId] = useState<NoteId | null>(null)
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
@@ -62,6 +65,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       trashMutationRef.current += 1
     }
   }, [])
+
+  useEffect(() => setMetadataNotice(null), [library.activeNoteId])
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -115,12 +120,22 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     })
   }
 
-  const navigateAfterSave = async (navigate: () => void) => {
-    if (trashBusyRef.current === 'delete' || storageMoveLockedRef.current) return
+  const navigateAfterSave = async <Result,>(navigate: () => Result | Promise<Result>): Promise<Result | null> => {
+    if (trashBusyRef.current === 'delete' || storageMoveLockedRef.current) return null
     const request = ++navigationRequest.current
     const activeEditor = activeView === 'temporary' ? temporaryInboxRef.current : editorRef.current
-    const canNavigate = (await activeEditor?.flush()) ?? true
-    if (mountedRef.current && canNavigate && request === navigationRequest.current) navigate()
+    let barrierHeld = false
+    try {
+      if (activeEditor !== null) {
+        barrierHeld = true
+        await activeEditor.beginEditBarrier()
+      }
+      const canNavigate = (await activeEditor?.flush()) ?? true
+      if (mountedRef.current && canNavigate && request === navigationRequest.current) return await navigate()
+      return null
+    } finally {
+      if (barrierHeld) activeEditor?.endEditBarrier()
+    }
   }
 
   useImperativeHandle(ref, () => ({
@@ -130,7 +145,11 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         temporaryInboxRef.current?.refresh() ?? Promise.resolve(),
       ])
     },
-    prepareStorageMove: async () => {
+    prepareStorageMove: prepareEditorFlush,
+    prepareExit: prepareEditorFlush,
+  }), [library.refreshLibrary])
+
+  async function prepareEditorFlush(): Promise<(() => void) | null> {
       if (storageMoveLockedRef.current) return null
       storageMoveLockedRef.current = true
       const formal = editorRef.current
@@ -165,14 +184,14 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         releaseAll()
         return null
       }
-    },
-  }), [library.refreshLibrary])
+  }
 
   const deleteFormalNote = async (noteId: NoteId, title: string) => {
     if (!mountedRef.current || trash === undefined || trashBusyRef.current !== null) return
     const request = ++trashMutationRef.current
     navigationRequest.current += 1
     const editor = editorRef.current
+    const activeEditorExists = activeView === 'library' && editor !== null
     const deletingCurrentDocument = activeView === 'library' && library.activeNoteId === noteId && editor !== null
     let barrierHeld = false
     trashBusyRef.current = 'delete'
@@ -181,7 +200,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     setTrashError(null)
     setTrashFeedback(null)
     try {
-      if (deletingCurrentDocument) {
+      if (activeEditorExists) {
         barrierHeld = true
         await editor.beginEditBarrier()
       }
@@ -196,7 +215,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       if (!mountedRef.current || trashMutationRef.current !== request) return
       const deleted = result.trashed.includes(noteId)
       if (deleted) {
-        barrierHeld = false
+        if (deletingCurrentDocument) barrierHeld = false
         library.clearDeletedNote(noteId)
         setRecentTrashOperationId(result.operationId)
         setTrashFeedback(`“${title}”已移入回收站。`)
@@ -219,12 +238,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const createFormalNote = async () => {
+  const createFormalNote = async (title: string) => {
     if (createBusy) return
     setCreateBusy(true)
     setCreateError(false)
     try {
-      await library.createNote()
+      await navigateAfterSave(() => library.createNote(title))
     } catch {
       setCreateError(true)
     } finally {
@@ -260,7 +279,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
-      {search && <SearchBox search={search} onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))} />}
+      {search && <SearchBox search={search} onSelect={(noteId) => void navigateAfterSave(() => {
+        setActiveView('library')
+        library.selectNote(noteId)
+      })} />}
       <div className="library-collapse-controls" role="toolbar" aria-label="侧栏显示">
         <button
           type="button"
@@ -327,7 +349,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             activeId={library.activeNoteId}
             state={library.noteListState}
             onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
-            onCreate={() => void createFormalNote()}
+            onCreate={(title) => void createFormalNote(title)}
             creating={createBusy}
             createError={createError}
             onDelete={trash === undefined ? undefined : (noteId, title) => void deleteFormalNote(noteId, title)}
@@ -341,7 +363,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
-        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} autosaveDelayMs={autosaveDelayMs} />}
+        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} assetReader={assets} windows={temporaryWindows} external={system} autosaveDelayMs={autosaveDelayMs} />}
         {activeView === 'trash' && trash && (
           <TrashView
             trash={trash}
@@ -368,15 +390,35 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             document={library.document}
             notes={notes}
             assets={assets}
+            assetReader={assets}
             search={search}
             links={links}
             linkCache={linkCache}
-            onNavigateNote={(noteId) => navigateAfterSave(() => library.selectNote(noteId))}
+            onNavigateNote={async (noteId) => { await navigateAfterSave(() => library.selectNote(noteId)) }}
+            folders={library.folders}
+            onRenameNote={async (title) => {
+              const result = await navigateAfterSave(() => library.renameNote(library.document!.id, title))
+              if (result === null) throw new Error('rename was blocked by an unsaved editor')
+              setMetadataNotice(
+                result.linkRepair.failedSourceIds.length > 0
+                  ? `标题已更新；${result.linkRepair.failedSourceIds.length} 个引用标签将在重试时修复。`
+                  : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`,
+              )
+              return result
+            }}
+            onMoveNote={async (folderId) => {
+              const result = await navigateAfterSave(() => library.moveNote(library.document!.id, folderId))
+              if (result === null) throw new Error('move was blocked by an unsaved editor')
+              setMetadataNotice('笔记已移动。')
+              return result
+            }}
+            external={system}
             onDocumentAdopt={library.adoptDocument}
             initialMode={defaultEditorMode}
             autosaveDelayMs={autosaveDelayMs}
           />
         )}
+        {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
       </section>
       </SplitPane>
     </div>

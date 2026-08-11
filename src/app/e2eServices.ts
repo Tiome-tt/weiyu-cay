@@ -2,6 +2,8 @@ import type { AppServices } from './services'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../domain/model'
 import type { AppSettings, StartupRecoveryReport, TrashEntry, WindowPreferenceMap } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS } from '../features/settings/theme'
+import { parseInternalLinks } from '../features/editor/internalLinks'
+import { formatStoredLink } from '../domain/noteFormat'
 
 const STATE_KEY = 'simple-notes-e2e-state-v1'
 const CANDIDATE_KEY = 'simple-notes-e2e-interrupted-save'
@@ -57,7 +59,7 @@ function saveState(state: E2EState) {
   localStorage.setItem(STATE_KEY, JSON.stringify(state))
 }
 
-function titleFrom(markdown: string) {
+function temporaryTitleFrom(markdown: string) {
   const first = markdown.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) ?? '未命名笔记'
   return first.replace(/^#{1,6}\s+/u, '').slice(0, 80) || '未命名笔记'
 }
@@ -89,9 +91,9 @@ export function createE2EAppServices(): AppServices {
   const folders: Folder[] = [{ id: folderId, parentId: null, name: '项目', sortOrder: 0 }]
   const preferences = new Map<keyof WindowPreferenceMap, WindowPreferenceMap[keyof WindowPreferenceMap]>()
   const notes = {
-    async createNote(owner: FolderId | null) {
+    async createNote(input: { folderId: FolderId | null; title: string }) {
       const id = `019c0000-0000-7000-8000-${String(state.sequence++).padStart(12, '0')}` as NoteId
-      const created = document(id, 'formal', '未命名笔记', '', owner)
+      const created = document(id, 'formal', input.title.trim(), '', input.folderId)
       state.notes.push(created)
       saveState(state)
       return created
@@ -104,13 +106,48 @@ export function createE2EAppServices(): AppServices {
     async saveNote(input: NoteDocument) {
       const index = state.notes.findIndex((note) => note.id === input.id)
       if (index < 0) throw new Error('note not found')
-      const saved = { ...input, title: titleFrom(input.markdown), revision: state.notes[index].revision + 1 }
+      const saved = { ...input, revision: state.notes[index].revision + 1, updatedAt: new Date().toISOString() }
       state.notes[index] = saved
       saveState(state)
       return structuredClone(saved)
     },
     async listNotes(owner: FolderId | null) {
-      return state.notes.filter((note) => owner === null || note.folderId === owner).map(summary)
+      return state.notes.filter((note) => note.folderId === owner).map(summary)
+    },
+    async renameNote(id: NoteId, title: string) {
+      const index = state.notes.findIndex((note) => note.id === id)
+      if (index < 0) throw new Error('note not found')
+      const renamed = {
+        ...state.notes[index],
+        title: title.trim(),
+        revision: state.notes[index].revision + 1,
+        updatedAt: new Date().toISOString(),
+      }
+      state.notes[index] = renamed
+      let updated = 0
+      for (let sourceIndex = 0; sourceIndex < state.notes.length; sourceIndex += 1) {
+        const source = state.notes[sourceIndex]
+        const matching = parseInternalLinks(source.markdown).filter((link) => link.targetId === id && link.label !== renamed.title)
+        if (matching.length === 0) continue
+        let markdown = source.markdown
+        for (const link of matching.reverse()) {
+          markdown = `${markdown.slice(0, link.from)}${formatStoredLink(renamed.title, id)}${markdown.slice(link.to)}`
+        }
+        state.notes[sourceIndex] = { ...source, markdown, revision: source.revision + 1, updatedAt: new Date().toISOString() }
+        updated += 1
+      }
+      saveState(state)
+      const authoritative = state.notes.find((note) => note.id === id)
+      if (authoritative === undefined) throw new Error('renamed note disappeared')
+      return { document: structuredClone(authoritative), linkRepair: { updated, failedSourceIds: [] } }
+    },
+    async moveNote(id: NoteId, owner: FolderId | null) {
+      const index = state.notes.findIndex((note) => note.id === id)
+      if (index < 0) throw new Error('note not found')
+      const moved = { ...state.notes[index], folderId: owner, revision: state.notes[index].revision + 1, updatedAt: new Date().toISOString() }
+      state.notes[index] = moved
+      saveState(state)
+      return structuredClone(moved)
     },
   }
 
@@ -127,8 +164,12 @@ export function createE2EAppServices(): AppServices {
       async getWindowPreference(key) { return preferences.get(key) as never },
       async setWindowPreference(key, value) { preferences.set(key, value) },
       async hideTemporaryWindow() { return },
+      async openExternal() { return },
     },
-    assets: { async saveImage() { return { relativePath: 'assets/e2e.png', width: 1, height: 1 } } },
+    assets: {
+      async saveImage() { return { relativePath: 'assets/e2e.png', width: 1, height: 1 } },
+      async readImage() { return { mediaType: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) } },
+    },
     search: {
       async search(query) {
         if (query.kind === 'invalid') return []
@@ -148,6 +189,7 @@ export function createE2EAppServices(): AppServices {
       },
     },
     links: {
+      async listTargets() { return state.notes.filter((note) => note.kind === 'formal').map(summary) },
       async resolve(id) { return state.notes.find((note) => note.id === id) ? summary(state.notes.find((note) => note.id === id)!) : null },
       async backlinks() { return [] },
       async renameTargetLabels() { return { updated: 0, failedSourceIds: [] } },
@@ -174,7 +216,7 @@ export function createE2EAppServices(): AppServices {
           const index = state.temporary.findIndex((note) => note.id === id)
           if (index < 0) continue
           const [capture] = state.temporary.splice(index, 1)
-          state.notes.push({ ...capture, kind: 'formal', folderId: input.folderId, title: titleFrom(capture.markdown) })
+          state.notes.push({ ...capture, kind: 'formal', folderId: input.folderId, title: temporaryTitleFrom(capture.markdown) })
           converted.push({ temporaryId: id, noteId: id })
         }
         saveState(state)

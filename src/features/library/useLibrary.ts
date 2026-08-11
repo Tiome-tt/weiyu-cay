@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { FolderPort, NotePort } from '../../domain/ports'
 
-export type LibraryNotePort = Pick<NotePort, 'createNote' | 'listNotes' | 'loadNote' | 'saveNote'>
+export type LibraryNotePort = Pick<NotePort, 'createNote' | 'listNotes' | 'loadNote' | 'saveNote' | 'renameNote' | 'moveNote'>
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -109,15 +109,37 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     [foldersPort, refreshFolders],
   )
 
-  const createNote = useCallback(async () => {
+  const createNote = useCallback(async (title: string) => {
     const request = ++noteRequest.current
-    const created = await notesPort.createNote(activeFolderId)
+    const created = await notesPort.createNote({ folderId: activeFolderId, title })
     if (!mountedRef.current || noteRequest.current !== request) return
     setActiveNoteId(created.id)
     setDocument(created)
     setDocumentState('ready')
     await refreshNotes()
   }, [activeFolderId, notesPort, refreshNotes])
+
+  const renameNote = useCallback(async (id: NoteId, title: string) => {
+    const result = await notesPort.renameNote(id, title)
+    if (!mountedRef.current || result.document.id !== id) return result
+    if (activeNoteId === id) {
+      setDocument(result.document)
+      setDocumentState('ready')
+    }
+    await refreshNotes()
+    return result
+  }, [activeNoteId, notesPort, refreshNotes])
+
+  const moveNote = useCallback(async (id: NoteId, folderId: FolderId | null) => {
+    const authoritative = await notesPort.moveNote(id, folderId)
+    if (!mountedRef.current || authoritative.id !== id) return authoritative
+    if (activeNoteId === id) {
+      setDocument(authoritative)
+      setDocumentState('ready')
+    }
+    await refreshNotes()
+    return authoritative
+  }, [activeNoteId, notesPort, refreshNotes])
 
   const renameFolder = useCallback(
     async (id: FolderId, name: string) => {
@@ -179,6 +201,8 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     selectNote,
     createFolder,
     createNote,
+    renameNote,
+    moveNote,
     renameFolder,
     moveFolder,
     deleteFolder,

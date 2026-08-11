@@ -7,8 +7,8 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import type { EditorMode, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, LinkPort, NotePort, SearchPort } from '../../domain/ports'
+import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
+import type { AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, SearchPort, SystemPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
 import { Backlinks } from './Backlinks'
 import { MarkdownPreview } from './MarkdownPreview'
@@ -20,6 +20,7 @@ interface EditorPaneProps {
   document: NoteDocument
   notes: Pick<NotePort, 'saveNote' | 'loadNote'>
   assets?: AssetPort
+  assetReader?: ImageReadPort
   search?: SearchPort
   onDocumentAdopt?: (document: NoteDocument) => void
   autosaveDelayMs?: number
@@ -27,6 +28,10 @@ interface EditorPaneProps {
   links?: LinkPort
   linkCache?: ReadonlyMap<NoteId, NoteSummary>
   onNavigateNote?(noteId: NoteId): void | Promise<void>
+  folders?: Folder[]
+  onRenameNote?(title: string): Promise<RenameNoteResult>
+  onMoveNote?(folderId: FolderId | null): Promise<NoteDocument>
+  external?: Pick<SystemPort, 'openExternal'>
 }
 
 export interface EditorPaneHandle {
@@ -50,10 +55,15 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     document,
     notes,
     assets,
+    assetReader,
     search,
     links,
     linkCache,
     onNavigateNote,
+    folders,
+    onRenameNote,
+    onMoveNote,
+    external,
     onDocumentAdopt,
     autosaveDelayMs,
     initialMode = 'source',
@@ -64,6 +74,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
   const [imageError, setImageError] = useState<string | null>(null)
   const [tagTransactionActive, setTagTransactionActive] = useState(false)
+  const [titleDraft, setTitleDraft] = useState(document.title)
+  const [metadataBusy, setMetadataBusy] = useState(false)
+  const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
+  const [metadataError, setMetadataError] = useState<string | null>(null)
+  const [linkTargets, setLinkTargets] = useState<NoteSummary[]>([])
+  const [selectedLinkTarget, setSelectedLinkTarget] = useState<NoteId | ''>('')
+  const [linkActionError, setLinkActionError] = useState<string | null>(null)
   const previewRef = useRef<HTMLElement>(null)
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const sourceRef = useRef<MarkdownSourceHandle>(null)
@@ -72,6 +89,22 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const tagRequestRef = useRef(0)
 
   useEffect(() => setImageError(null), [document.id])
+  useEffect(() => setTitleDraft(document.title), [document.id, document.title])
+  useEffect(() => {
+    let current = true
+    setLinkTargets([])
+    setSelectedLinkTarget('')
+    if (links === undefined) return () => { current = false }
+    void links.listTargets().then(
+      (targets) => {
+        if (!current) return
+        setLinkTargets(targets)
+        setSelectedLinkTarget(targets[0]?.id ?? '')
+      },
+      () => { if (current) setLinkActionError('无法加载内部链接目标。') },
+    )
+    return () => { current = false }
+  }, [document.id, links])
   useEffect(() => {
     tagRequestRef.current += 1
     return () => {
@@ -105,6 +138,51 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       source?.endEditBarrier()
       setTagTransactionActive(false)
     }
+  }
+
+  const renameNote = async () => {
+    const title = titleDraft.trim()
+    if (onRenameNote === undefined || metadataBusy || title.length === 0 || title === document.title) return
+    setMetadataBusy(true)
+    setMetadataError(null)
+    setMetadataNotice(null)
+    try {
+      const result = await onRenameNote(title)
+      setTitleDraft(result.document.title)
+      setMetadataNotice(
+        result.linkRepair.failedSourceIds.length > 0
+          ? `标题已更新；${result.linkRepair.failedSourceIds.length} 个引用标签将在重试时修复。`
+          : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`,
+      )
+    } catch {
+      setMetadataError('无法重命名笔记，请解决保存错误后重试。')
+    } finally {
+      setMetadataBusy(false)
+    }
+  }
+
+  const moveNote = async (folderId: FolderId | null) => {
+    if (onMoveNote === undefined || metadataBusy || folderId === document.folderId) return
+    setMetadataBusy(true)
+    setMetadataError(null)
+    setMetadataNotice(null)
+    try {
+      await onMoveNote(folderId)
+      setMetadataNotice('笔记已移动。')
+    } catch {
+      setMetadataError('无法移动笔记，请解决保存错误后重试。')
+    } finally {
+      setMetadataBusy(false)
+    }
+  }
+
+  const applyLinkAction = (action: 'insert' | 'retarget') => {
+    const target = linkTargets.find((candidate) => candidate.id === selectedLinkTarget)
+    if (target === undefined) return
+    const applied = action === 'insert'
+      ? sourceRef.current?.insertInternalLink(target)
+      : sourceRef.current?.retargetInternalLink(target)
+    setLinkActionError(applied ? null : '请先把光标放在要重定向的内部链接上。')
   }
 
   const syncSourceToPreview = (scrollTop: number) => {
@@ -147,8 +225,52 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         <div className="editor-toolbar__title">
           <span className="library-pane__eyebrow">笔记</span>
           <h2>{document.title}</h2>
+          {onRenameNote && (
+            <form onSubmit={(event) => { event.preventDefault(); void renameNote() }}>
+              <label className="sr-only" htmlFor={`note-title-${document.id}`}>笔记标题</label>
+              <input
+                id={`note-title-${document.id}`}
+                aria-label="笔记标题"
+                value={titleDraft}
+                disabled={metadataBusy}
+                onChange={(event) => setTitleDraft(event.target.value)}
+              />
+            </form>
+          )}
         </div>
         <div className="editor-toolbar__actions">
+          {links && (
+            <div className="editor-link-actions" role="group" aria-label="内部链接">
+              <label>
+                <span className="sr-only">内部链接目标</span>
+                <select
+                  aria-label="内部链接目标"
+                  value={selectedLinkTarget}
+                  disabled={linkTargets.length === 0}
+                  onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
+                >
+                  {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
+                  {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+                </select>
+              </label>
+              <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('insert')}>插入内部链接</button>
+              <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('retarget')}>重定向内部链接</button>
+            </div>
+          )}
+          {folders && onMoveNote && (
+            <label>
+              <span className="sr-only">笔记文件夹</span>
+              <select
+                aria-label="笔记文件夹"
+                value={document.folderId ?? ''}
+                disabled={metadataBusy}
+                onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
+              >
+                <option value="">未归档笔记</option>
+                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+              </select>
+            </label>
+          )}
           {search && <TagsEditor tags={document.tags} onChange={updateTags} />}
           <SaveStatus state={autosave.state} />
           {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
@@ -167,6 +289,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           ))}
         </div>
       </header>
+      {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
+      {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
+      {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
       <div
         className={`editor-document editor-document--${mode}`}
         style={
@@ -224,6 +349,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             links={links}
             linkCache={linkCache}
             onNavigateLink={(noteId) => void onNavigateNote?.(noteId)}
+            noteId={document.id}
+            assetReader={assetReader}
+            external={external}
           />
         </div>
       </div>

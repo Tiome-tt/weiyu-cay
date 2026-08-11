@@ -55,16 +55,19 @@ describe('TauriClient', () => {
   it('maps stable link ports to the narrow Tauri command boundary', async () => {
     const target = '019c0000-0000-7000-8000-000000000002' as NoteId
     invokeMock
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce({ updated: 0, failedSourceIds: [] })
     const { links } = createTauriPorts()
 
+    await links.listTargets()
     await links.resolve(target)
     await links.backlinks(target)
     await links.renameTargetLabels(target, 'New title')
 
     expect(invokeMock.mock.calls).toEqual([
+      ['list_link_targets', undefined],
       ['resolve_link', { noteId: target }],
       ['backlinks', { noteId: target }],
       ['rename_target_labels', { noteId: target, title: 'New title' }],
@@ -92,14 +95,21 @@ describe('TauriClient', () => {
     ])
   })
 
-  it('sends the production new-note command its folder-only typed contract', async () => {
+  it('sends create, rename, and move through the production typed note contract', async () => {
     const folderId = '019c0000-0000-7000-8000-000000000001' as import('../../domain/model').FolderId
+    const noteId = '019c0000-0000-7000-8000-000000000002' as import('../../domain/model').NoteId
     invokeMock.mockResolvedValue({ id: '019c0000-0000-7000-8000-000000000002' })
     const { notes } = createTauriPorts()
 
-    await notes.createNote(folderId)
+    await notes.createNote({ folderId, title: '发布检查' })
+    await notes.renameNote(noteId, '上线检查')
+    await notes.moveNote(noteId, null)
 
-    expect(invokeMock).toHaveBeenCalledWith('create_note', { input: { folderId } })
+    expect(invokeMock.mock.calls).toEqual([
+      ['create_note', { input: { folderId, title: '发布检查' } }],
+      ['rename_note', { noteId, title: '上线检查' }],
+      ['move_note', { noteId, folderId: null }],
+    ])
   })
 
   it('loads sticky appearance through its least-privilege command', async () => {
@@ -149,6 +159,25 @@ describe('TauriClient', () => {
       ['check_for_update', undefined],
       ['install_pending_update', undefined],
       ['restart_after_update', undefined],
+    ])
+  })
+
+  it('maps preview reads and explicit external opens to privileged production commands', async () => {
+    const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
+    const relativePath = `assets/screenshot-${noteId}.png`
+    invokeMock.mockResolvedValueOnce({ mediaType: 'image/png', bytes: [137, 80, 78, 71] })
+      .mockResolvedValueOnce(undefined)
+    const { assets, system } = createTauriPorts()
+
+    await expect(assets.readImage({ noteId, relativePath })).resolves.toEqual({
+      mediaType: 'image/png',
+      bytes: new Uint8Array([137, 80, 78, 71]),
+    })
+    await system.openExternal('https://example.com/path')
+
+    expect(invokeMock.mock.calls).toEqual([
+      ['read_image_asset', { input: { noteId, relativePath } }],
+      ['open_external_link', { url: 'https://example.com/path' }],
     ])
   })
 })

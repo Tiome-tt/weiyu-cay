@@ -87,7 +87,7 @@ describe('FolderTree keyboard navigation', () => {
   it('uses roving focus with vertical and hierarchy-aware arrow navigation', async () => {
     const user = userEvent.setup()
     renderTree()
-    const root = screen.getByRole('treeitem', { name: '所有笔记' })
+    const root = screen.getByRole('treeitem', { name: '未归档笔记' })
     const project = screen.getByRole('treeitem', { name: '项目 A' })
     const child = screen.getByRole('treeitem', { name: '子项目' })
     const last = screen.getByRole('treeitem', { name: '项目 B' })

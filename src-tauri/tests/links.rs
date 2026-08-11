@@ -2,6 +2,7 @@ mod support;
 
 use rusqlite::{params, Connection};
 use simple_notes_lib::{
+    commands::notes::rename_note_in_storage,
     domain::{NoteDocument, NoteId, NoteKind},
     storage::{
         atomic_file::{atomic_replace_contained, PublishFailure, PublishResult},
@@ -65,6 +66,91 @@ fn save_indexes_only_exact_valid_links_with_byte_safe_unicode_ranges() {
         rows[1].0,
         blob(MISSING),
         "valid missing targets remain indexable and unresolved"
+    );
+}
+
+#[test]
+fn index_and_rename_touch_only_commonmark_prose_links() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Target",
+        "target",
+        "2026-07-30T08:00:00Z",
+    );
+    let raw = format!("[[Old|{TARGET}]]");
+    let markdown = format!(
+        "prose {raw}\ninline `{raw}` code\n\n    {raw}\n\n```md\n{raw}\n```\n\n[outer {raw}](https://example.invalid)\n![alt {raw}](assets/example.png)\n<span>{raw}</span>"
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "Source",
+        &markdown,
+        "2026-07-30T08:01:00Z",
+    );
+
+    let indexed: i64 = Connection::open(store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM note_links WHERE source_note_id=?1 AND target_note_id=?2",
+            params![blob(SOURCE_A), blob(TARGET)],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(indexed, 1);
+
+    let result = LinkRepository::new(store.paths.clone())
+        .rename_target_labels(note_id(TARGET), "New")
+        .unwrap();
+    assert_eq!(result.updated, 1);
+    let expected = markdown.replacen(&raw, &format!("[[New|{TARGET}]]"), 1);
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(note_id(SOURCE_A))
+            .unwrap()
+            .markdown,
+        expected
+    );
+}
+
+#[test]
+fn rename_note_returns_the_authoritative_revision_after_atomic_link_repair() {
+    let store = TestStore::new();
+    let self_link = format!("self [[Old|{TARGET}]]");
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Old",
+        &self_link,
+        "2026-07-30T08:00:00Z",
+    );
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "Source",
+        &format!("source [[Old|{TARGET}]]"),
+        "2026-07-30T08:01:00Z",
+    );
+
+    let result = rename_note_in_storage(&store.paths, note_id(TARGET), "New").unwrap();
+
+    assert_eq!(result.document.id, note_id(TARGET));
+    assert_eq!(result.document.title, "New");
+    assert_eq!(
+        result.document.revision, 2,
+        "title update plus self-link repair"
+    );
+    assert_eq!(result.document.markdown, format!("self [[New|{TARGET}]]"));
+    assert_eq!(result.link_repair.updated, 2);
+    assert!(result.link_repair.failed_source_ids.is_empty());
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(note_id(SOURCE_A))
+            .unwrap()
+            .markdown,
+        format!("source [[New|{TARGET}]]")
     );
 }
 

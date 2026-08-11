@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-image-asset"
+description = "Enables the read_image_asset command without any pre-configured scope."
+commands.allow = ["read_image_asset"]
+
+[[permission]]
+identifier = "deny-read-image-asset"
+description = "Denies the read_image_asset command without any pre-configured scope."
+commands.deny = ["read_image_asset"]

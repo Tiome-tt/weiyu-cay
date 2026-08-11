@@ -1,6 +1,6 @@
 use crate::{
     commands::storage::{StorageCommandState, StorageConsumer},
-    domain::{NoteKind, SaveImageInput, SavedImage},
+    domain::{NoteKind, ReadImageAsset, ReadImageAssetInput, SaveImageInput, SavedImage},
     error::CommandError,
     platform::{IndexMutationLock, NewFilePublishState, SafeDirectory},
     storage::{paths::StoragePaths, repository::NoteRepository},
@@ -48,6 +48,76 @@ pub fn save_image(
 ) -> Result<SavedImage, CommandError> {
     authorize_asset_caller(window.label(), input.note_id)?;
     save_image_to(state.paths_for(StorageConsumer::Assets)?, input)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn read_image_asset(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    input: ReadImageAssetInput,
+) -> Result<ReadImageAsset, CommandError> {
+    authorize_asset_caller(window.label(), input.note_id)?;
+    read_image_asset_from(
+        state.paths_for(StorageConsumer::Assets)?,
+        input.note_id,
+        &input.relative_path,
+    )
+}
+
+pub fn read_image_asset_from(
+    paths: &StoragePaths,
+    note_id: crate::domain::NoteId,
+    relative_path: &str,
+) -> Result<ReadImageAsset, CommandError> {
+    let (filename, media_type) = validate_owned_asset_label(relative_path)?;
+    let guard = IndexMutationLock::acquire(paths.root())?;
+    let owner = NoteRepository::new(paths.clone()).load_locked(note_id, &guard)?;
+    let collection = match owner.kind {
+        NoteKind::Formal => "notes",
+        NoteKind::Temporary => "temporary",
+    };
+    let note_id = note_id.to_string();
+    let directory = SafeDirectory::open(paths.root(), &[collection, &note_id, "assets"], false)?;
+    let bytes = directory.read(filename, MAX_IMAGE_BYTES as u64)?;
+    validate_image(media_type, &bytes)?;
+    Ok(ReadImageAsset {
+        media_type: media_type.to_owned(),
+        bytes,
+    })
+}
+
+fn validate_owned_asset_label(relative_path: &str) -> Result<(&str, &'static str), CommandError> {
+    let filename = relative_path
+        .strip_prefix("assets/")
+        .ok_or_else(|| CommandError::validation("image asset path must be note-relative"))?;
+    if filename.contains(['/', '\\']) {
+        return Err(CommandError::validation(
+            "image asset label must be one path segment",
+        ));
+    }
+    let (identity, extension) = filename
+        .strip_prefix("screenshot-")
+        .and_then(|value| value.rsplit_once('.'))
+        .ok_or_else(|| CommandError::validation("image asset label is not application-owned"))?;
+    let uuid = Uuid::parse_str(identity)
+        .map_err(|_| CommandError::validation("image asset identity is invalid"))?;
+    if uuid.get_version_num() != 7 || uuid.hyphenated().to_string() != identity {
+        return Err(CommandError::validation(
+            "image asset identity is not canonical UUIDv7",
+        ));
+    }
+    let media_type = match extension {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => {
+            return Err(CommandError::validation(
+                "image asset extension is unsupported",
+            ))
+        }
+    };
+    Ok((filename, media_type))
 }
 
 pub fn validate_image(media_type: &str, bytes: &[u8]) -> Result<ValidatedImage, CommandError> {

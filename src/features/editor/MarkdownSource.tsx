@@ -5,7 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } f
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { AssetPort, LinkPort } from '../../domain/ports'
 import { handleImagePaste, type ImagePasteResult } from './imagePaste'
-import { internalLinkExtension, refreshInternalLinkContext } from './internalLinks'
+import { insertInternalLink, internalLinkExtension, refreshInternalLinkContext, retargetInternalLink } from './internalLinks'
 
 const pasteTokenAnnotation = Annotation.define<symbol>()
 
@@ -26,6 +26,8 @@ interface MarkdownSourceProps {
 export interface MarkdownSourceHandle {
   beginEditBarrier(): Promise<void>
   endEditBarrier(): void
+  insertInternalLink(target: NoteSummary): boolean
+  retargetInternalLink(target: NoteSummary): boolean
 }
 
 interface PendingPaste {
@@ -155,6 +157,16 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       barrierDepthRef.current = Math.max(0, barrierDepthRef.current - 1)
       authorizedPasteTokensRef.current.clear()
       configureEditable(viewRef.current)
+    },
+    insertInternalLink: (target) => {
+      const view = viewRef.current
+      if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return false
+      return insertInternalLink(view, target)
+    },
+    retargetInternalLink: (target) => {
+      const view = viewRef.current
+      if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return false
+      return retargetInternalLink(view, target)
     },
   }))
 

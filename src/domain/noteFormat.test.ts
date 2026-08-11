@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import linkContract from '../shared/internal-link-contract.json'
 import { formatStoredLink, parseStoredLink } from './noteFormat'
 
 const noteId = '019c0000-0000-7000-8000-000000000002'
@@ -10,6 +11,19 @@ const invalidNoteIds = [
 ]
 
 describe('stored internal links', () => {
+  it('matches the shared TypeScript/Rust escaping contract', () => {
+    for (const vector of linkContract.valid) {
+      expect(formatStoredLink(vector.title, linkContract.noteId)).toBe(vector.stored)
+      expect(parseStoredLink(vector.stored)).toEqual({
+        title: vector.title,
+        noteId: linkContract.noteId,
+      })
+    }
+    for (const invalid of linkContract.invalid) {
+      expect(() => parseStoredLink(invalid)).toThrow('Invalid stored link')
+    }
+  })
+
   it('round-trips a Unicode title and immutable id', () => {
     expect(parseStoredLink(formatStoredLink('  用户认证  ', noteId))).toEqual({
       title: '用户认证',
@@ -17,7 +31,7 @@ describe('stored internal links', () => {
     })
   })
 
-  it.each(['', '   ', 'bad|label', 'bad]]label'])(
+  it.each(['', '   '])(
     'rejects the invalid link title %j',
     (title) => {
       expect(() => formatStoredLink(title, noteId)).toThrow('Invalid link title')

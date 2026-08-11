@@ -2,15 +2,15 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
 class TauriNotePort implements LibraryNotePort {
   constructor(private readonly client: TauriClient) {}
 
-  createNote(folderId: FolderId | null) {
-    return this.client.invoke<NoteDocument>('create_note', { input: { folderId } })
+  createNote(input: Parameters<LibraryNotePort['createNote']>[0]) {
+    return this.client.invoke<NoteDocument>('create_note', { input })
   }
 
   loadNote(noteId: NoteId) {
@@ -25,6 +25,17 @@ class TauriNotePort implements LibraryNotePort {
 
   listNotes(folderId: FolderId | null) {
     return this.client.invoke<NoteSummary[]>('list_notes', { folderId })
+  }
+
+  renameNote(noteId: NoteId, title: string) {
+    return this.client.invoke<Awaited<ReturnType<LibraryNotePort['renameNote']>>>('rename_note', {
+      noteId,
+      title,
+    })
+  }
+
+  moveNote(noteId: NoteId, folderId: FolderId | null) {
+    return this.client.invoke<NoteDocument>('move_note', { noteId, folderId })
   }
 }
 
@@ -53,6 +64,18 @@ class TauriUpdatePort implements UpdatePort {
 
   async restart() {
     await this.client.invoke<void>('restart_after_update')
+  }
+}
+
+class TauriAppLifecyclePort implements AppLifecyclePort {
+  constructor(private readonly client: TauriClient) {}
+
+  onCloseRequested(handler: () => void) {
+    return getCurrentWebviewWindow().listen('main-window-close-requested', handler)
+  }
+
+  async completeClose(saved: boolean) {
+    await this.client.invoke<void>('complete_main_window_close', { saved })
   }
 }
 
@@ -88,6 +111,11 @@ class TauriAssetPort implements AssetPort {
       input: { ...input, bytes: Array.from(input.bytes) },
     })
   }
+
+  async readImage(input: Parameters<ImageReadPort['readImage']>[0]) {
+    const result = await this.client.invoke<{ mediaType: string; bytes: number[] }>('read_image_asset', { input })
+    return { mediaType: result.mediaType, bytes: Uint8Array.from(result.bytes) }
+  }
 }
 
 class TauriExportPort implements ExportPort {
@@ -121,6 +149,10 @@ class TauriSearchPort implements SearchPort {
 
 class TauriLinkPort implements LinkPort {
   constructor(private readonly client: TauriClient) {}
+
+  listTargets() {
+    return this.client.invoke<NoteSummary[]>('list_link_targets')
+  }
 
   resolve(noteId: NoteId) {
     return this.client.invoke<NoteSummary | null>('resolve_link', { noteId })
@@ -156,6 +188,10 @@ class TauriSystemPort implements SystemPort {
 
   async hideTemporaryWindow(noteId: NoteId) {
     await this.client.invoke<void>('hide_temporary_window', { noteId })
+  }
+
+  async openExternal(url: string) {
+    await this.client.invoke<void>('open_external_link', { url })
   }
 }
 
@@ -298,7 +334,7 @@ export function createTauriPorts(): {
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
-  assets: AssetPort
+  assets: AssetPort & ImageReadPort
   search: SearchPort
   links: LinkPort
   temporary: TemporaryPort
@@ -310,6 +346,7 @@ export function createTauriPorts(): {
   exportDestinationPicker: ExportDestinationPicker
   recovery: RecoveryPort
   updater: UpdatePort
+  lifecycle: AppLifecyclePort
 } {
   const client = new TauriClient()
   return {
@@ -328,5 +365,6 @@ export function createTauriPorts(): {
     exportDestinationPicker: new TauriExportDestinationPicker(),
     recovery: new TauriRecoveryPort(client),
     updater: new TauriUpdatePort(client),
+    lifecycle: new TauriAppLifecyclePort(client),
   }
 }

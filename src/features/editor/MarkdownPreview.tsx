@@ -1,12 +1,12 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
-import type { LinkPort } from '../../domain/ports'
+import type { ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
 import {
   markdownWithPreviewLinks,
   resolutionClass,
   resolutionTitle,
 } from './internalLinks'
-import { renderMarkdown } from './markdownPipeline'
+import { renderPreviewMarkdown } from './markdownPipeline'
 
 interface MarkdownPreviewProps {
   markdown: string
@@ -14,17 +14,64 @@ interface MarkdownPreviewProps {
   links?: Pick<LinkPort, 'resolve'>
   linkCache?: ReadonlyMap<NoteId, NoteSummary>
   onNavigateLink?(noteId: NoteId): void
+  noteId?: NoteId
+  assetReader?: ImageReadPort
+  external?: Pick<SystemPort, 'openExternal'>
 }
 
 export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
-  function MarkdownPreview({ markdown, onScroll, links, linkCache, onNavigateLink }, ref) {
+  function MarkdownPreview({ markdown, onScroll, links, linkCache, onNavigateLink, noteId, assetReader, external }, ref) {
     const prepared = useMemo(() => {
       const identity = createPreviewIdentity()
       return { ...markdownWithPreviewLinks(markdown, identity), identity }
     }, [markdown])
-    const html = useMemo(() => renderMarkdown(prepared.markdown), [prepared.markdown])
+    const html = useMemo(() => renderPreviewMarkdown(prepared.markdown), [prepared.markdown])
     const [resolutions, setResolutions] = useState<ReadonlyMap<NoteId, NoteSummary | null>>(new Map())
+    const [assetState, setAssetState] = useState<{
+      html: string
+      urls: ReadonlyMap<string, string>
+    }>({ html: '', urls: new Map() })
+    const resolvedHtml = useMemo(() => {
+      const urls = assetState.html === html ? assetState.urls : new Map<string, string>()
+      return html.replace(
+        /(<img\b[^>]*data-simple-notes-asset="([^"]+)"[^>]*)(>)/gu,
+        (whole, prefix: string, relativePath: string, close: string) => {
+          const objectUrl = urls.get(relativePath)
+          return objectUrl === undefined ? whole : `${prefix} src="${objectUrl}"${close}`
+        },
+      )
+    }, [assetState, html])
     const articleRef = useRef<HTMLElement | null>(null)
+
+    useEffect(() => {
+      let current = true
+      const objectUrls: string[] = []
+      setAssetState({ html, urls: new Map() })
+      if (noteId !== undefined && assetReader !== undefined) {
+        const relativePaths = new Set(
+          Array.from(html.matchAll(/data-simple-notes-asset="([^"]+)"/gu), (match) => match[1]),
+        )
+        for (const relativePath of relativePaths) {
+          void assetReader.readImage({ noteId, relativePath }).then(
+            (loaded) => {
+              if (!current) return
+              try {
+                const objectUrl = URL.createObjectURL(new Blob([loaded.bytes.slice().buffer], { type: loaded.mediaType }))
+                objectUrls.push(objectUrl)
+                setAssetState((state) => state.html === html
+                  ? { html, urls: new Map(state.urls).set(relativePath, objectUrl) }
+                  : state)
+              } catch {}
+            },
+            () => undefined,
+          )
+        }
+      }
+      return () => {
+        current = false
+        for (const objectUrl of objectUrls) URL.revokeObjectURL(objectUrl)
+      }
+    }, [assetReader, html, noteId])
 
     useEffect(() => {
       let current = true
@@ -72,14 +119,19 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
         if (resolution === null) anchor.setAttribute('aria-disabled', 'true')
         else anchor.removeAttribute('aria-disabled')
       })
-    }, [html, prepared.links, resolutions])
+    }, [prepared.links, resolutions, resolvedHtml])
 
     const activate = (event: MouseEvent<HTMLElement>) => {
       const element = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a') : null
       const href = element?.getAttribute('href')
+      if (element !== null) event.preventDefault()
+      const externalUrl = element?.dataset.simpleNotesExternalLink
+      if (externalUrl !== undefined) {
+        void external?.openExternal(externalUrl)
+        return
+      }
       const match = href?.match(new RegExp(`^#simple-notes-internal-${prepared.identity}-(\\d+)$`))
       if (match === undefined || match === null) return
-      event.preventDefault()
       const link = prepared.links[Number(match[1])]
       if (link === undefined || !resolutions.get(link.targetId)) return
       onNavigateLink?.(link.targetId)
@@ -95,7 +147,7 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
         className="markdown-preview"
         onScroll={onScroll}
         onClick={activate}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: resolvedHtml }}
       />
     )
   },

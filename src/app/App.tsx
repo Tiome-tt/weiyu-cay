@@ -39,6 +39,8 @@ function MainApplication({ services }: { services: AppServices }) {
   )
   const exportController = useExportLibraryController(services.exporter, chooseExportDestination)
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
+  const [closeNotice, setCloseNotice] = useState<StatusNoticeState>({ status: 'idle' })
+  const closeBusy = useRef(false)
   const checkForUpdates = useCallback(async () => {
     if (services.updater === undefined || updateState.status === 'checking' || updateState.status === 'installing') return
     setUpdateState({ status: 'checking' })
@@ -62,9 +64,14 @@ function MainApplication({ services }: { services: AppServices }) {
   const restartAfterUpdate = useCallback(async () => {
     if (services.updater === undefined || updateState.status !== 'installed') return
     setUpdateState({ status: 'restarting', update: updateState.update })
+    let release: (() => void) | null = null
     try {
+      release = await libraryRef.current?.prepareExit() ?? null
+      if (release === null) throw new Error('editor flush failed')
       await services.updater.restart()
+      release = null
     } catch {
+      release?.()
       setUpdateState({ status: 'restart-error', update: updateState.update })
     }
   }, [services.updater, updateState])
@@ -148,13 +155,52 @@ function MainApplication({ services }: { services: AppServices }) {
       recoveryBusy.current = false
     }
   }, [services.recovery])
+  useEffect(() => {
+    const lifecycle = services.lifecycle
+    if (lifecycle === undefined) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    const close = async () => {
+      if (closeBusy.current) return
+      closeBusy.current = true
+      setCloseNotice({ status: 'status', message: '正在安全保存并退出…' })
+      let release: (() => void) | null = null
+      try {
+        release = await libraryRef.current?.prepareExit() ?? null
+        if (release === null) {
+          setCloseNotice({ status: 'error', message: '无法退出：请先解决保存错误，然后重试关闭。' })
+          await lifecycle.completeClose(false)
+          return
+        }
+        await lifecycle.completeClose(true)
+        release = null
+      } catch {
+        if (active) setCloseNotice({ status: 'error', message: '无法退出：保存确认失败，请重试关闭。' })
+        await lifecycle.completeClose(false).catch(() => undefined)
+      } finally {
+        release?.()
+        closeBusy.current = false
+      }
+    }
+    void lifecycle.onCloseRequested(() => void close()).then((stop) => {
+      if (!active) stop()
+      else unlisten = stop
+    }).catch(() => {
+      if (active) setCloseNotice({ status: 'error', message: '无法监听安全退出请求，请保存后重试。' })
+    })
+    return () => {
+      active = false
+      unlisten?.()
+    }
+  }, [services.lifecycle])
   return (
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
+      <StatusNotice state={closeNotice} className="startup-recovery-notice" />
       {services.updater !== undefined && <UpdateControls state={updateState} onCheck={() => void checkForUpdates()} onInstall={() => void installUpdate()} onRestart={() => void restartAfterUpdate()} />}
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
-        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
+        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
         {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} />}

@@ -4,7 +4,7 @@ use crate::{
     storage::{
         atomic_file::{PublishFailure, PublishResult, PublishState},
         database::Database,
-        markdown::plain_text_from_markdown,
+        markdown::{commonmark_prose_ranges, plain_text_from_markdown},
         paths::StoragePaths,
     },
 };
@@ -300,10 +300,49 @@ impl NoteRepository {
     ) -> Result<NoteDocument, CommandError> {
         let database = self.database()?;
         let mut document = self.load_locked(id, guard)?;
+        if document.kind != NoteKind::Formal {
+            return Err(CommandError::validation("only formal notes can be moved"));
+        }
         self.validate_folder_exists(&database, folder_id)?;
+        if document.folder_id == folder_id {
+            return Ok(document);
+        }
         let revision = document.revision;
         document.folder_id = folder_id;
+        document.updated_at = chrono::Utc::now().to_rfc3339();
         document.revision = revision
+            .checked_add(1)
+            .ok_or_else(|| CommandError::validation("note revision overflow"))?;
+        self.write_document(&document)?;
+        self.persist_after_content(&database, &document)?;
+        Ok(document)
+    }
+
+    pub fn rename_note(&self, id: NoteId, title: &str) -> Result<NoteDocument, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.rename_note_locked(id, title, &guard)
+    }
+
+    #[doc(hidden)]
+    pub fn rename_note_locked(
+        &self,
+        id: NoteId,
+        title: &str,
+        guard: &crate::platform::IndexMutationLock,
+    ) -> Result<NoteDocument, CommandError> {
+        let database = self.database()?;
+        let mut document = self.load_locked(id, guard)?;
+        if document.kind != NoteKind::Formal {
+            return Err(CommandError::validation("only formal notes can be renamed"));
+        }
+        let title = normalized_note_title(title)?;
+        if document.title == title {
+            return Ok(document);
+        }
+        document.title = title;
+        document.updated_at = chrono::Utc::now().to_rfc3339();
+        document.revision = document
+            .revision
             .checked_add(1)
             .ok_or_else(|| CommandError::validation("note revision overflow"))?;
         self.write_document(&document)?;
@@ -560,12 +599,23 @@ impl LinkRepository {
     ) -> Result<LinkRepairResult, CommandError> {
         validate_link_label(title)?;
         let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        self.rename_target_labels_locked(target_id, title, &guard)
+    }
+
+    #[doc(hidden)]
+    pub fn rename_target_labels_locked(
+        &self,
+        target_id: NoteId,
+        title: &str,
+        guard: &crate::platform::IndexMutationLock,
+    ) -> Result<LinkRepairResult, CommandError> {
+        let title = normalized_link_label(title)?;
         let notes = NoteRepository::new_with_writer(self.paths.clone(), self.writer);
         let (source_ids, mut failed_source_ids) =
-            self.durable_link_sources(&notes, target_id, &guard)?;
+            self.durable_link_sources(&notes, target_id, guard)?;
         let mut updated = 0;
         for source_id in source_ids {
-            let result = self.repair_source(&notes, source_id, target_id, title, &guard);
+            let result = self.repair_source(&notes, source_id, target_id, title, guard);
             match result {
                 Ok(true) => updated += 1,
                 Ok(false) => {}
@@ -866,14 +916,17 @@ pub(crate) fn persist_document_in_transaction(
 
 pub(crate) fn parse_links(markdown: &str) -> Vec<ParsedLink> {
     let mut links = Vec::new();
-    let mut cursor = 0;
-    while let Some(relative_start) = markdown[cursor..].find("[[") {
-        let start = cursor + relative_start;
-        if let Some(link) = parse_link_at(markdown, start) {
-            cursor = link.end;
-            links.push(link);
-        } else {
-            cursor = start + 2;
+    for prose in commonmark_prose_ranges(markdown) {
+        let mut cursor = prose.start;
+        while let Some(relative_start) = markdown[cursor..prose.end].find("[[") {
+            let start = cursor + relative_start;
+            if let Some(link) = parse_link_at(markdown, start).filter(|link| link.end <= prose.end)
+            {
+                cursor = link.end;
+                links.push(link);
+            } else {
+                cursor = start + 2;
+            }
         }
     }
     links
@@ -895,7 +948,7 @@ fn parse_link_at(markdown: &str, start: usize) -> Option<ParsedLink> {
                 position = escaped_start + escaped.len_utf8();
             }
             '|' => {
-                if label.is_empty() {
+                if label.trim().is_empty() || label.contains(['\r', '\n']) {
                     return None;
                 }
                 let target_start = position + 1;
@@ -920,12 +973,17 @@ fn parse_link_at(markdown: &str, start: usize) -> Option<ParsedLink> {
 }
 
 fn validate_link_label(label: &str) -> Result<(), CommandError> {
-    if label.is_empty() {
+    normalized_link_label(label).map(|_| ())
+}
+
+fn normalized_link_label(label: &str) -> Result<&str, CommandError> {
+    let label = label.trim();
+    if label.is_empty() || label.contains(['\r', '\n']) {
         return Err(CommandError::validation(
             "note title cannot be represented as an internal-link label",
         ));
     }
-    Ok(())
+    Ok(label)
 }
 
 fn rewrite_target_labels(markdown: &str, target_id: NoteId, title: &str) -> (String, bool) {
@@ -980,9 +1038,7 @@ pub(crate) fn note_id_from_blob(bytes: &[u8]) -> Result<NoteId, CommandError> {
 }
 
 fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
-    if document.title.trim().is_empty() {
-        return Err(CommandError::validation("note title is empty"));
-    }
+    normalized_note_title(&document.title)?;
     let aggregate = [
         document.title.len(),
         document.markdown.len(),
@@ -1004,6 +1060,19 @@ fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
     })?;
     normalized_tags(&document.tags)?;
     Ok(())
+}
+
+pub(crate) fn normalized_note_title(title: &str) -> Result<String, CommandError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(CommandError::validation("note title is empty"));
+    }
+    if title.contains(['\r', '\n']) || title.chars().any(char::is_control) {
+        return Err(CommandError::validation(
+            "note title contains a control character",
+        ));
+    }
+    Ok(title.to_owned())
 }
 
 pub(crate) fn normalized_tags(tags: &[String]) -> Result<Vec<(String, String)>, CommandError> {
@@ -1098,4 +1167,52 @@ fn kind_database(kind: NoteKind) -> &'static str {
 
 fn database_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> CommandError {
     move |source| CommandError::database(format!("{context}: {source}"))
+}
+
+#[cfg(test)]
+mod internal_link_contract_tests {
+    use super::{escape_link_label, parse_link_at};
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Contract {
+        note_id: String,
+        valid: Vec<ValidVector>,
+        invalid: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct ValidVector {
+        title: String,
+        stored: String,
+    }
+
+    #[test]
+    fn rust_matches_shared_internal_link_contract() {
+        let contract: Contract = serde_json::from_str(include_str!(
+            "../../../src/shared/internal-link-contract.json"
+        ))
+        .expect("shared internal-link contract must be valid JSON");
+
+        for vector in contract.valid {
+            assert_eq!(
+                format!(
+                    "[[{}|{}]]",
+                    escape_link_label(&vector.title),
+                    contract.note_id
+                ),
+                vector.stored
+            );
+            let parsed = parse_link_at(&vector.stored, 0).expect("valid contract link must parse");
+            assert_eq!(parsed.label, vector.title);
+            assert_eq!(parsed.end, vector.stored.len());
+        }
+        for invalid in contract.invalid {
+            assert!(
+                parse_link_at(&invalid, 0).is_none(),
+                "invalid contract link parsed: {invalid}"
+            );
+        }
+    }
 }

@@ -1794,11 +1794,11 @@ fn sticky_capability_is_separate_and_minimal() {
         default["permissions"],
         serde_json::json!([
             "core:default",
-            "opener:default",
             "allow-create-note",
             "allow-load-note",
             "allow-save-note",
             "allow-list-notes",
+            "allow-rename-note",
             "allow-move-note",
             "allow-trash-notes",
             "allow-list-trash",
@@ -1806,9 +1806,12 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-undo-trash",
             "allow-purge-expired-trash",
             "allow-resolve-link",
+            "allow-list-link-targets",
             "allow-backlinks",
             "allow-rename-target-labels",
             "allow-save-image",
+            "allow-read-image-asset",
+            "allow-open-external-link",
             "allow-list-folders",
             "allow-create-folder",
             "allow-rename-folder",
@@ -1836,6 +1839,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-restart-after-update",
             "allow-move-storage-root",
             "allow-restart-application",
+            "allow-complete-main-window-close",
             "allow-export-library"
         ])
     );

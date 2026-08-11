@@ -11,7 +11,11 @@ import {
 } from '@codemirror/view'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { LinkPort } from '../../domain/ports'
-import { isCanonicalUuidV7 } from '../../domain/ids'
+import {
+  formatStoredLink,
+  parseStoredLink,
+} from '../../domain/noteFormat'
+import { commonmarkProseRanges } from './markdownPipeline'
 
 export interface InternalLinkRange {
   from: number
@@ -27,49 +31,41 @@ export interface InternalLinkExtensionOptions {
 }
 
 type Resolution = NoteSummary | null | undefined
-const escapableLabelCharacters = new Set(['\\', '|', '[', ']'])
+
+export { escapeInternalLinkLabel } from '../../domain/noteFormat'
 
 export const refreshInternalLinkContext = StateEffect.define<void>()
 
 export function parseInternalLinks(markdown: string): InternalLinkRange[] {
   const links: InternalLinkRange[] = []
-  let cursor = 0
-  while (cursor < markdown.length) {
-    const from = markdown.indexOf('[[', cursor)
-    if (from < 0) break
-    const candidate = scanInternalLinkCandidate(markdown, from)
-    if (candidate.kind === 'unterminated') break
-    if (candidate.kind === 'nested') {
-      cursor = candidate.from
-      continue
-    }
-    const to = candidate.close + 2
-    if (candidate.separators.length === 1) {
-      const separator = candidate.separators[0]
-      const label = unescapeInternalLinkLabel(markdown.slice(from + 2, separator))
-      const target = markdown.slice(separator + 1, candidate.close)
-      if (
-        label !== null &&
-        isCanonicalUuidV7(target)
-      ) {
-        links.push({ from, to, label, targetId: target as NoteId })
+  for (const range of commonmarkProseRanges(markdown)) {
+    let cursor = range.from
+    while (cursor < range.to) {
+      const from = markdown.indexOf('[[', cursor)
+      if (from < 0 || from >= range.to) break
+      const candidate = scanInternalLinkCandidate(markdown, from)
+      if (candidate.kind === 'unterminated') break
+      if (candidate.kind === 'nested') {
+        cursor = candidate.from
+        continue
       }
+      const to = candidate.close + 2
+      if (to <= range.to && candidate.separators.length === 1) {
+        try {
+          const parsed = parseStoredLink(markdown.slice(from, to))
+          links.push({ from, to, label: parsed.title, targetId: parsed.noteId })
+        } catch {
+          // Malformed application syntax remains ordinary, untouched Markdown.
+        }
+      }
+      cursor = to
     }
-    cursor = to
   }
   return links
 }
 
 export function serializeInternalLink(target: NoteSummary): string {
-  return `[[${escapeInternalLinkLabel(target.title)}|${target.id}]]`
-}
-
-export function escapeInternalLinkLabel(label: string): string {
-  let escaped = ''
-  for (const character of label) {
-    escaped += escapableLabelCharacters.has(character) ? `\\${character}` : character
-  }
-  return escaped
+  return formatStoredLink(target.title, target.id)
 }
 
 export function displayInternalLinks(markdown: string): string {
@@ -183,7 +179,22 @@ export function insertInternalLink(view: EditorView, target: NoteSummary): boole
   view.dispatch({
     changes: { from: selection.from, to: selection.to, insert },
     selection: EditorSelection.cursor(selection.from + insert.length),
-    scrollIntoView: true,
+  })
+  return true
+}
+
+export function retargetInternalLink(view: EditorView, target: NoteSummary): boolean {
+  const selection = view.state.selection.main
+  const link = parseInternalLinks(view.state.doc.toString()).find((candidate) =>
+    selection.empty
+      ? selection.head >= candidate.from && selection.head <= candidate.to
+      : selection.from <= candidate.to && selection.to >= candidate.from,
+  )
+  if (link === undefined) return false
+  const replacement = serializeInternalLink(target)
+  view.dispatch({
+    changes: { from: link.from, to: link.to, insert: replacement },
+    selection: EditorSelection.cursor(link.from + replacement.length),
   })
   return true
 }
@@ -302,22 +313,4 @@ function scanInternalLinkCandidate(markdown: string, from: number):
     index += 1
   }
   return { kind: 'unterminated' }
-}
-
-function unescapeInternalLinkLabel(raw: string): string | null {
-  if (raw.length === 0) return null
-  let label = ''
-  for (let index = 0; index < raw.length; index += 1) {
-    const character = raw[index]
-    if (character === '\\') {
-      const escaped = raw[index + 1]
-      if (escaped === undefined || !escapableLabelCharacters.has(escaped)) return null
-      label += escaped
-      index += 1
-      continue
-    }
-    if (escapableLabelCharacters.has(character)) return null
-    label += character
-  }
-  return label.length > 0 ? label : null
 }

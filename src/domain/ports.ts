@@ -6,11 +6,17 @@ export type SearchQuery =
   | { kind: 'invalid'; reason: 'empty-tag' | 'control-character' | 'too-long' }
 
 export interface NotePort {
-  createNote(folderId: FolderId | null): Promise<NoteDocument>
+  createNote(input: { folderId: FolderId | null; title: string }): Promise<NoteDocument>
   loadNote(id: NoteId): Promise<NoteDocument>
   saveNote(document: NoteDocument): Promise<NoteDocument>
   listNotes(folderId: FolderId | null): Promise<NoteSummary[]>
-  moveNote(id: NoteId, folderId: FolderId | null): Promise<void>
+  renameNote(id: NoteId, title: string): Promise<RenameNoteResult>
+  moveNote(id: NoteId, folderId: FolderId | null): Promise<NoteDocument>
+}
+
+export interface RenameNoteResult {
+  document: NoteDocument
+  linkRepair: { updated: number; failedSourceIds: NoteId[] }
 }
 
 export interface FolderPort {
@@ -27,6 +33,13 @@ export interface AssetPort {
     mediaType: string
     bytes: Uint8Array
   }): Promise<{ relativePath: string; width: number; height: number }>
+}
+
+export interface ImageReadPort {
+  readImage(input: {
+    noteId: NoteId
+    relativePath: string
+  }): Promise<{ mediaType: string; bytes: Uint8Array }>
 }
 
 export interface ExportReport {
@@ -74,6 +87,12 @@ export interface UpdatePort {
   restart(): Promise<void>
 }
 
+/** Native main-window close requests stay prevented until the renderer acknowledges a flush. */
+export interface AppLifecyclePort {
+  onCloseRequested(handler: () => void): Promise<() => void>
+  completeClose(saved: boolean): Promise<void>
+}
+
 export interface SearchResult {
   noteId: NoteId
   title: string
@@ -89,6 +108,7 @@ export interface SearchPort {
 }
 
 export interface LinkPort {
+  listTargets(): Promise<NoteSummary[]>
   resolve(noteId: NoteId): Promise<NoteSummary | null>
   backlinks(noteId: NoteId): Promise<NoteSummary[]>
   renameTargetLabels(
@@ -106,6 +126,7 @@ export interface SystemPort {
     value: WindowPreferenceMap[Key],
   ): Promise<void>
   hideTemporaryWindow(noteId: NoteId): Promise<void>
+  openExternal(url: string): Promise<void>
 }
 
 export interface TemporaryWindowState {

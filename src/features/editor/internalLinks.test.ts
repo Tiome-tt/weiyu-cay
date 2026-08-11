@@ -37,6 +37,7 @@ function summary(id: NoteId, title: string): NoteSummary {
 
 function linkPort(overrides: Partial<LinkPort> = {}): LinkPort {
   return {
+    listTargets: vi.fn().mockResolvedValue([]),
     resolve: vi.fn().mockResolvedValue(null),
     backlinks: vi.fn().mockResolvedValue([]),
     renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [] }),
@@ -120,6 +121,28 @@ describe('persisted internal link helpers', () => {
 
     expect(parseInternalLinks(markdown)).toEqual([
       expect.objectContaining({ label: 'plain label', targetId }),
+    ])
+  })
+
+  it('recognizes links only in CommonMark prose and never inside literal or unsupported constructs', () => {
+    const raw = `[[Target|${targetId}]]`
+    const markdown = [
+      `prose ${raw}`,
+      `inline \`${raw}\` code`,
+      '',
+      `    ${raw}`,
+      '',
+      '```md',
+      raw,
+      '```',
+      '',
+      `[outer ${raw}](https://example.invalid)`,
+      `![alt ${raw}](assets/example.png)`,
+      `<span>${raw}</span>`,
+    ].join('\n')
+
+    expect(parseInternalLinks(markdown)).toEqual([
+      expect.objectContaining({ label: 'Target', targetId }),
     ])
   })
 
@@ -400,6 +423,38 @@ describe('CodeMirror internal link extension', () => {
 })
 
 describe('internal links in preview', () => {
+  it('loads only owned local images and opens external links through explicit ports', async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71])
+    const readImage = vi.fn().mockResolvedValue({ mediaType: 'image/png', bytes })
+    const openExternal = vi.fn().mockResolvedValue(undefined)
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:owned-image')
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    render(createElement(MarkdownPreview, {
+      noteId: targetId,
+      markdown: `![Owned](assets/screenshot-${targetId}.png) ![Remote](https://tracking.invalid/pixel.png)\n\n[Website](https://example.com) [Relative](../outside.md)`,
+      assetReader: { readImage },
+      external: { openExternal },
+    }))
+
+    const owned = screen.getByRole('img', { name: 'Owned' })
+    const remote = screen.getByRole('img', { name: 'Remote' })
+    expect(owned).not.toHaveAttribute('src')
+    expect(remote).not.toHaveAttribute('src')
+    await waitFor(() => expect(readImage).toHaveBeenCalledOnce())
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('img', { name: 'Owned' })).toHaveAttribute('src', 'blob:owned-image'))
+    expect(readImage).toHaveBeenCalledWith({ noteId: targetId, relativePath: `assets/screenshot-${targetId}.png` })
+    expect(readImage).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByRole('link', { name: 'Website' }))
+    expect(openExternal).toHaveBeenCalledWith('https://example.com')
+    await userEvent.click(screen.getByText('Relative'))
+    expect(openExternal).toHaveBeenCalledTimes(1)
+    cleanup()
+    expect(createObjectURL).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:owned-image')
+  })
+
   it('shows only the visible label, sanitizes HTML, and activates resolved targets', async () => {
     const navigate = vi.fn()
     render(createElement(MarkdownPreview, {

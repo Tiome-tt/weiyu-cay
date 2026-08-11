@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteId } from '../../domain/model'
-import { fakeAssetPort, fakeNotePort, fakeSearchPort, note, pngBytes } from '../../test/fakes'
+import { fakeAssetPort, fakeLinkPort, fakeNotePort, fakeSearchPort, note, pngBytes } from '../../test/fakes'
 import { EditorPane } from './EditorPane'
 
 afterEach(cleanup)
@@ -20,6 +20,34 @@ function view() {
 }
 
 describe('EditorPane', () => {
+  it('inserts and retargets escaped stable links through keyboard-reachable controls', async () => {
+    const first = {
+      ...note(''),
+      id: '019c0000-0000-7000-8000-000000000081' as NoteId,
+      title: 'A|B[1]',
+      excerpt: '',
+    }
+    const second = {
+      ...note(''),
+      id: '019c0000-0000-7000-8000-000000000082' as NoteId,
+      title: 'Second',
+      excerpt: '',
+    }
+    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([first, second]) })
+    const user = userEvent.setup()
+    render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} linkCache={new Map()} />)
+
+    const target = await screen.findByRole('combobox', { name: '内部链接目标' })
+    await user.selectOptions(target, first.id)
+    await user.click(screen.getByRole('button', { name: '插入内部链接' }))
+    expect(view().state.doc.toString()).toBe(`[[A\\|B\\[1\\]|${first.id}]]`)
+
+    await user.selectOptions(target, second.id)
+    await user.click(screen.getByRole('button', { name: '重定向内部链接' }))
+    expect(view().state.doc.toString()).toBe(`[[Second|${second.id}]]`)
+    expect(screen.getByRole('link', { name: '[[Second]]' })).toBeVisible()
+  })
+
   it('starts in the configured default editor view', () => {
     render(<EditorPane document={note('# Preview')} notes={fakeNotePort()} initialMode="preview" autosaveDelayMs={10_000} />)
     expect(screen.getByRole('button', { name: '预览视图' })).toHaveAttribute('aria-pressed', 'true')

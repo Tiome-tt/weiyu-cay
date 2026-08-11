@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { SystemPort, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
-import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
+import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
 import { createRef } from 'react'
 import type { LibraryLayoutHandle } from './LibraryLayout'
@@ -59,7 +59,7 @@ afterEach(() => {
 
 describe('LibraryLayout', () => {
   it('creates a note in the active folder and opens the authoritative document', async () => {
-    const created = { ...note(''), id: noteC, title: '未命名笔记', folderId: folderA }
+    const created = { ...note(''), id: noteC, title: '发布检查', folderId: folderA }
     const notes = fakeNotePort({
       createNote: vi.fn().mockResolvedValue(created),
       listNotes: vi.fn().mockResolvedValue([]),
@@ -69,9 +69,72 @@ describe('LibraryLayout', () => {
 
     await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
     await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    await user.type(screen.getByRole('textbox', { name: '新笔记标题' }), '发布检查{Enter}')
 
-    expect(notes.createNote).toHaveBeenCalledWith(folderA)
-    expect(await screen.findByRole('heading', { name: '未命名笔记' })).toBeVisible()
+    expect(notes.createNote).toHaveBeenCalledWith({ folderId: folderA, title: '发布检查' })
+    expect(await screen.findByRole('heading', { name: '发布检查' })).toBeVisible()
+  })
+
+  it('linearizes new-note creation behind the active editor flush barrier', async () => {
+    const pendingSave = deferred<NoteDocument>()
+    const created = { ...note(''), id: noteC, title: 'Draft title' }
+    const notes = fakeNotePort({
+      createNote: vi.fn().mockResolvedValue(created),
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('old body'), id: noteA, title: 'Note A' }),
+      saveNote: vi.fn(() => pendingSave.promise),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'pending draft' } }))
+
+    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    await user.type(screen.getByRole('textbox', { name: '新笔记标题' }), 'Draft title{Enter}')
+
+    await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
+    expect(notes.createNote).not.toHaveBeenCalled()
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' must not race' } }))
+    expect(editor.state.doc.toString()).toBe('pending draft')
+
+    await act(async () => pendingSave.resolve({ ...note('pending draft'), id: noteA, title: 'Note A', revision: 2 }))
+    await waitFor(() => expect(notes.createNote).toHaveBeenCalledOnce())
+    expect(await screen.findByRole('heading', { name: 'Draft title' })).toBeVisible()
+  })
+
+  it('renames and moves a formal note through the authoritative production port', async () => {
+    let current = { ...note('body'), id: noteA, title: 'Note A', folderId: folderA }
+    const listNotes = vi.fn(async (folderId: FolderId | null) =>
+      folderId === null || folderId === current.folderId ? [summary(current.id, current.title, current.folderId)] : [],
+    )
+    const notes = fakeNotePort({
+      listNotes,
+      loadNote: vi.fn(async () => current),
+      renameNote: vi.fn(async (_id, title) => {
+        current = { ...current, title, revision: current.revision + 1, updatedAt: '2026-08-11T10:00:00Z' }
+        return { document: current, linkRepair: { updated: 2, failedSourceIds: [] } }
+      }),
+      moveNote: vi.fn(async (_id, folderId) => {
+        current = { ...current, folderId, revision: current.revision + 1, updatedAt: '2026-08-11T10:01:00Z' }
+        return current
+      }),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const title = screen.getByRole('textbox', { name: '笔记标题' })
+    await user.clear(title)
+    await user.type(title, 'Renamed note{Enter}')
+
+    expect(notes.renameNote).toHaveBeenCalledWith(noteA, 'Renamed note')
+    expect(await screen.findByRole('heading', { name: 'Renamed note' })).toBeVisible()
+    await user.selectOptions(screen.getByRole('combobox', { name: '笔记文件夹' }), folderB)
+    expect(notes.moveNote).toHaveBeenCalledWith(noteA, folderB)
+    expect(await screen.findByText('笔记已移动。', { selector: '[role="status"]' })).toBeVisible()
   })
 
   it('restores and persists keyboard-accessible collapsed columns without losing proportions', async () => {
@@ -253,6 +316,36 @@ describe('LibraryLayout', () => {
     expect(editor.state.doc.toString()).toBe('durable before delete editable again')
   })
 
+  it('holds the shared editor barrier while deleting a different listed note', async () => {
+    const pendingTrash = deferred<Awaited<ReturnType<TrashPort['trash']>>>()
+    const documents = new Map<NoteId, NoteDocument>([
+      [noteA, { ...note('A body'), id: noteA, title: 'Note A' }],
+      [noteB, { ...note('B body'), id: noteB, title: 'Note B' }],
+    ])
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A'), summary(noteB, 'Note B')]),
+      loadNote: vi.fn(async (id) => documents.get(id)!),
+    })
+    const trash: TrashPort = {
+      trash: vi.fn(() => pendingTrash.promise),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} trash={trash} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const textbox = await screen.findByRole('textbox', { name: 'Markdown source' })
+    await user.click(screen.getByRole('button', { name: '删除 Note B' }))
+    await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteB]))
+
+    expect(textbox).toHaveAttribute('contenteditable', 'false')
+    await act(async () => pendingTrash.resolve({ operationId: 'delete-op', trashed: [noteB], failed: [] }))
+    await waitFor(() => expect(textbox).toHaveAttribute('contenteditable', 'true'))
+  })
+
   it('keeps the deletion barrier through success and never schedules a late save', async () => {
     const pendingTrash = deferred<Awaited<ReturnType<TrashPort['trash']>>>()
     const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))
@@ -372,6 +465,31 @@ describe('LibraryLayout', () => {
     expect(await screen.findByRole('region', { name: '临时收集箱' })).toBeVisible()
     expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
     expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
+  })
+
+  it('returns to the library when a search result is selected from the temporary inbox', async () => {
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Search target')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('body'), id: noteA, title: 'Search target' }),
+    })
+    const search = fakeSearchPort({
+      search: vi.fn().mockResolvedValue([{
+        noteId: noteA,
+        title: 'Search target',
+        folderBreadcrumb: [],
+        tags: [],
+        excerpt: 'body',
+        score: 1,
+      }]),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={fakeTemporaryPort(twoCaptures())} search={search} />)
+    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
+    await user.type(screen.getByRole('searchbox', { name: '搜索笔记' }), 'target')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    await user.click(await screen.findByRole('button', { name: /Search target/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Search target' })).toBeVisible()
   })
 
   it('restores valid saved column proportions against the measured container width', async () => {
@@ -861,7 +979,7 @@ describe('LibraryLayout', () => {
 
     await waitFor(() => {
       const labels = screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())
-      expect(labels).toEqual(['⌂ 所有笔记', '▱ 项目 C', '▱ 项目 B', '▱ 项目 A'])
+      expect(labels).toEqual(['⌂ 未归档笔记', '▱ 项目 C', '▱ 项目 B', '▱ 项目 A'])
     })
   })
 
@@ -888,7 +1006,7 @@ describe('LibraryLayout', () => {
     await waitFor(() => {
       const items = screen.getAllByRole('treeitem')
       const labels = items.map((item) => item.textContent?.trim())
-      expect(labels).toEqual(['⌂ 所有笔记', '▱ 项目 C', '▱ 项目 A'])
+      expect(labels).toEqual(['⌂ 未归档笔记', '▱ 项目 C', '▱ 项目 A'])
       expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
     })
   })

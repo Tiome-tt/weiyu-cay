@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod export;
+pub mod external;
 pub mod folders;
 pub mod notes;
 pub mod search;

@@ -37,6 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            app.manage(windows::main::MainWindowCloseCoordinator::default());
             commands::settings::setup(app)?;
             commands::updates::setup(app);
             let readiness = storage::recovery::StartupRecoveryReadiness::new();
@@ -66,6 +67,7 @@ pub fn run() {
             commands::notes::load_note,
             commands::notes::save_note,
             commands::notes::list_notes,
+            commands::notes::rename_note,
             commands::notes::move_note,
             commands::notes::trash_notes,
             commands::notes::list_trash,
@@ -73,9 +75,12 @@ pub fn run() {
             commands::notes::undo_trash,
             commands::notes::purge_expired_trash,
             commands::notes::resolve_link,
+            commands::notes::list_link_targets,
             commands::notes::backlinks,
             commands::notes::rename_target_labels,
             commands::assets::save_image,
+            commands::assets::read_image_asset,
+            commands::external::open_external_link,
             commands::folders::list_folders,
             commands::folders::create_folder,
             commands::folders::rename_folder,
@@ -108,21 +113,46 @@ pub fn run() {
             commands::settings::move_storage_root,
             commands::settings::restart_application,
             commands::export::export_library,
+            windows::main::complete_main_window_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
     app.run(|app_handle, event| {
+        let coordinator = app_handle.state::<windows::main::MainWindowCloseCoordinator>();
         let lifecycle = match event {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == windows::main::MAIN_WINDOW_LABEL => {
+                match windows::main::request_renderer_flush(app_handle, &coordinator) {
+                    windows::main::CloseRequestDecision::AllowExit => {}
+                    windows::main::CloseRequestDecision::RequestFlush
+                    | windows::main::CloseRequestDecision::WaitForFlush => api.prevent_close(),
+                }
+                None
+            }
+            tauri::RunEvent::ExitRequested { code, api, .. }
+                if code != Some(tauri::RESTART_EXIT_CODE) =>
+            {
+                match windows::main::request_renderer_flush(app_handle, &coordinator) {
+                    windows::main::CloseRequestDecision::AllowExit => {
+                        Some(windows::sticky::AppLifecycleEvent::ExitRequested)
+                    }
+                    windows::main::CloseRequestDecision::RequestFlush
+                    | windows::main::CloseRequestDecision::WaitForFlush => {
+                        api.prevent_exit();
+                        None
+                    }
+                }
+            }
             tauri::RunEvent::ExitRequested { .. } => {
                 Some(windows::sticky::AppLifecycleEvent::ExitRequested)
             }
             tauri::RunEvent::Exit => Some(windows::sticky::AppLifecycleEvent::Exit),
             _ => None,
         };
-        if matches!(
-            event,
-            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-        ) {
+        if lifecycle.is_some() {
             if let Some(state) = app_handle.try_state::<commands::shortcuts::CaptureShortcutState>()
             {
                 state.shutdown();

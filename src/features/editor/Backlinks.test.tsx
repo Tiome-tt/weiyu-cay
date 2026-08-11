@@ -25,6 +25,7 @@ function summary(id: NoteId, title: string): NoteSummary {
 
 function port(backlinks: LinkPort['backlinks']): LinkPort {
   return {
+    listTargets: vi.fn().mockResolvedValue([]),
     resolve: vi.fn().mockResolvedValue(null),
     backlinks,
     renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [] }),

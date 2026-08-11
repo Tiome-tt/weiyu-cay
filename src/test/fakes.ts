@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../domain/model'
-import type { AssetPort, FolderPort, LinkPort, NotePort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, SystemPort, TemporaryPort } from '../domain/ports'
+import type { AssetPort, FolderPort, ImageReadPort, LinkPort, NotePort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, SystemPort, TemporaryPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS } from '../features/settings/theme'
 
 export const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
@@ -27,7 +27,8 @@ export const fakeNotePort = (overrides: Partial<NotePort> = {}): NotePort => ({
   loadNote: vi.fn().mockResolvedValue(note()),
   saveNote: vi.fn().mockResolvedValue(note()),
   listNotes: vi.fn().mockResolvedValue([]),
-  moveNote: vi.fn().mockResolvedValue(undefined),
+  renameNote: vi.fn().mockResolvedValue({ document: note(), linkRepair: { updated: 0, failedSourceIds: [] } }),
+  moveNote: vi.fn().mockResolvedValue(note()),
   ...overrides,
 })
 
@@ -42,12 +43,16 @@ export const fakeFolderPort = (overrides: Partial<FolderPort> = {}): FolderPort 
 
 export const fakeAssetPort = (
   saved: Awaited<ReturnType<AssetPort['saveImage']>>,
-): AssetPort => ({ saveImage: vi.fn().mockResolvedValue(saved) })
+): AssetPort & ImageReadPort => ({
+  saveImage: vi.fn().mockResolvedValue(saved),
+  readImage: vi.fn().mockRejectedValue(new Error('asset is not configured for this test')),
+})
 
 export const fakeSystemPort = (overrides: Partial<SystemPort> = {}): SystemPort => ({
   getWindowPreference: vi.fn().mockResolvedValue(undefined),
   setWindowPreference: vi.fn().mockResolvedValue(undefined),
   hideTemporaryWindow: vi.fn().mockResolvedValue(undefined),
+  openExternal: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 })
 
@@ -78,6 +83,7 @@ export const fakeSearchPort = (overrides: Partial<SearchPort> = {}): SearchPort 
 })
 
 export const fakeLinkPort = (overrides: Partial<LinkPort> = {}): LinkPort => ({
+  listTargets: vi.fn().mockResolvedValue([]),
   resolve: vi.fn().mockResolvedValue(null),
   backlinks: vi.fn().mockResolvedValue([]),
   renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [] }),

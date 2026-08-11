@@ -2,12 +2,13 @@ use crate::{
     commands::storage::{StorageCommandState, StorageConsumer},
     domain::{
         FolderId, LinkRepairResult, NoteDocument, NoteId, NoteSummary, PurgeTrashResult,
-        RestoreTrashResult, TrashBatchResult, TrashEntry,
+        RenameNoteResult, RestoreTrashResult, TrashBatchResult, TrashEntry,
     },
     error::CommandError,
     storage::{
         database::Database,
-        repository::{LinkRepository, NoteRepository},
+        paths::StoragePaths,
+        repository::{normalized_note_title, LinkRepository, NoteRepository},
         trash::TrashService,
     },
     windows::sticky::{authorize_temporary_caller, TemporaryCommandOperation},
@@ -26,6 +27,7 @@ pub struct SaveNoteInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateNoteInput {
     pub folder_id: Option<FolderId>,
+    pub title: String,
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -61,7 +63,7 @@ pub fn create_note(
         NoteDocument {
             id: NoteId::now_v7(),
             kind: crate::domain::NoteKind::Formal,
-            title: "未命名笔记".to_owned(),
+            title: normalized_note_title(&input.title)?,
             folder_id: input.folder_id,
             tags: Vec::new(),
             markdown: String::new(),
@@ -71,6 +73,37 @@ pub fn create_note(
         },
         &guard,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn rename_note(
+    state: State<'_, StorageCommandState>,
+    note_id: NoteId,
+    title: String,
+) -> Result<RenameNoteResult, CommandError> {
+    rename_note_in_storage(state.paths_for(StorageConsumer::Notes)?, note_id, &title)
+}
+
+#[doc(hidden)]
+pub fn rename_note_in_storage(
+    paths: &StoragePaths,
+    note_id: NoteId,
+    title: &str,
+) -> Result<RenameNoteResult, CommandError> {
+    let guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
+    let notes = NoteRepository::new(paths.clone());
+    let document = notes.rename_note_locked(note_id, title, &guard)?;
+    let link_repair = LinkRepository::new(paths.clone()).rename_target_labels_locked(
+        note_id,
+        &document.title,
+        &guard,
+    )?;
+    // A self-link repair can publish one more revision after the title update.
+    let document = notes.load_locked(note_id, &guard)?;
+    Ok(RenameNoteResult {
+        document,
+        link_repair,
+    })
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -176,6 +209,17 @@ pub fn backlinks(
     note_id: NoteId,
 ) -> Result<Vec<NoteSummary>, CommandError> {
     LinkRepository::new(state.paths_for(StorageConsumer::Links)?.clone()).backlinks(note_id)
+}
+
+#[tauri::command]
+pub fn list_link_targets(
+    state: State<'_, StorageCommandState>,
+) -> Result<Vec<NoteSummary>, CommandError> {
+    Ok(repository(&state)?
+        .list()?
+        .into_iter()
+        .filter(|note| note.kind == crate::domain::NoteKind::Formal)
+        .collect())
 }
 
 #[tauri::command(rename_all = "camelCase")]

@@ -1,4 +1,5 @@
-use pulldown_cmark::{Event, Options, Parser, TagEnd};
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use std::ops::Range;
 use unicode_normalization::UnicodeNormalization;
 
 /// Extracts searchable visible text without changing the durable Markdown source.
@@ -51,6 +52,85 @@ pub fn plain_text_from_markdown(markdown: &str) -> String {
         }
     }
     visible.trim().nfkc().collect()
+}
+
+/// Returns byte ranges where application-specific link syntax is ordinary
+/// CommonMark prose. Consumers can edit only these ranges without interpreting
+/// code, standard links/images, metadata, or raw HTML as application syntax.
+pub fn commonmark_prose_ranges(markdown: &str) -> Vec<Range<usize>> {
+    let options = Options::ENABLE_GFM
+        | Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS;
+    let mut exclusions = Vec::new();
+    let mut text_ranges = Vec::new();
+    let mut html_lines = Vec::new();
+
+    for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
+        match event {
+            Event::Start(tag) => {
+                let inherited = exclusions.last().copied().unwrap_or(false);
+                exclusions.push(inherited || excludes_application_syntax(&tag));
+            }
+            Event::End(_) => {
+                exclusions.pop();
+            }
+            Event::Text(_) if !exclusions.last().copied().unwrap_or(false) => {
+                text_ranges.push(range);
+            }
+            Event::Html(_) | Event::InlineHtml(_) => {
+                html_lines.push(expand_to_lines(markdown, range));
+            }
+            _ => {}
+        }
+    }
+
+    merge_prose_ranges(markdown, text_ranges)
+        .into_iter()
+        .filter(|text| !html_lines.iter().any(|html| ranges_overlap(text, html)))
+        .collect()
+}
+
+fn merge_prose_ranges(markdown: &str, ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let Some(previous) = merged.last_mut() {
+            let application_escape_gap = markdown.get(previous.end..range.start) == Some("\\")
+                && markdown[range.start..].starts_with(['\\', '|', '[', ']']);
+            if previous.end == range.start || application_escape_gap {
+                previous.end = range.end;
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+    merged
+}
+
+fn excludes_application_syntax(tag: &Tag<'_>) -> bool {
+    matches!(
+        tag,
+        Tag::CodeBlock(_)
+            | Tag::HtmlBlock
+            | Tag::Link { .. }
+            | Tag::Image { .. }
+            | Tag::MetadataBlock(_)
+    )
+}
+
+fn expand_to_lines(markdown: &str, range: Range<usize>) -> Range<usize> {
+    let start = markdown[..range.start]
+        .rfind('\n')
+        .map_or(0, |position| position + 1);
+    let end = markdown[range.end..]
+        .find('\n')
+        .map_or(markdown.len(), |position| range.end + position + 1);
+    start..end
+}
+
+fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && left.end > right.start
 }
 
 fn strip_frontmatter(markdown: &str) -> &str {
