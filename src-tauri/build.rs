@@ -34,6 +34,9 @@ fn main() {
             "set_temporary_always_on_top",
             "get_capture_shortcut",
             "rebind_capture_shortcut",
+            "check_for_update",
+            "install_pending_update",
+            "restart_after_update",
             "export_library",
         ]),
     ))

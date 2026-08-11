@@ -17,14 +17,18 @@ pub fn setup(app: &mut tauri::App) {
     app.manage(UpdateCommandState(Mutex::new(None)));
 }
 
-fn authorize_main(window: &WebviewWindow) -> Result<(), CommandError> {
-    if window.label() == "main" {
+pub fn authorize_main_window_label(label: &str) -> Result<(), CommandError> {
+    if label == "main" {
         Ok(())
     } else {
         Err(CommandError::validation(
             "updates are available only from the main application window",
         ))
     }
+}
+
+fn authorize_main(window: &WebviewWindow) -> Result<(), CommandError> {
+    authorize_main_window_label(window.label())
 }
 
 fn updater_error(action: &str, error: impl std::fmt::Display) -> CommandError {

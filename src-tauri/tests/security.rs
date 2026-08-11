@@ -114,6 +114,70 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
 }
 
 #[test]
+fn updater_commands_are_main_only_and_plugin_ipc_is_not_granted_to_any_renderer() {
+    let main: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let desktop: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/desktop.json")).unwrap();
+    let sticky: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/temporary.json")).unwrap();
+    let permissions = |document: &serde_json::Value| {
+        document["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let main_permissions = permissions(&main);
+    let desktop_permissions = permissions(&desktop);
+    let sticky_permissions = permissions(&sticky);
+
+    for command in [
+        "allow-check-for-update",
+        "allow-install-pending-update",
+        "allow-restart-after-update",
+    ] {
+        assert!(main_permissions.contains(command));
+        assert!(!desktop_permissions.contains(command));
+        assert!(!sticky_permissions.contains(command));
+    }
+    for plugin_permission in [
+        "updater:default",
+        "updater:allow-check",
+        "updater:allow-download",
+        "updater:allow-install",
+        "updater:allow-download-and-install",
+    ] {
+        assert!(!main_permissions.contains(plugin_permission));
+        assert!(!desktop_permissions.contains(plugin_permission));
+        assert!(!sticky_permissions.contains(plugin_permission));
+    }
+
+    let manifest = include_str!("../build.rs");
+    for command in [
+        "check_for_update",
+        "install_pending_update",
+        "restart_after_update",
+    ] {
+        assert!(manifest.contains(&format!("\"{command}\",")));
+    }
+}
+
+#[test]
+fn update_command_authorization_accepts_only_the_main_window_label() {
+    assert!(simple_notes_lib::commands::updates::authorize_main_window_label("main").is_ok());
+    for unprivileged_label in ["temporary-ipc-test", "desktop", "main-clone"] {
+        assert_eq!(
+            simple_notes_lib::commands::updates::authorize_main_window_label(unprivileged_label)
+                .unwrap_err()
+                .code(),
+            CommandErrorCode::Validation,
+        );
+    }
+}
+
+#[test]
 fn validates_png_jpeg_gif_and_webp_with_canonical_extensions_and_dimensions() {
     for (media_type, format, extension) in [
         ("image/png", ImageFormat::Png, "png"),

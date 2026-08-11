@@ -6,15 +6,18 @@ Complete this checklist for every signed prerelease and stable version tag. Reco
 
 - [ ] The tag is an annotated, GitHub-verified signature and exactly matches `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` (for example, `v0.1.0`).
 - [ ] Repository secrets contain the release-owner updater public key, matching Tauri updater private key and password, Windows PFX and password, plus Apple certificate, identity, Apple ID, app-specific password, and team ID. The workflow derives the Windows thumbprint from the imported PFX and cryptographically verifies a newly signed updater probe with the public key.
+- [ ] Configure the non-secret `RELEASE_STAGING_ENDPOINT` repository variable as an owner-controlled HTTPS origin. It must serve immutable, versioned staged files and no credentials; the updater signatures, private keys, and release credentials never go there.
 - [ ] The release workflow created signed installers, updater signatures, `latest.json`, and `SHA256SUMS`; verify the checksums and record all filenames and SHA256 values in the release notes.
 - [ ] Confirm `latest.json` has matching URL and signature entries for `windows-x86_64`, `darwin-aarch64`, and `darwin-x86_64`. Each updater URL must name an uploaded asset and its metadata signature must equal that asset's `.sig` file.
 - [ ] Never add a placeholder updater key or endpoint to `src-tauri/tauri.conf.json`. The checked-in config is intentionally fail-closed; only the signed release workflow materializes the release-owner public key into a temporary config.
 
-## Release channels
+## Draft staging, smoke, and publication
 
-- [ ] A stable tag (no prerelease suffix) builds with GitHub's stable endpoint, `releases/latest/download/latest.json`, and remains a draft until the owner completes the platform checks below and publishes it.
-- [ ] An RC tag (for example `v0.1.1-rc.1`) builds with the tag-specific endpoint, `releases/download/v0.1.1-rc.1/latest.json`. After the workflow's full CI, signed-artifact, metadata, signature, and checksum gates pass, it is published as a GitHub prerelease so installed RC clients can test that endpoint without querying stable `latest`.
-- [ ] Test an RC only against its tag-specific endpoint. Do not publish a stable release or point an RC build at `releases/latest` to make the test convenient.
+- [ ] The workflow leaves both stable and RC releases as GitHub drafts. It never automatically publishes an un-smoked candidate. GitHub draft assets are not a client updater channel.
+- [ ] After automated gates, the release owner downloads the exact signed draft updater bundles and `.sig` files with authenticated GitHub tooling, validates `SHA256SUMS`, and mirrors only those bytes to `<RELEASE_STAGING_ENDPOINT>/<tag>/`. Create the staged `latest.json` from the draft metadata, replacing only each platform URL with the matching mirrored HTTPS asset URL; retain the original version and signatures.
+- [ ] Install and update-test against `<RELEASE_STAGING_ENDPOINT>/<tag>/latest.json`. The application includes this version-specific staging endpoint first and its public GitHub endpoint second. Do not put tokens, draft GitHub URLs, or signing material in the staging manifest.
+- [ ] Before public promotion, remove the staged `latest.json` or make that path return **404**. Tauri proceeds from a failed endpoint to the GitHub fallback; a staged 204 response or same-version manifest would stop fallback and strand future stable update checks.
+- [ ] Complete every platform checkbox below using these exact staged artifacts. Only then manually publish the same GitHub draft: an RC as a prerelease using its tag-specific endpoint, or a stable release so GitHub's `releases/latest/download/latest.json` points to it. Record the publisher, time, and staged artifact checksums in release notes.
 
 ## Windows release candidate
 
