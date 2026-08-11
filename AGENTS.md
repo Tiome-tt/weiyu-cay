@@ -79,9 +79,12 @@ After the application is scaffolded, keep these root scripts working and update 
 - Lint: `pnpm lint`
 - Type-check: `pnpm typecheck`
 - Run TypeScript tests: `pnpm test`
+- Generate the deterministic search fixture: `pnpm fixture:search --count 10000 --seed 20260730`
 - Run Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`
 - Build the UI: `pnpm build`
 - Build the desktop app: `pnpm tauri build`
+
+The checked-in Tauri configuration is intentionally fail-closed for updater artifacts: it contains no updater endpoint or public key and does not create updater artifacts. The signed tag release workflow validates release-owner secrets, writes updater-only JSON beneath the runner temporary directory, and supplies it with Tauri's `--config` build argument without rewriting the checked-out configuration. Never replace this with a placeholder key or endpoint.
 
 Do not claim a command passes unless it was run in the current worktree. If scaffolding has not created a command yet, state that clearly instead of inventing output.
 
