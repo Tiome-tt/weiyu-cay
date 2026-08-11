@@ -133,4 +133,22 @@ describe('TauriClient', () => {
     expect(invokeMock).toHaveBeenCalledWith('export_library', { destination: 'D:\\Portable Notes' })
     expect(received).toEqual(report)
   })
+
+  it('maps the explicit updater lifecycle to the main-only Tauri commands', async () => {
+    invokeMock
+      .mockResolvedValueOnce({ version: '0.1.1', notes: 'Security fixes' })
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+    const { updater } = createTauriPorts()
+
+    await expect(updater.check()).resolves.toEqual({ version: '0.1.1', notes: 'Security fixes' })
+    await updater.install()
+    await updater.restart()
+
+    expect(invokeMock.mock.calls).toEqual([
+      ['check_for_update', undefined],
+      ['install_pending_update', undefined],
+      ['restart_after_update', undefined],
+    ])
+  })
 })

@@ -29,6 +29,47 @@ describe('App', () => {
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
   })
 
+  it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
+    const user = userEvent.setup()
+    const check = vi.fn().mockResolvedValue({ version: '0.1.1', notes: 'Security fixes' })
+    const install = vi.fn().mockRejectedValue(new Error('signature verification failed'))
+    const restart = vi.fn()
+    const services = {
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      updater: { check, install, restart },
+    }
+    render(<App services={services} />)
+
+    expect(check).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
+    expect(check).toHaveBeenCalledOnce()
+    expect(await screen.findByText('Version 0.1.1 is ready to install.')).toBeVisible()
+    expect(install).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Download and install version 0.1.1' }))
+    expect(install).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Update installation failed. Your notes are unchanged.')
+  })
+
+  it('keeps an installed update recoverable when explicit restart fails', async () => {
+    const user = userEvent.setup()
+    const restart = vi.fn().mockRejectedValue(new Error('restart denied'))
+    const services = {
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
+    }
+    render(<App services={services} />)
+
+    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await user.click(await screen.findByRole('button', { name: 'Download and install version 0.1.1' }))
+    await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
+
+    expect(restart).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Update installed, but restart failed. Restart Simple Notes manually.')
+  })
+
   it('announces the actual startup recovery report in the main application', async () => {
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),

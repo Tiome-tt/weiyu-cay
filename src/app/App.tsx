@@ -4,7 +4,7 @@ import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/Lib
 import { createAppServices, type AppServices } from './services'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../domain/model'
-import type { StartupRecoveryReport, StickySettings, TemporaryWindowState } from '../domain/ports'
+import type { StartupRecoveryReport, StickySettings, TemporaryWindowState, UpdatePort } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
 import { StickyWindow } from '../features/temporary/StickyWindow'
 import type { AppSettings } from '../domain/ports'
@@ -38,6 +38,36 @@ function MainApplication({ services }: { services: AppServices }) {
     [services.exportDestinationPicker],
   )
   const exportController = useExportLibraryController(services.exporter, chooseExportDestination)
+  const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
+  const checkForUpdates = useCallback(async () => {
+    if (services.updater === undefined || updateState.status === 'checking' || updateState.status === 'installing') return
+    setUpdateState({ status: 'checking' })
+    try {
+      const available = await services.updater.check()
+      setUpdateState(available === null ? { status: 'none' } : { status: 'available', update: available })
+    } catch {
+      setUpdateState({ status: 'check-error' })
+    }
+  }, [services.updater, updateState.status])
+  const installUpdate = useCallback(async () => {
+    if (services.updater === undefined || updateState.status !== 'available') return
+    setUpdateState({ status: 'installing', update: updateState.update })
+    try {
+      await services.updater.install()
+      setUpdateState({ status: 'installed', update: updateState.update })
+    } catch {
+      setUpdateState({ status: 'install-error', update: updateState.update })
+    }
+  }, [services.updater, updateState])
+  const restartAfterUpdate = useCallback(async () => {
+    if (services.updater === undefined || updateState.status !== 'installed') return
+    setUpdateState({ status: 'restarting', update: updateState.update })
+    try {
+      await services.updater.restart()
+    } catch {
+      setUpdateState({ status: 'restart-error', update: updateState.update })
+    }
+  }, [services.updater, updateState])
   const loadSettings = useCallback(async () => {
     if (services.settings === undefined) return
     const revision = settingsRevision.current
@@ -122,6 +152,7 @@ function MainApplication({ services }: { services: AppServices }) {
     <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
+      {services.updater !== undefined && <UpdateControls state={updateState} onCheck={() => void checkForUpdates()} onInstall={() => void installUpdate()} onRestart={() => void restartAfterUpdate()} />}
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
         {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
@@ -129,6 +160,26 @@ function MainApplication({ services }: { services: AppServices }) {
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} />}
     </main>
   )
+}
+
+type UpdateState =
+  | { status: 'idle' | 'checking' | 'none' | 'check-error' }
+  | { status: 'available' | 'installing' | 'installed' | 'install-error' | 'restarting' | 'restart-error'; update: Awaited<ReturnType<UpdatePort['check']>> & {} }
+
+function UpdateControls({ state, onCheck, onInstall, onRestart }: { state: UpdateState; onCheck(): void; onInstall(): void; onRestart(): void }) {
+  const update = 'update' in state ? state.update : null
+  return <section className="update-controls" aria-label="Application updates">
+    <button type="button" onClick={onCheck} disabled={state.status === 'checking' || state.status === 'installing' || state.status === 'restarting'}>Check for updates</button>
+    {state.status === 'checking' && <p role="status">Checking for updates…</p>}
+    {state.status === 'none' && <p role="status">Simple Notes is up to date.</p>}
+    {state.status === 'check-error' && <p role="alert">Could not check for updates. Your notes are unchanged.</p>}
+    {state.status === 'available' && update !== null && <><p role="status">Version {update.version} is ready to install.</p><button type="button" onClick={onInstall}>Download and install version {update.version}</button></>}
+    {state.status === 'installing' && <p role="status">Downloading and verifying update…</p>}
+    {state.status === 'install-error' && <p role="alert">Update installation failed. Your notes are unchanged.</p>}
+    {state.status === 'installed' && <><p role="status">Update installed. Restart to finish.</p><button type="button" onClick={onRestart}>Restart to finish update</button></>}
+    {state.status === 'restarting' && <p role="status">Restarting Simple Notes…</p>}
+    {state.status === 'restart-error' && <p role="alert">Update installed, but restart failed. Restart Simple Notes manually.</p>}
+  </section>
 }
 
 function StickyApplication({ services, route }: { services: AppServices; route: StickyRoute }) {

@@ -62,6 +62,18 @@ export interface RecoveryPort {
   retry(): Promise<StartupRecoveryReport>
 }
 
+export interface AvailableUpdate {
+  version: string
+  notes: string | null
+}
+
+/** Main-window-only update boundary. Checks and installs are never automatic. */
+export interface UpdatePort {
+  check(): Promise<AvailableUpdate | null>
+  install(): Promise<void>
+  restart(): Promise<void>
+}
+
 export interface SearchResult {
   noteId: NoteId
   title: string

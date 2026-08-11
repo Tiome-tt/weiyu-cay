@@ -8,6 +8,27 @@ function readRepositoryFile(path: string): string {
   return readFileSync(resolve(repositoryRoot, path), 'utf8')
 }
 
+/** The workflows use a deliberately small YAML subset; this asserts their job graph, not loose text. */
+function jobBlock(workflow: string, jobName: string): string {
+  const jobsStart = workflow.indexOf('\njobs:\n')
+  if (jobsStart < 0) throw new Error('Workflow jobs mapping is missing.')
+  const starts = [...workflow.slice(jobsStart).matchAll(/^  ([A-Za-z][\w-]*):\r?$/gm)]
+  const index = starts.findIndex((match) => match[1] === jobName)
+  if (index < 0) throw new Error(`Workflow job ${jobName} is missing.`)
+  const start = jobsStart + (starts[index].index ?? 0)
+  const end = index + 1 < starts.length
+    ? jobsStart + (starts[index + 1].index ?? workflow.length)
+    : workflow.length
+  return workflow.slice(start, end)
+}
+
+function needsFor(workflow: string, jobName: string): string[] {
+  const block = jobBlock(workflow, jobName)
+  const value = block.match(/^    needs: (.+)$/m)?.[1]
+  if (value === undefined) return []
+  return value.replace(/[\[\]]/g, '').split(',').map((entry) => entry.trim()).filter(Boolean)
+}
+
 describe('continuous integration workflow', () => {
   it('runs every required JavaScript and Rust gate on Windows and macOS', () => {
     const workflow = readRepositoryFile('.github/workflows/ci.yml')
@@ -74,9 +95,36 @@ describe('release workflow', () => {
     expect(workflow).toContain('process.env.RUNNER_TEMP')
     expect(workflow).toContain('--config ${{ runner.temp }}/simple-notes-release-config.json')
     expect(workflow).toContain('createUpdaterArtifacts: true')
-    expect(workflow).toContain('github.com/${repository}/releases/latest/download/latest.json')
+    expect(workflow).toContain("const channel = process.env.RELEASE_CHANNEL")
+    expect(workflow).toContain("releases/download/${tagName}/latest.json")
+    expect(workflow).toContain("releases/latest/download/latest.json")
     expect(workflow).not.toContain('writeFileSync(path')
     expect(workflow).not.toContain('TAURI_CONFIG: ${{ env.TAURI_CONFIG }}')
     expect(workflow).not.toContain('REPLACE_WITH_')
+  })
+
+  it('requires full CI gates before signed builds and validates every updater platform cryptographically', () => {
+    const workflow = readRepositoryFile('.github/workflows/release.yml')
+
+    expect(workflow).toContain('verify-gates:')
+    expect(workflow).toContain('needs: [verify-tag, verify-gates]')
+    expect(workflow).toContain('windows-x86_64')
+    expect(workflow).toContain('darwin-aarch64')
+    expect(workflow).toContain('darwin-x86_64')
+    expect(workflow).toContain('--test verify_updater_key')
+    expect(workflow).toContain('IMPORTED_WINDOWS_CERT_THUMBPRINT')
+    expect(workflow).toContain('Remove-Item -LiteralPath "Cert:\\CurrentUser\\My')
+    expect(workflow).toContain('sha256sum --check SHA256SUMS')
+  })
+
+  it('keeps the release graph and permissions meaningful when YAML layout changes', () => {
+    const workflow = readRepositoryFile('.github/workflows/release.yml')
+
+    expect(needsFor(workflow, 'build')).toEqual(['verify-tag', 'verify-gates'])
+    expect(needsFor(workflow, 'checksums')).toEqual(['build'])
+    expect(needsFor(workflow, 'publish-prerelease')).toEqual(['verify-tag', 'checksums'])
+    expect(jobBlock(workflow, 'verify-gates')).toContain('pnpm tauri build')
+    expect(jobBlock(workflow, 'build')).toContain('contents: write')
+    expect(jobBlock(workflow, 'verify-tag')).not.toContain('contents: write')
   })
 })

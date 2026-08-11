@@ -61,9 +61,16 @@ describe('generateSearchFixture', () => {
 
     expect(result.noteCount).toBe(3)
     expect(notes).toHaveLength(3)
+    const folders = JSON.parse(readFileSync(join(root, 'folders.json'), 'utf8')) as Array<{ id: string; parentId: string | null }>
+    expect(folders).toHaveLength(3)
     for (const [, markdown] of notes) {
-      expect(markdown).toMatch(/^---\nid: [0-9a-f-]{36}\ntitle: .+\nfolderId: [0-9a-f-]{36}\ntags:\n(?:  - .+\n)+createdAt: 2026-07-30T15:30:00\.000Z\nupdatedAt: 2026-07-30T15:30:00\.000Z\n---\n\n/m)
+      expect(markdown).toMatch(/^---\nid: [0-9a-f-]{36}\nkind: formal\ntitle: .+\nfolderId: [0-9a-f-]{36}\ntags:\n(?:  - .+\n)+revision: 0\ncreatedAt: 2026-07-30T15:30:00\.000Z\nupdatedAt: 2026-07-30T15:30:00\.000Z\n---\n/m)
       expect(markdown).toContain('[[')
     }
+  })
+
+  it('bounds fixture generation before it can allocate an unbounded note library', () => {
+    expect(() => generateSearchFixture({ count: 100_001, outputRoot: temporaryFixtureRoot(), seed: 42 }))
+      .toThrow('--count must not exceed 100,000.')
   })
 })

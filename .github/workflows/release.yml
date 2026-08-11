@@ -16,7 +16,7 @@ jobs:
   verify-tag:
     runs-on: ubuntu-latest
     outputs:
-      prerelease: ${{ steps.version.outputs.prerelease }}
+      channel: ${{ steps.version.outputs.channel }}
     steps:
       - name: Check out signed tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -57,22 +57,16 @@ jobs:
           if ([packageVersion, tauriVersion, cargoVersion].some((version) => version !== expected)) {
             throw new Error(`Tag ${tag} does not match package (${packageVersion}), Tauri (${tauriVersion}), and Cargo (${cargoVersion}) versions.`)
           }
-          appendFileSync(process.env.GITHUB_OUTPUT, `prerelease=${expected.includes('-')}\n`)
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${expected.includes('-') ? 'rc' : 'stable'}\n`)
           NODE
 
-  build:
-    needs: verify-tag
-    permissions:
-      contents: write
+  verify-gates:
+    name: full CI gates (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            args: ''
-          - os: macos-latest
-            args: '--target universal-apple-darwin'
+        os: [windows-latest, macos-latest]
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -89,7 +83,55 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install macOS universal Rust targets
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Lint Rust
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Lint TypeScript
+        run: pnpm lint
+      - name: Type-check TypeScript
+        run: pnpm typecheck
+      - name: Test TypeScript
+        run: pnpm test
+      - name: Build web UI
+        run: pnpm build
+      - name: Build unsigned desktop bundle
+        run: pnpm tauri build
+
+  build:
+    needs: [verify-tag, verify-gates]
+    permissions:
+      contents: write
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ''
+          - os: macos-latest
+            args: '--target aarch64-apple-darwin'
+          - os: macos-latest
+            args: '--target x86_64-apple-darwin'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: 11.16.0
+      - name: Set up Node.js
+        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install macOS Rust targets
         if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Import Windows signing certificate
@@ -105,7 +147,9 @@ jobs:
           $certificatePath = Join-Path $env:RUNNER_TEMP 'simple-notes-signing.pfx'
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
           $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if ($null -eq $certificate -or $certificate.Thumbprint -notmatch '^[0-9A-Fa-f]{40}$') { throw 'Could not import a valid Windows signing certificate.' }
+          "IMPORTED_WINDOWS_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Materialize release-only updater configuration
         env:
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
@@ -117,7 +161,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          RELEASE_CHANNEL: ${{ needs.verify-tag.outputs.channel }}
+          TAG_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -130,38 +175,40 @@ jobs:
           if (process.env.RUNNER_OS === 'macOS') {
             required.push('APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_SIGNING_IDENTITY', 'APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID')
           }
-          for (const name of required) {
-            if (!process.env[name]?.trim()) throw new Error(`${name} is required for a signed release.`)
-          }
+          for (const name of required) if (!process.env[name]?.trim()) throw new Error(`${name} is required for a signed release.`)
           const repository = process.env.GITHUB_REPOSITORY
-          if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
-            throw new Error('GITHUB_REPOSITORY is invalid.')
+          const tagName = process.env.TAG_NAME
+          const channel = process.env.RELEASE_CHANNEL
+          if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !tagName || !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tagName)) {
+            throw new Error('Release repository or tag is invalid.')
           }
-          const config = {
-            bundle: { createUpdaterArtifacts: true },
-            plugins: {
-              updater: {
-                endpoints: [`https://github.com/${repository}/releases/latest/download/latest.json`],
-                pubkey: publicKey,
-              },
-            },
-          }
+          if (channel !== 'stable' && channel !== 'rc') throw new Error('Release channel is invalid.')
+          // Stable clients query GitHub's stable pointer. RC builds bind to their own published prerelease asset.
+          const endpoint = channel === 'rc'
+            ? `https://github.com/${repository}/releases/download/${tagName}/latest.json`
+            : `https://github.com/${repository}/releases/latest/download/latest.json`
+          const config = { bundle: { createUpdaterArtifacts: true }, plugins: { updater: { endpoints: [endpoint], pubkey: publicKey } } }
           if (process.env.RUNNER_OS === 'Windows') {
-            const thumbprint = process.env.WINDOWS_CERTIFICATE_THUMBPRINT?.trim()
-            if (!thumbprint || !/^[0-9A-Fa-f]{40}$/.test(thumbprint)) {
-              throw new Error('A 40-hex Windows certificate thumbprint is required.')
-            }
-            config.bundle.windows = {
-              certificateThumbprint: thumbprint,
-              digestAlgorithm: 'sha256',
-              timestampUrl: 'http://timestamp.digicert.com',
-            }
+            const thumbprint = process.env.IMPORTED_WINDOWS_CERT_THUMBPRINT?.trim()
+            if (!thumbprint || !/^[0-9A-Fa-f]{40}$/.test(thumbprint)) throw new Error('The imported Windows certificate thumbprint is invalid.')
+            config.bundle.windows = { certificateThumbprint: thumbprint, digestAlgorithm: 'sha256', timestampUrl: 'http://timestamp.digicert.com' }
           }
           const temporaryRoot = process.env.RUNNER_TEMP
           if (!temporaryRoot) throw new Error('RUNNER_TEMP is required for release configuration.')
-          // The Tauri action receives this path through --config; the checked-out config stays fail-closed.
           writeFileSync(`${temporaryRoot}/simple-notes-release-config.json`, `${JSON.stringify(config)}\n`)
           NODE
+      - name: Verify updater key pair can verify a newly signed probe
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          probe="$RUNNER_TEMP/simple-notes-updater-key-probe"
+          printf 'Simple Notes updater key-pair probe\n' > "$probe"
+          ./node_modules/.bin/tauri signer sign "$probe"
+          UPDATER_PROBE_PATH="$probe" UPDATER_PROBE_SIGNATURE_PATH="$probe.sig" cargo test --quiet --manifest-path src-tauri/Cargo.toml --test verify_updater_key -- --ignored --exact release_owner_key_pair_verifies_a_signed_probe
+          rm -f "$probe" "$probe.sig"
       - name: Build and attach signed installers and updater metadata
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
@@ -179,17 +226,21 @@ jobs:
           releaseName: 'Simple Notes ${{ github.ref_name }}'
           generateReleaseNotes: true
           releaseDraft: true
-          prerelease: ${{ needs.verify-tag.outputs.prerelease }}
+          prerelease: ${{ needs.verify-tag.outputs.channel == 'rc' }}
           uploadUpdaterJson: true
           args: --config ${{ runner.temp }}/simple-notes-release-config.json ${{ matrix.args }}
       - name: Remove temporary release configuration
         if: always()
         shell: bash
-        run: rm -f "$RUNNER_TEMP/simple-notes-release-config.json"
-      - name: Remove temporary Windows certificate
+        run: rm -f "$RUNNER_TEMP/simple-notes-release-config.json" "$RUNNER_TEMP/simple-notes-updater-key-probe" "$RUNNER_TEMP/simple-notes-updater-key-probe.sig"
+      - name: Remove temporary Windows certificate and PFX
         if: always() && runner.os == 'Windows'
         shell: pwsh
-        run: Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'simple-notes-signing.pfx') -Force -ErrorAction SilentlyContinue
+        run: |
+          if ($env:IMPORTED_WINDOWS_CERT_THUMBPRINT -match '^[0-9A-Fa-f]{40}$') {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:IMPORTED_WINDOWS_CERT_THUMBPRINT" -Force -ErrorAction SilentlyContinue
+          }
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'simple-notes-signing.pfx') -Force -ErrorAction SilentlyContinue
 
   checksums:
     needs: build
@@ -205,25 +256,39 @@ jobs:
         run: |
           mkdir release-assets
           gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets
-      - name: Require updater metadata and signatures
+      - name: Validate complete updater metadata and matching signatures
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
-          test -f release-assets/latest.json
-          find release-assets -maxdepth 1 -type f -name '*.sig' -print -quit | grep -q .
           node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs'
+          import { readdirSync, readFileSync } from 'node:fs'
+          const files = new Set(readdirSync('release-assets'))
           const metadata = JSON.parse(readFileSync('release-assets/latest.json', 'utf8'))
-          const platforms = metadata.platforms
-          const hasSignedPlatform = platforms !== null && typeof platforms === 'object' && Object.values(platforms).some(
-            (platform) => platform !== null
-              && typeof platform === 'object'
-              && typeof platform.url === 'string'
-              && typeof platform.signature === 'string'
-              && platform.signature.length > 0,
-          )
-          if (!hasSignedPlatform) throw new Error('latest.json has no signed updater platform metadata.')
+          const requiredPlatforms = ['windows-x86_64', 'darwin-aarch64', 'darwin-x86_64']
+          if (!metadata.platforms || typeof metadata.platforms !== 'object') throw new Error('latest.json platforms is missing.')
+          for (const platformName of requiredPlatforms) {
+            const platform = metadata.platforms[platformName]
+            if (!platform || typeof platform.url !== 'string' || typeof platform.signature !== 'string' || !platform.signature.trim()) {
+              throw new Error(`latest.json lacks signed ${platformName} metadata.`)
+            }
+            const url = new URL(platform.url)
+            const expectedPrefix = `/releases/download/${process.env.TAG_NAME}/`
+            if (url.origin !== 'https://github.com' || url.pathname.slice(0, expectedPrefix.length + process.env.REPOSITORY.length + 1) !== `/${process.env.REPOSITORY}${expectedPrefix}`) {
+              throw new Error(`${platformName} URL does not target this tag's release asset.`)
+            }
+            const assetName = decodeURIComponent(url.pathname.split('/').at(-1) ?? '')
+            if (!files.has(assetName) || !files.has(`${assetName}.sig`)) throw new Error(`${platformName} updater asset or .sig is absent.`)
+            if (readFileSync(`release-assets/${assetName}.sig`, 'utf8').trim() !== platform.signature.trim()) {
+              throw new Error(`${platformName} metadata signature does not match its uploaded .sig.`)
+            }
+          }
+          for (const signature of [...files].filter((file) => file.endsWith('.sig'))) {
+            if (!files.has(signature.slice(0, -4))) throw new Error(`Orphan updater signature: ${signature}`)
+          }
           NODE
-      - name: Generate and upload SHA256SUMS
+      - name: Generate, upload, and verify SHA256SUMS
         working-directory: release-assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -231,4 +296,19 @@ jobs:
         shell: bash
         run: |
           find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum --check SHA256SUMS
           gh release upload "$TAG_NAME" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish-prerelease:
+    needs: [verify-tag, checksums]
+    if: needs.verify-tag.outputs.channel == 'rc'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the RC-only updater endpoint after automated gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: gh release edit "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

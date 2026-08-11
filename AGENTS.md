@@ -86,6 +86,8 @@ After the application is scaffolded, keep these root scripts working and update 
 
 The checked-in Tauri configuration is intentionally fail-closed for updater artifacts: it contains no updater endpoint or public key and does not create updater artifacts. The signed tag release workflow validates release-owner secrets, writes updater-only JSON beneath the runner temporary directory, and supplies it with Tauri's `--config` build argument without rewriting the checked-out configuration. Never replace this with a placeholder key or endpoint.
 
+Stable release builds use GitHub's `releases/latest` updater endpoint. Prerelease/RC builds use their own tag-specific `releases/download/<tag>/latest.json` endpoint and are published as prereleases only after the complete CI, metadata, signature, and checksum gates succeed. This keeps RC update testing isolated from stable users. Updater checks, download/install, and restart are explicit main-window actions through typed services; do not add background or silent update installation.
+
 Do not claim a command passes unless it was run in the current worktree. If scaffolding has not created a command yet, state that clearly instead of inventing output.
 
 ## Testing requirements

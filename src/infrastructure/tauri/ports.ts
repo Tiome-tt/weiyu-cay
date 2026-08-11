@@ -2,7 +2,7 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -37,6 +37,22 @@ class TauriRecoveryPort implements RecoveryPort {
 
   retry() {
     return this.client.invoke<StartupRecoveryReport>('retry_startup_recovery')
+  }
+}
+
+class TauriUpdatePort implements UpdatePort {
+  constructor(private readonly client: TauriClient) {}
+
+  check() {
+    return this.client.invoke<Awaited<ReturnType<UpdatePort['check']>>>('check_for_update')
+  }
+
+  async install() {
+    await this.client.invoke<void>('install_pending_update')
+  }
+
+  async restart() {
+    await this.client.invoke<void>('restart_after_update')
   }
 }
 
@@ -293,6 +309,7 @@ export function createTauriPorts(): {
   exporter: ExportPort
   exportDestinationPicker: ExportDestinationPicker
   recovery: RecoveryPort
+  updater: UpdatePort
 } {
   const client = new TauriClient()
   return {
@@ -310,5 +327,6 @@ export function createTauriPorts(): {
     exporter: new TauriExportPort(client),
     exportDestinationPicker: new TauriExportDestinationPicker(),
     recovery: new TauriRecoveryPort(client),
+    updater: new TauriUpdatePort(client),
   }
 }

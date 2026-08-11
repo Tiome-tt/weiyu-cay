@@ -20,12 +20,22 @@ interface FixtureNote {
   tags: string[]
 }
 
+interface FixtureFolder {
+  id: string
+  parentId: null
+  name: string
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
 const FIXTURE_TIMESTAMP = '2026-07-30T15:30:00.000Z'
 const FIXTURE_EPOCH_MS = Date.parse(FIXTURE_TIMESTAMP)
 const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/8QAAAABJRU5ErkJggg==', 'base64')
 const ADJECTIVES = ['Amber', 'Calm', 'Cedar', 'Dawn', 'Fern', 'Golden', 'Harbor', 'Ivy', 'Juniper', 'Moss']
 const SUBJECTS = ['Archive', 'Backlog', 'Checklist', 'Design', 'Experiment', 'Garden', 'Notebook', 'Outline', 'Project', 'Review']
 const TAGS = ['backend', 'design', 'ideas', 'important', 'planning', 'research', 'rust', 'search', 'testing', 'typescript']
+const MAX_FIXTURE_NOTES = 100_000
 
 class SeededRandom {
   private state: number
@@ -60,6 +70,9 @@ function assertSafeOptions(options: GenerateSearchFixtureOptions): void {
   if (!Number.isSafeInteger(options.count) || options.count < 1) {
     throw new Error('--count must be a positive safe integer.')
   }
+  if (options.count > MAX_FIXTURE_NOTES) {
+    throw new Error(`--count must not exceed ${MAX_FIXTURE_NOTES.toLocaleString('en-US')}.`)
+  }
   if (!Number.isSafeInteger(options.seed)) throw new Error('--seed must be a safe integer.')
   if (existsSync(options.outputRoot) && readdirSync(options.outputRoot).length > 0) {
     throw new Error(`Refusing to overwrite non-empty fixture root: ${basename(options.outputRoot)}`)
@@ -69,7 +82,7 @@ function assertSafeOptions(options: GenerateSearchFixtureOptions): void {
 function markdownFor(note: FixtureNote, folderId: string, target: FixtureNote | undefined, index: number): string {
   const tagLines = note.tags.map((tag) => `  - ${tag}`).join('\n')
   const link = target === undefined ? `[[${note.title}|${note.id}]]` : `[[${target.title}|${target.id}]]`
-  return `---\nid: ${note.id}\ntitle: ${note.title}\nfolderId: ${folderId}\ntags:\n${tagLines}\ncreatedAt: ${FIXTURE_TIMESTAMP}\nupdatedAt: ${FIXTURE_TIMESTAMP}\n---\n\n## ${note.title}\n\nThis deterministic search fixture note ${index + 1} mentions Markdown, local-first storage, and ${note.tags.join(', ')}.\n\nRelated note: ${link}.\n\n![Fixture image](assets/fixture-${index + 1}.png)\n`
+  return `---\nid: ${note.id}\nkind: formal\ntitle: ${note.title}\nfolderId: ${folderId}\ntags:\n${tagLines}\nrevision: 0\ncreatedAt: ${FIXTURE_TIMESTAMP}\nupdatedAt: ${FIXTURE_TIMESTAMP}\n---\n\n## ${note.title}\n\nThis deterministic search fixture note ${index + 1} mentions Markdown, local-first storage, and ${note.tags.join(', ')}.\n\nRelated note: ${link}.\n\n![Fixture image](assets/fixture-${index + 1}.png)\n`
 }
 
 /** Generates only into an empty caller-selected directory so fixture runs cannot overwrite notes. */
@@ -78,7 +91,18 @@ export function generateSearchFixture(options: GenerateSearchFixtureOptions): Se
   const outputRoot = resolve(options.outputRoot)
   mkdirSync(outputRoot, { recursive: true })
   const random = new SeededRandom(options.seed)
-  const folders = ['Inbox', 'Projects', 'Research'].map((_, index) => uuidV7(FIXTURE_EPOCH_MS + index, random))
+  const folders: FixtureFolder[] = ['Inbox', 'Projects', 'Research'].map((name, index) => ({
+    id: uuidV7(FIXTURE_EPOCH_MS + index, random),
+    parentId: null,
+    name,
+    sortOrder: index,
+    createdAt: FIXTURE_TIMESTAMP,
+    updatedAt: FIXTURE_TIMESTAMP,
+  }))
+  mkdirSync(join(outputRoot, 'notes'), { recursive: true })
+  mkdirSync(join(outputRoot, 'temporary'), { recursive: true })
+  mkdirSync(join(outputRoot, 'trash'), { recursive: true })
+  writeFileSync(join(outputRoot, 'folders.json'), `${JSON.stringify(folders, null, 2)}\n`, 'utf8')
   const notes: FixtureNote[] = Array.from({ length: options.count }, (_, index) => ({
     id: uuidV7(FIXTURE_EPOCH_MS + index + folders.length, random),
     title: `${ADJECTIVES[random.below(ADJECTIVES.length)]} ${SUBJECTS[random.below(SUBJECTS.length)]} ${index + 1}`,
@@ -89,7 +113,7 @@ export function generateSearchFixture(options: GenerateSearchFixtureOptions): Se
     const noteRoot = join(outputRoot, 'notes', note.id)
     mkdirSync(join(noteRoot, 'assets'), { recursive: true })
     const target = index === 0 ? undefined : notes[random.below(index)]
-    writeFileSync(join(noteRoot, 'note.md'), markdownFor(note, folders[index % folders.length], target, index), 'utf8')
+    writeFileSync(join(noteRoot, 'note.md'), markdownFor(note, folders[index % folders.length].id, target, index), 'utf8')
     writeFileSync(join(noteRoot, 'assets', `fixture-${index + 1}.png`), PNG_1X1)
   }
 

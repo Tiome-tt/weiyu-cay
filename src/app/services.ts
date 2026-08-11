@@ -1,4 +1,4 @@
-import type { AssetPort, ExportDestinationPicker, ExportPort, FolderPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StickySettingsPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../domain/ports'
+import type { AssetPort, ExportDestinationPicker, ExportPort, FolderPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StickySettingsPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort, UpdatePort } from '../domain/ports'
 import type { LibraryNotePort } from '../features/library/useLibrary'
 import { createTauriPorts } from '../infrastructure/tauri/ports'
 import { createE2EAppServices } from './e2eServices'
@@ -18,6 +18,7 @@ export interface AppServices {
   exporter?: ExportPort
   exportDestinationPicker?: ExportDestinationPicker
   recovery?: RecoveryPort
+  updater?: UpdatePort
 }
 
 export function createAppServices(): AppServices {

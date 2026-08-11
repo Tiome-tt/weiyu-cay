@@ -38,6 +38,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             commands::settings::setup(app)?;
+            commands::updates::setup(app);
             let readiness = storage::recovery::StartupRecoveryReadiness::new();
             commands::storage::setup(app, readiness.clone())?;
             let paths = app
@@ -101,6 +102,9 @@ pub fn run() {
             commands::settings::get_storage_info,
             commands::storage::startup_recovery_report,
             commands::storage::retry_startup_recovery,
+            commands::updates::check_for_update,
+            commands::updates::install_pending_update,
+            commands::updates::restart_after_update,
             commands::settings::move_storage_root,
             commands::settings::restart_application,
             commands::export::export_library,
