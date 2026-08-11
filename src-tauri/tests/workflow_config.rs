@@ -64,6 +64,18 @@ struct Step {
 }
 
 #[test]
+fn shell_command_predicates_do_not_accept_misleading_echo_text() {
+    assert!(has_shell_command(
+        "set -euo pipefail\npnpm tauri build",
+        &["pnpm", "tauri", "build"]
+    ));
+    assert!(!has_shell_command(
+        "echo 'pnpm tauri build'",
+        &["pnpm", "tauri", "build"]
+    ));
+}
+
+#[test]
 fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers() {
     assert!(
         !Path::new("../scripts/workflow-config.test.ts").exists(),
@@ -122,7 +134,11 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
             .expect("CI OS matrix"),
         &vec!["windows-latest".to_owned(), "macos-latest".to_owned()]
     );
-    assert_step_run(verify, "Build unsigned desktop bundle", "pnpm tauri build");
+    assert_step_command(
+        verify,
+        "Build unsigned desktop bundle",
+        &["pnpm", "tauri", "build"],
+    );
 
     let checksums = job(&workflow, "checksums");
     assert_eq!(checksums.needs.values(), ["build"]);
@@ -130,32 +146,100 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
         checksums,
         "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
     );
-    assert_step_run(
+    assert_step_command(
         checksums,
         "Download draft release assets",
-        "gh release view",
+        &[
+            "gh",
+            "release",
+            "view",
+            "$TAG_NAME",
+            "--repo",
+            "$GITHUB_REPOSITORY",
+            "--json",
+            "assets",
+            ">",
+            "$RUNNER_TEMP/release-assets.json",
+        ],
     );
-    assert_step_run(
+    assert_step_command(
         checksums,
         "Download draft release assets",
-        "$RUNNER_TEMP/release-assets.json",
+        &[
+            "gh",
+            "release",
+            "download",
+            "$TAG_NAME",
+            "--repo",
+            "$GITHUB_REPOSITORY",
+            "--dir",
+            "release-assets",
+        ],
     );
-    assert_step_run(
+    assert_step_command(
         checksums,
         "Validate complete updater metadata and matching signatures",
-        "$RUNNER_TEMP/release-assets.json",
-    );
-    assert_step_run_not_contains(
-        checksums,
-        "Download draft release assets",
-        "release-assets/release-assets.json",
-    );
-    assert_step_run(
-        checksums,
-        "Validate complete updater metadata and matching signatures",
-        "validate-release-metadata.ts",
+        &[
+            "node",
+            "--experimental-strip-types",
+            "scripts/validate-release-metadata.ts",
+            "--directory",
+            "release-assets",
+            "--release-assets",
+            "$RUNNER_TEMP/release-assets.json",
+            "--repository",
+            "$REPOSITORY",
+            "--tag",
+            "$TAG_NAME",
+        ],
     );
     assert!(!workflow.jobs.contains_key("publish-prerelease"));
+
+    let stage = job(&workflow, "stage-rc");
+    assert_eq!(stage.needs.values(), ["verify-tag", "checksums"]);
+    assert_eq!(
+        stage.permissions,
+        Some(Permissions {
+            contents: "read".to_owned()
+        })
+    );
+    assert_step_env(
+        stage,
+        "Mirror signed RC candidate to the stable staging channel",
+        "RELEASE_STAGING_UPLOAD_TOKEN",
+    );
+    assert_step_command(
+        stage,
+        "Mirror signed RC candidate to the stable staging channel",
+        &[
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "$RELEASE_STAGING_ENDPOINT/latest.json",
+            "-o",
+            "$RUNNER_TEMP/previous-rc-latest.json",
+        ],
+    );
+    assert_step_command(
+        stage,
+        "Mirror signed RC candidate to the stable staging channel",
+        &[
+            "node",
+            "--experimental-strip-types",
+            "scripts/stage-rc-release.ts",
+            "--metadata",
+            "release-assets/latest.json",
+            "--release-assets",
+            "$RUNNER_TEMP/release-assets.json",
+            "--previous",
+            "$RUNNER_TEMP/previous-rc-latest.json",
+            "--endpoint",
+            "$RELEASE_STAGING_ENDPOINT",
+            "--output",
+            "$RUNNER_TEMP/staged-rc-latest.json",
+        ],
+    );
 
     for job in workflow.jobs.values() {
         for step in &job.steps {
@@ -187,17 +271,7 @@ fn assert_step_uses(job: &Job, action: &str) {
     );
 }
 
-fn assert_step_run(job: &Job, name: &str, expected: &str) {
-    let run = job
-        .steps
-        .iter()
-        .find(|step| step.name.as_deref() == Some(name))
-        .and_then(|step| step.run.as_deref())
-        .unwrap_or_else(|| panic!("missing run step: {name}"));
-    assert!(run.contains(expected), "{name} is missing {expected}");
-}
-
-fn assert_step_run_not_contains(job: &Job, name: &str, forbidden: &str) {
+fn assert_step_command(job: &Job, name: &str, expected: &[&str]) {
     let run = job
         .steps
         .iter()
@@ -205,9 +279,20 @@ fn assert_step_run_not_contains(job: &Job, name: &str, forbidden: &str) {
         .and_then(|step| step.run.as_deref())
         .unwrap_or_else(|| panic!("missing run step: {name}"));
     assert!(
-        !run.contains(forbidden),
-        "{name} must not contain {forbidden}"
+        has_shell_command(run, expected),
+        "{name} is missing command: {}",
+        expected.join(" ")
     );
+}
+
+fn has_shell_command(script: &str, expected: &[&str]) -> bool {
+    script.lines().any(|line| {
+        let tokens = line
+            .split_whitespace()
+            .map(|token| token.trim_matches(['\'', '"']))
+            .collect::<Vec<_>>();
+        tokens == expected
+    })
 }
 
 fn assert_step_with(job: &Job, name: &str, key: &str, expected: &str) {

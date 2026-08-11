@@ -188,11 +188,11 @@ jobs:
           }
           if (channel !== 'stable' && channel !== 'rc') throw new Error('Release channel is invalid.')
           if (!staging || !/^https:\/\/[^/?#]+(?:\/[^?#]*)?$/.test(staging)) throw new Error('A HTTPS release staging endpoint is required.')
-          // Staging carries owner-mirrored signed draft assets for smoke tests; GitHub remains the public fallback.
-          const publicEndpoint = channel === 'rc'
-            ? `https://github.com/${repository}/releases/download/${tagName}/latest.json`
-            : `https://github.com/${repository}/releases/latest/download/latest.json`
-          const config = { bundle: { createUpdaterArtifacts: true }, plugins: { updater: { endpoints: [`${staging}/${tagName}/latest.json`, publicEndpoint], pubkey: publicKey } } }
+          // Every RC build shares this version-independent channel, so an installed prior RC can find a later candidate.
+          const endpoints = channel === 'rc'
+            ? [`${staging}/latest.json`]
+            : [`https://github.com/${repository}/releases/latest/download/latest.json`]
+          const config = { bundle: { createUpdaterArtifacts: true }, plugins: { updater: { endpoints, pubkey: publicKey } } }
           if (process.env.RUNNER_OS === 'Windows') {
             const thumbprint = process.env.IMPORTED_WINDOWS_CERT_THUMBPRINT?.trim()
             if (!thumbprint || !/^[0-9A-Fa-f]{40}$/.test(thumbprint)) throw new Error('The imported Windows certificate thumbprint is invalid.')
@@ -284,3 +284,39 @@ jobs:
           find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           sha256sum --check SHA256SUMS
           gh release upload "$TAG_NAME" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+
+  stage-rc:
+    needs: [verify-tag, checksums]
+    if: needs.verify-tag.outputs.channel == 'rc'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out RC staging script
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Mirror signed RC candidate to the stable staging channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_STAGING_ENDPOINT: ${{ vars.RELEASE_STAGING_ENDPOINT }}
+          RELEASE_STAGING_UPLOAD_TOKEN: ${{ secrets.RELEASE_STAGING_UPLOAD_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_STAGING_UPLOAD_TOKEN" || { echo 'RC staging upload token is required.' >&2; exit 1; }
+          mkdir release-assets
+          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets
+          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release-assets.json"
+          curl --fail --silent --show-error "$RELEASE_STAGING_ENDPOINT/latest.json" -o "$RUNNER_TEMP/previous-rc-latest.json"
+          node --experimental-strip-types scripts/stage-rc-release.ts --metadata release-assets/latest.json --release-assets "$RUNNER_TEMP/release-assets.json" --previous "$RUNNER_TEMP/previous-rc-latest.json" --endpoint "$RELEASE_STAGING_ENDPOINT" --output "$RUNNER_TEMP/staged-rc-latest.json"
+          while IFS= read -r encoded; do
+            name="$(node --input-type=module -e 'console.log(decodeURIComponent(process.argv[1]))' "$encoded")"
+            curl --fail --silent --show-error --request PUT --header "Authorization: Bearer $RELEASE_STAGING_UPLOAD_TOKEN" --upload-file "release-assets/$name" "$RELEASE_STAGING_ENDPOINT/assets/$encoded"
+          done < <(node --input-type=module <<'NODE'
+          import { readdirSync } from 'node:fs'
+          for (const name of readdirSync('release-assets')) console.log(encodeURIComponent(name))
+          NODE
+          )
+          curl --fail --silent --show-error --request PUT --header "Authorization: Bearer $RELEASE_STAGING_UPLOAD_TOKEN" --upload-file "$RUNNER_TEMP/staged-rc-latest.json" "$RELEASE_STAGING_ENDPOINT/latest.json"

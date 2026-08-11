@@ -3,7 +3,8 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export interface ReleaseAsset {
-  id: number
+  apiUrl: string
+  id: string
   name: string
 }
 
@@ -35,17 +36,32 @@ export function validateReleaseMetadata(options: ValidateReleaseMetadataOptions)
   if (platforms === undefined || platforms === null || typeof platforms !== 'object') {
     throw new Error('latest.json platforms is missing.')
   }
-  const releaseAssets = new Map(options.releaseAssets.map((asset) => [asset.id, asset]))
+  const releaseAssets = new Map(options.releaseAssets.map((asset) => [assetApiUrl(asset, options.repository), asset]))
+  const updaterNames = new Set<string>()
+  const signatureNames = new Set<string>()
   for (const platformName of REQUIRED_PLATFORMS) {
     const platform = platforms[platformName]
     if (platform === undefined || typeof platform.url !== 'string' || typeof platform.signature !== 'string' || !platform.signature.trim()) {
       throw new Error(`latest.json lacks signed ${platformName} metadata.`)
     }
-    const asset = releaseAssets.get(apiAssetId(platform.url, options.repository))
+    const platformApiUrl = apiAssetUrl(platform.url, options.repository)
+    const asset = releaseAssets.get(platformApiUrl)
     if (asset === undefined) throw new Error(`${platformName} URL does not identify this release asset.`)
+    if (!isPlatformAsset(platformName, asset.name)) {
+      throw new Error(`${platformName} URL does not match the required platform artifact.`)
+    }
     const updater = options.downloadedAssets.get(asset.name)
     const signature = options.downloadedAssets.get(`${asset.name}.sig`)
     if (updater === undefined || signature === undefined) throw new Error(`${platformName} updater asset or .sig is absent.`)
+    const signatureAsset = options.releaseAssets.find((candidate) => candidate.name === `${asset.name}.sig`)
+    if (signatureAsset === undefined || !releaseAssets.has(assetApiUrl(signatureAsset, options.repository))) {
+      throw new Error(`${platformName} updater signature is not a release asset.`)
+    }
+    if (updaterNames.has(asset.name) || signatureNames.has(signatureAsset.name)) {
+      throw new Error(`${platformName} reuses another platform's updater asset or signature.`)
+    }
+    updaterNames.add(asset.name)
+    signatureNames.add(signatureAsset.name)
     if (Buffer.from(signature).toString('utf8').trim() !== platform.signature.trim()) {
       throw new Error(`${platformName} metadata signature does not match its uploaded .sig.`)
     }
@@ -57,13 +73,23 @@ export function validateReleaseMetadata(options: ValidateReleaseMetadataOptions)
   }
 }
 
-function apiAssetId(value: string, repository: string): number {
+function assetApiUrl(asset: ReleaseAsset, repository: string): string {
+  return apiAssetUrl(asset.apiUrl, repository)
+}
+
+function apiAssetUrl(value: string, repository: string): string {
   const url = new URL(value)
   const match = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/releases\/assets\/(\d+)$/)
   if (url.origin !== 'https://api.github.com' || match === null || `${match[1]}/${match[2]}` !== repository) {
     throw new Error('Updater URL does not identify this release asset.')
   }
-  return Number(match[3])
+  return url.href
+}
+
+function isPlatformAsset(platform: typeof REQUIRED_PLATFORMS[number], name: string): boolean {
+  const architecture = platform === 'windows-x86_64' ? /(?:^|[_-])(x64|x86_64)(?:[_.-]|$)/i : platform === 'darwin-aarch64' ? /(?:^|[_-])aarch64(?:[_.-]|$)/i : /(?:^|[_-])(x64|x86_64)(?:[_.-]|$)/i
+  const extension = platform === 'windows-x86_64' ? /\.msi\.zip$/i : /\.app\.tar\.gz$/i
+  return architecture.test(name) && extension.test(name)
 }
 
 function optionValue(name: string): string {
