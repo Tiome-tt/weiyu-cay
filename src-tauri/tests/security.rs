@@ -333,6 +333,21 @@ fn desktop_csp_blocks_network_images_and_keeps_only_required_local_sources() {
     assert!(!image_directive.contains("data:"));
 }
 
+#[test]
+fn checked_in_updater_configuration_is_a_valid_fail_closed_plugin_object() {
+    let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+
+    let updater = config["plugins"]["updater"]
+        .as_object()
+        .expect("checked-in updater configuration must be an object");
+    assert_eq!(updater.get("endpoints"), Some(&serde_json::json!([])));
+    assert_eq!(updater.get("pubkey"), Some(&serde_json::json!("")));
+    assert_eq!(updater.get("windows"), Some(&serde_json::Value::Null));
+    assert_eq!(config["bundle"]["createUpdaterArtifacts"], false);
+}
+
 #[cfg(unix)]
 #[test]
 fn image_read_rejects_an_asset_file_symlink_escape() {
