@@ -163,14 +163,16 @@ describe('TauriClient', () => {
   })
 
   it('maps close listener readiness and generation acknowledgements to main-only commands', async () => {
-    invokeMock.mockResolvedValue(undefined)
+    invokeMock.mockResolvedValueOnce(17).mockResolvedValue(undefined)
     const { lifecycle } = createTauriPorts()
 
-    await lifecycle.setListenerReady(true, 'renderer-listener-1')
+    const token = await lifecycle.beginCloseListenerRegistration()
+    await lifecycle.setListenerReady(true, token)
     await lifecycle.completeClose(9, false)
 
     expect(invokeMock.mock.calls).toEqual([
-      ['set_main_window_close_listener_ready', { ready: true, listenerId: 'renderer-listener-1' }],
+      ['begin_main_window_close_listener_registration', undefined],
+      ['set_main_window_close_listener_ready', { ready: true, registrationToken: 17 }],
       ['complete_main_window_close', { generation: 9, saved: false }],
     ])
   })

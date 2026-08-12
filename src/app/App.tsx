@@ -160,6 +160,8 @@ function MainApplication({ services }: { services: AppServices }) {
     if (lifecycle === undefined) return
     let active = true
     let unlisten: (() => void) | undefined
+    let registrationToken: number | undefined
+    let registrationReleased = false
     const close = async (generation: number) => {
       if (closeBusy.current) return
       closeBusy.current = true
@@ -182,20 +184,34 @@ function MainApplication({ services }: { services: AppServices }) {
         closeBusy.current = false
       }
     }
-    const listenerId = globalThis.crypto.randomUUID()
-    let listenerReady = false
-    const registration = lifecycle.onCloseRequested((request) => void close(request.generation)).then(async (stop) => {
+    const releaseRegistration = async () => {
+      if (registrationToken === undefined || registrationReleased) return
+      registrationReleased = true
+      await lifecycle.setListenerReady(false, registrationToken).catch(() => undefined)
+    }
+    const registration = lifecycle.beginCloseListenerRegistration().then(async (token) => {
+      registrationToken = token
+      if (!active) return
+      const stop = await lifecycle.onCloseRequested((request) => void close(request.generation))
       unlisten = stop
       if (!active) return
-      listenerReady = true
-      await lifecycle.setListenerReady(true, listenerId)
-    }).catch(() => {
+      try {
+        await lifecycle.setListenerReady(true, token)
+      } catch {
+        // Rust marks the token ready before re-emitting any pending close. A
+        // failed emit must keep the installed listener registered for retry.
+        if (active) setCloseNotice({ status: 'error', message: '无法监听安全退出请求，请保存后重试。' })
+      }
+    }).catch(async () => {
+      unlisten?.()
+      unlisten = undefined
+      await releaseRegistration()
       if (active) setCloseNotice({ status: 'error', message: '无法监听安全退出请求，请保存后重试。' })
     })
     return () => {
       active = false
       void registration.finally(async () => {
-        if (listenerReady) await lifecycle.setListenerReady(false, listenerId).catch(() => undefined)
+        await releaseRegistration()
         unlisten?.()
       })
     }

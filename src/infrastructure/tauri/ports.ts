@@ -70,12 +70,16 @@ class TauriUpdatePort implements UpdatePort {
 class TauriAppLifecyclePort implements AppLifecyclePort {
   constructor(private readonly client: TauriClient) {}
 
+  beginCloseListenerRegistration() {
+    return this.client.invoke<number>('begin_main_window_close_listener_registration')
+  }
+
   onCloseRequested(handler: (request: { generation: number }) => void) {
     return getCurrentWebviewWindow().listen<{ generation: number }>('main-window-close-requested', (event) => handler(event.payload))
   }
 
-  async setListenerReady(ready: boolean, listenerId: string) {
-    await this.client.invoke<void>('set_main_window_close_listener_ready', { ready, listenerId })
+  async setListenerReady(ready: boolean, registrationToken: number) {
+    await this.client.invoke<void>('set_main_window_close_listener_ready', { ready, registrationToken })
   }
 
   async completeClose(generation: number, saved: boolean) {

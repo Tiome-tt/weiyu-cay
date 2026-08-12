@@ -113,6 +113,7 @@ pub fn run() {
             commands::settings::move_storage_root,
             commands::settings::restart_application,
             commands::export::export_library,
+            windows::main::begin_main_window_close_listener_registration,
             windows::main::set_main_window_close_listener_ready,
             windows::main::complete_main_window_close,
         ])

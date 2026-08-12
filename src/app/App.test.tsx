@@ -40,7 +40,9 @@ describe('App', () => {
     let requestClose!: (request: { generation: number }) => void
     const completeClose = vi.fn().mockResolvedValue(undefined)
     const setListenerReady = vi.fn().mockResolvedValue(undefined)
+    const registrationToken = deferred<number>()
     const lifecycle = {
+      beginCloseListenerRegistration: vi.fn(() => registrationToken.promise),
       onCloseRequested: vi.fn(async (handler: (request: { generation: number }) => void) => {
         requestClose = handler
         return () => undefined
@@ -55,12 +57,14 @@ describe('App', () => {
     }
     const user = userEvent.setup()
     render(<App services={services} />)
+    expect(lifecycle.onCloseRequested).not.toHaveBeenCalled()
+    await act(async () => registrationToken.resolve(7))
     await user.click(await screen.findByRole('button', { name: /^Close-safe note/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty close draft' } }))
     await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, expect.any(String)))
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 7))
 
     act(() => requestClose({ generation: 7 }))
 
@@ -75,6 +79,7 @@ describe('App', () => {
     const unlisten = vi.fn()
     const setListenerReady = vi.fn().mockResolvedValue(undefined)
     const lifecycle = {
+      beginCloseListenerRegistration: vi.fn().mockResolvedValueOnce(41).mockResolvedValueOnce(42),
       onCloseRequested: vi.fn(async () => unlisten),
       setListenerReady,
       completeClose: vi.fn().mockResolvedValue(undefined),
@@ -86,21 +91,27 @@ describe('App', () => {
     }
 
     const mounted = render(<App services={services} />)
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, expect.any(String)))
-    const listenerId = setListenerReady.mock.calls[0]?.[1]
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 41))
     mounted.unmount()
 
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, listenerId))
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 41))
     await waitFor(() => expect(unlisten).toHaveBeenCalledOnce())
+
+    const remounted = render(<App services={services} />)
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 42))
+    expect(setListenerReady.mock.calls).not.toContainEqual([false, 42])
+    remounted.unmount()
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 42))
   })
 
-  it('marks the listener unavailable after a readiness re-emit failure', async () => {
+  it('retains an installed listener after a readiness re-emit failure until unmount', async () => {
     const unlisten = vi.fn()
-    const setListenerReady = vi.fn(async (ready: boolean, listenerId: string) => {
-      void listenerId
+    const setListenerReady = vi.fn(async (ready: boolean, registrationToken: number) => {
+      void registrationToken
       if (ready) throw new Error('injected initial close re-emit failure')
     })
     const lifecycle = {
+      beginCloseListenerRegistration: vi.fn().mockResolvedValue(51),
       onCloseRequested: vi.fn(async () => unlisten),
       setListenerReady,
       completeClose: vi.fn().mockResolvedValue(undefined),
@@ -112,12 +123,30 @@ describe('App', () => {
     }
 
     const mounted = render(<App services={services} />)
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, expect.any(String)))
-    const listenerId = setListenerReady.mock.calls[0]?.[1]
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 51))
+    expect(setListenerReady).not.toHaveBeenCalledWith(false, 51)
+    expect(unlisten).not.toHaveBeenCalled()
     mounted.unmount()
-
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, listenerId))
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 51))
     await waitFor(() => expect(unlisten).toHaveBeenCalledOnce())
+  })
+
+  it('releases a reserved registration token when listener installation fails', async () => {
+    const setListenerReady = vi.fn().mockResolvedValue(undefined)
+    const lifecycle = {
+      beginCloseListenerRegistration: vi.fn().mockResolvedValue(61),
+      onCloseRequested: vi.fn().mockRejectedValue(new Error('listener installation failed')),
+      setListenerReady,
+      completeClose: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle,
+    }} />)
+
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 61))
+    expect(setListenerReady).not.toHaveBeenCalledWith(true, 61)
   })
 
   it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
@@ -456,6 +485,7 @@ describe('App', () => {
     let requestClose!: (request: { generation: number }) => void
     const completeClose = vi.fn().mockResolvedValue(undefined)
     const lifecycle = {
+      beginCloseListenerRegistration: vi.fn().mockResolvedValue(71),
       onCloseRequested: vi.fn(async (handler: (request: { generation: number }) => void) => {
         requestClose = handler
         return () => undefined

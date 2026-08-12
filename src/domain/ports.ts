@@ -96,8 +96,9 @@ export interface UpdatePort {
 
 /** Native main-window close requests stay prevented until the renderer acknowledges a flush. */
 export interface AppLifecyclePort {
+  beginCloseListenerRegistration(): Promise<number>
   onCloseRequested(handler: (request: { generation: number }) => void): Promise<() => void>
-  setListenerReady(ready: boolean, listenerId: string): Promise<void>
+  setListenerReady(ready: boolean, registrationToken: number): Promise<void>
   completeClose(generation: number, saved: boolean): Promise<void>
 }
 

@@ -109,6 +109,7 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
         "allow-read-image-asset",
         "allow-open-external-link",
         "allow-complete-main-window-close",
+        "allow-begin-main-window-close-listener-registration",
         "allow-set-main-window-close-listener-ready",
         "allow-delete-temporary",
         "allow-convert-temporary",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-main-window-close-listener-registration"
+description = "Enables the begin_main_window_close_listener_registration command without any pre-configured scope."
+commands.allow = ["begin_main_window_close_listener_registration"]
+
+[[permission]]
+identifier = "deny-begin-main-window-close-listener-registration"
+description = "Denies the begin_main_window_close_listener_registration command without any pre-configured scope."
+commands.deny = ["begin_main_window_close_listener_registration"]
