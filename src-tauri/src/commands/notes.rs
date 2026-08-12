@@ -8,7 +8,7 @@ use crate::{
     storage::{
         database::Database,
         paths::StoragePaths,
-        repository::{normalized_note_title, LinkRepository, NoteRepository},
+        repository::{normalized_note_title, LinkRepairOutcome, LinkRepository, NoteRepository},
         trash::TrashService,
     },
     windows::sticky::{authorize_temporary_caller, TemporaryCommandOperation},
@@ -90,19 +90,49 @@ pub fn rename_note_in_storage(
     note_id: NoteId,
     title: &str,
 ) -> Result<RenameNoteResult, CommandError> {
+    rename_note_in_storage_with_repair(paths, note_id, title, |links, target_id, title, guard| {
+        links.rename_target_labels_with_target_locked(target_id, title, guard)
+    })
+}
+
+#[doc(hidden)]
+pub fn rename_note_in_storage_with_repair<Repair>(
+    paths: &StoragePaths,
+    note_id: NoteId,
+    title: &str,
+    repair: Repair,
+) -> Result<RenameNoteResult, CommandError>
+where
+    Repair: FnOnce(
+        &LinkRepository,
+        NoteId,
+        &str,
+        &crate::platform::IndexMutationLock,
+    ) -> Result<LinkRepairOutcome, CommandError>,
+{
     let guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
     let notes = NoteRepository::new(paths.clone());
     let document = notes.rename_note_locked(note_id, title, &guard)?;
-    let link_repair = LinkRepository::new(paths.clone()).rename_target_labels_locked(
+    let repair_outcome = repair(
+        &LinkRepository::new(paths.clone()),
         note_id,
         &document.title,
         &guard,
-    )?;
-    // A self-link repair can publish one more revision after the title update.
-    let document = notes.load_locked(note_id, &guard)?;
+    )
+    .unwrap_or_else(|error| LinkRepairOutcome {
+        result: LinkRepairResult {
+            updated: 0,
+            failed_source_ids: Vec::new(),
+            failure: Some(error.into()),
+        },
+        target_document: None,
+    });
+    // Self-link repair returns the exact revision it durably published, avoiding
+    // a second fallible load after the rename has already committed.
+    let document = repair_outcome.target_document.unwrap_or(document);
     Ok(RenameNoteResult {
         document,
-        link_repair,
+        link_repair: repair_outcome.result,
     })
 }
 

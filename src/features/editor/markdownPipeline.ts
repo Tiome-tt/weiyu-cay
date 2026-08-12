@@ -93,10 +93,54 @@ export interface MarkdownSourceRange {
  * Literal/code nodes, standard links/images, definitions, and any raw-HTML line are excluded.
  */
 export function commonmarkProseRanges(markdown: string): MarkdownSourceRange[] {
-  const textRanges: MarkdownSourceRange[] = []
+  const contextMarkdown = maskApplicationLinkCandidates(markdown)
+  const proseRanges: MarkdownSourceRange[] = []
   const htmlLines: MarkdownSourceRange[] = []
-  collectSourceRanges(parser.parse(markdown) as MarkdownNode, markdown, false, textRanges, htmlLines)
-  return textRanges.filter((range) => !htmlLines.some((html) => rangesOverlap(range, html)))
+  collectSourceRanges(parser.parse(contextMarkdown) as MarkdownNode, markdown, false, proseRanges, htmlLines)
+  return mergeProseRanges(proseRanges)
+    .filter((range) => !htmlLines.some((html) => rangesOverlap(range, html)))
+}
+
+/**
+ * Keeps source offsets stable while preventing legal label punctuation from
+ * changing the CommonMark tree used only to determine the surrounding context.
+ */
+function maskApplicationLinkCandidates(markdown: string): string {
+  const masked = markdown.split('')
+  let cursor = 0
+  while (cursor < markdown.length) {
+    const from = markdown.indexOf('[[', cursor)
+    if (from < 0) break
+    let index = from + 2
+    let nested = -1
+    let close = -1
+    while (index < markdown.length) {
+      if (markdown[index] === '\\') {
+        index += 2
+        continue
+      }
+      if (markdown.startsWith('[[', index)) {
+        nested = index
+        break
+      }
+      if (markdown.startsWith(']]', index)) {
+        close = index
+        break
+      }
+      index += 1
+    }
+    if (nested >= 0) {
+      cursor = nested
+      continue
+    }
+    if (close < 0) break
+    const to = close + 2
+    for (let offset = from; offset < to; offset += 1) {
+      if (masked[offset] !== '\r' && masked[offset] !== '\n') masked[offset] = 'x'
+    }
+    cursor = to
+  }
+  return masked.join('')
 }
 
 function collectText(node: MarkdownNode, fragments: string[]) {
@@ -122,7 +166,7 @@ function collectSourceRanges(
   node: MarkdownNode,
   markdown: string,
   excluded: boolean,
-  textRanges: MarkdownSourceRange[],
+  proseRanges: MarkdownSourceRange[],
   htmlLines: MarkdownSourceRange[],
 ) {
   const type = typeof node.type === 'string' ? node.type : ''
@@ -139,13 +183,29 @@ function collectSourceRanges(
     'linkReference',
     'yaml',
   ]).has(type)
-  if (type === 'text' && !nextExcluded && range !== null) textRanges.push(range)
+  if (type === 'text' && !nextExcluded && range !== null) {
+    proseRanges.push(range)
+  }
   if (!Array.isArray(node.children)) return
   for (const child of node.children) {
     if (typeof child === 'object' && child !== null) {
-      collectSourceRanges(child as MarkdownNode, markdown, nextExcluded, textRanges, htmlLines)
+      collectSourceRanges(child as MarkdownNode, markdown, nextExcluded, proseRanges, htmlLines)
     }
   }
+}
+
+function mergeProseRanges(ranges: MarkdownSourceRange[]): MarkdownSourceRange[] {
+  const sorted = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to)
+  const merged: MarkdownSourceRange[] = []
+  for (const range of sorted) {
+    const previous = merged[merged.length - 1]
+    if (previous !== undefined && range.from <= previous.to) {
+      previous.to = Math.max(previous.to, range.to)
+    } else {
+      merged.push({ ...range })
+    }
+  }
+  return merged
 }
 
 function sourceRange(node: MarkdownNode): MarkdownSourceRange | null {

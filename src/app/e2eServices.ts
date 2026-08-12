@@ -139,7 +139,7 @@ export function createE2EAppServices(): AppServices {
       saveState(state)
       const authoritative = state.notes.find((note) => note.id === id)
       if (authoritative === undefined) throw new Error('renamed note disappeared')
-      return { document: structuredClone(authoritative), linkRepair: { updated, failedSourceIds: [] } }
+      return { document: structuredClone(authoritative), linkRepair: { updated, failedSourceIds: [], failure: null } }
     },
     async moveNote(id: NoteId, owner: FolderId | null) {
       const index = state.notes.findIndex((note) => note.id === id)
@@ -192,7 +192,7 @@ export function createE2EAppServices(): AppServices {
       async listTargets() { return state.notes.filter((note) => note.kind === 'formal').map(summary) },
       async resolve(id) { return state.notes.find((note) => note.id === id) ? summary(state.notes.find((note) => note.id === id)!) : null },
       async backlinks() { return [] },
-      async renameTargetLabels() { return { updated: 0, failedSourceIds: [] } },
+      async renameTargetLabels() { return { updated: 0, failedSourceIds: [], failure: null } },
     },
     temporary: {
       async create() { throw new Error('not needed in main-window E2E') },

@@ -150,7 +150,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       const result = await onRenameNote(title)
       setTitleDraft(result.document.title)
       setMetadataNotice(
-        result.linkRepair.failedSourceIds.length > 0
+        result.linkRepair.failure !== null || result.linkRepair.failedSourceIds.length > 0
           ? `标题已更新；${result.linkRepair.failedSourceIds.length} 个引用标签将在重试时修复。`
           : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`,
       )

@@ -66,12 +66,14 @@ pub fn commonmark_prose_ranges(markdown: &str) -> Vec<Range<usize>> {
     let mut exclusions = Vec::new();
     let mut text_ranges = Vec::new();
     let mut html_lines = Vec::new();
+    let context_markdown = mask_application_link_candidates(markdown);
 
-    for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
+    for (event, range) in Parser::new_ext(&context_markdown, options).into_offset_iter() {
         match event {
             Event::Start(tag) => {
                 let inherited = exclusions.last().copied().unwrap_or(false);
-                exclusions.push(inherited || excludes_application_syntax(&tag));
+                let excluded = inherited || excludes_application_syntax(&tag);
+                exclusions.push(excluded);
             }
             Event::End(_) => {
                 exclusions.pop();
@@ -92,14 +94,64 @@ pub fn commonmark_prose_ranges(markdown: &str) -> Vec<Range<usize>> {
         .collect()
 }
 
+/// Masks complete application-link candidates without changing byte offsets.
+/// CommonMark then describes only the candidate's surrounding context, so legal
+/// label punctuation cannot turn part of the application token into markup.
+fn mask_application_link_candidates(markdown: &str) -> String {
+    let source = markdown.as_bytes();
+    let mut masked = source.to_vec();
+    let mut cursor = 0;
+    while cursor + 1 < source.len() {
+        let Some(relative_start) = source[cursor..].windows(2).position(|pair| pair == b"[[")
+        else {
+            break;
+        };
+        let start = cursor + relative_start;
+        let mut index = start + 2;
+        let mut nested = None;
+        let mut close = None;
+        while index + 1 < source.len() {
+            if source[index] == b'\\' {
+                index = (index + 2).min(source.len());
+                continue;
+            }
+            if &source[index..index + 2] == b"[[" {
+                nested = Some(index);
+                break;
+            }
+            if &source[index..index + 2] == b"]]" {
+                close = Some(index);
+                break;
+            }
+            index += 1;
+        }
+        if let Some(nested) = nested {
+            cursor = nested;
+            continue;
+        }
+        let Some(close) = close else {
+            break;
+        };
+        let end = close + 2;
+        for byte in &mut masked[start..end] {
+            if !matches!(*byte, b'\r' | b'\n') {
+                *byte = b'x';
+            }
+        }
+        cursor = end;
+    }
+    // Only complete candidates are replaced, byte-for-byte, with ASCII.
+    String::from_utf8(masked).expect("masking valid UTF-8 with ASCII preserves UTF-8")
+}
+
 fn merge_prose_ranges(markdown: &str, ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
     for range in ranges {
         if let Some(previous) = merged.last_mut() {
             let application_escape_gap = markdown.get(previous.end..range.start) == Some("\\")
                 && markdown[range.start..].starts_with(['\\', '|', '[', ']']);
-            if previous.end == range.start || application_escape_gap {
-                previous.end = range.end;
+            if range.start <= previous.end || application_escape_gap {
+                previous.end = previous.end.max(range.end);
                 continue;
             }
         }

@@ -37,13 +37,15 @@ describe('App', () => {
       loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Close-safe note', 'old body')),
       saveNote: vi.fn(() => pendingSave.promise),
     })
-    let requestClose!: () => void
+    let requestClose!: (request: { generation: number }) => void
     const completeClose = vi.fn().mockResolvedValue(undefined)
+    const setListenerReady = vi.fn().mockResolvedValue(undefined)
     const lifecycle = {
-      onCloseRequested: vi.fn(async (handler: () => void) => {
+      onCloseRequested: vi.fn(async (handler: (request: { generation: number }) => void) => {
         requestClose = handler
         return () => undefined
       }),
+      setListenerReady,
       completeClose,
     }
     const services = {
@@ -58,14 +60,64 @@ describe('App', () => {
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty close draft' } }))
     await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, expect.any(String)))
 
-    act(() => requestClose())
+    act(() => requestClose({ generation: 7 }))
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(completeClose).not.toHaveBeenCalled()
     expect(editor.state.facet(EditorView.editable)).toBe(false)
     await act(async () => pendingSave.resolve({ ...fakeNotePortDocument(activeId, 'Close-safe note', 'dirty close draft'), revision: 2 }))
-    await waitFor(() => expect(completeClose).toHaveBeenCalledWith(true))
+    await waitFor(() => expect(completeClose).toHaveBeenCalledWith(7, true))
+  })
+
+  it('marks each lifecycle listener generation unavailable before unmounting it', async () => {
+    const unlisten = vi.fn()
+    const setListenerReady = vi.fn().mockResolvedValue(undefined)
+    const lifecycle = {
+      onCloseRequested: vi.fn(async () => unlisten),
+      setListenerReady,
+      completeClose: vi.fn().mockResolvedValue(undefined),
+    }
+    const services = {
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle,
+    }
+
+    const mounted = render(<App services={services} />)
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, expect.any(String)))
+    const listenerId = setListenerReady.mock.calls[0]?.[1]
+    mounted.unmount()
+
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, listenerId))
+    await waitFor(() => expect(unlisten).toHaveBeenCalledOnce())
+  })
+
+  it('marks the listener unavailable after a readiness re-emit failure', async () => {
+    const unlisten = vi.fn()
+    const setListenerReady = vi.fn(async (ready: boolean, listenerId: string) => {
+      void listenerId
+      if (ready) throw new Error('injected initial close re-emit failure')
+    })
+    const lifecycle = {
+      onCloseRequested: vi.fn(async () => unlisten),
+      setListenerReady,
+      completeClose: vi.fn().mockResolvedValue(undefined),
+    }
+    const services = {
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle,
+    }
+
+    const mounted = render(<App services={services} />)
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, expect.any(String)))
+    const listenerId = setListenerReady.mock.calls[0]?.[1]
+    mounted.unmount()
+
+    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, listenerId))
+    await waitFor(() => expect(unlisten).toHaveBeenCalledOnce())
   })
 
   it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
@@ -393,6 +445,48 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
     expect(screen.queryByRole('navigation', { name: '文件夹' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('button')).toHaveLength(1)
+  })
+
+  it('releases the editor barrier and permits native close when relocation restart is rejected', async () => {
+    const activeId = '019c0000-0000-7000-8000-000000000054' as NoteId
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([{ ...fakeNotePortDocument(activeId, 'Relocated note'), excerpt: '' }]),
+      loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Relocated note', 'durable body')),
+    })
+    let requestClose!: (request: { generation: number }) => void
+    const completeClose = vi.fn().mockResolvedValue(undefined)
+    const lifecycle = {
+      onCloseRequested: vi.fn(async (handler: (request: { generation: number }) => void) => {
+        requestClose = handler
+        return () => undefined
+      }),
+      setListenerReady: vi.fn().mockResolvedValue(undefined),
+      completeClose,
+    }
+    const moveStorageRoot = vi.fn().mockResolvedValue(undefined)
+    const restartApplication = vi.fn().mockRejectedValue(new Error('restart rejected'))
+    const user = userEvent.setup()
+    render(<App services={{
+      notes, folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort({ moveStorageRoot, restartApplication }), lifecycle,
+    }} />)
+    await user.click(await screen.findByRole('button', { name: /^Relocated note/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('button', { name: '移动数据' }))
+    expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: '立即重启' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('请手动退出后重新打开')
+    expect(editor.state.facet(EditorView.editable)).toBe(true)
+    act(() => requestClose({ generation: 11 }))
+    await waitFor(() => expect(completeClose).toHaveBeenCalledWith(11, true))
+    expect(moveStorageRoot).toHaveBeenCalledOnce()
   })
 
   it('adopts settings events, ignores a stale load, and removes the listener on unmount', async () => {

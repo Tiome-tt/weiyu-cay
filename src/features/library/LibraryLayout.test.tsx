@@ -115,7 +115,7 @@ describe('LibraryLayout', () => {
       loadNote: vi.fn(async () => current),
       renameNote: vi.fn(async (_id, title) => {
         current = { ...current, title, revision: current.revision + 1, updatedAt: '2026-08-11T10:00:00Z' }
-        return { document: current, linkRepair: { updated: 2, failedSourceIds: [] } }
+        return { document: current, linkRepair: { updated: 2, failedSourceIds: [], failure: null } }
       }),
       moveNote: vi.fn(async (_id, folderId) => {
         current = { ...current, folderId, revision: current.revision + 1, updatedAt: '2026-08-11T10:01:00Z' }
@@ -135,6 +135,58 @@ describe('LibraryLayout', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: '笔记文件夹' }), folderB)
     expect(notes.moveNote).toHaveBeenCalledWith(noteA, folderB)
     expect(await screen.findByText('笔记已移动。', { selector: '[role="status"]' })).toBeVisible()
+  })
+
+  it('adopts a committed rename revision, retries partial link repair, and saves without conflict', async () => {
+    let current = { ...note('body'), id: noteA, title: 'Old title', revision: 1 }
+    const renameNote = vi.fn(async (_id: NoteId, title: string) => {
+      current = { ...current, title, revision: 2 }
+      return renameNote.mock.calls.length === 1
+        ? {
+            document: current,
+            linkRepair: {
+              updated: 0,
+              failedSourceIds: [],
+              failure: { code: 'io' as const, message: 'The operation could not be completed on local storage.' },
+            },
+          }
+        : { document: current, linkRepair: { updated: 1, failedSourceIds: [], failure: null } }
+    })
+    const saveNote = vi.fn(async (document: NoteDocument) => {
+      if (document.revision !== 2) throw new Error('revision conflict')
+      current = { ...document, revision: 3 }
+      return current
+    })
+    const notes = fakeNotePort({
+      listNotes: vi.fn(async () => [summary(noteA, current.title)]),
+      loadNote: vi.fn(async () => current),
+      renameNote,
+      saveNote,
+    })
+    const ref = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await user.click(await screen.findByRole('button', { name: /^Old title/ }))
+    const title = screen.getByRole('textbox', { name: '笔记标题' })
+    await user.clear(title)
+    await user.type(title, 'New title{Enter}')
+
+    expect(await screen.findByRole('heading', { name: 'New title' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '重试链接修复' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '重试链接修复' }))
+    await waitFor(() => expect(renameNote).toHaveBeenCalledTimes(2))
+    expect(renameNote).toHaveBeenLastCalledWith(noteA, 'New title')
+    await waitFor(() => expect(screen.queryByRole('button', { name: '重试链接修复' })).not.toBeInTheDocument())
+
+    const editor = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' edited' } }))
+    const release = await ref.current?.prepareExit()
+    expect(release).toEqual(expect.any(Function))
+    expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'New title', revision: 2, markdown: 'body edited',
+    }))
+    release?.()
   })
 
   it('restores and persists keyboard-accessible collapsed columns without losing proportions', async () => {

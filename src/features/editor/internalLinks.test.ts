@@ -17,6 +17,7 @@ import {
   serializeInternalLink,
 } from './internalLinks'
 import { pngBytes } from '../../test/fakes'
+import linkContract from '../../shared/internal-link-contract.json'
 
 const targetId = '019c0000-0000-7000-8000-000000000002' as NoteId
 const otherId = '019c0000-0000-7000-8000-000000000003' as NoteId
@@ -40,7 +41,7 @@ function linkPort(overrides: Partial<LinkPort> = {}): LinkPort {
     listTargets: vi.fn().mockResolvedValue([]),
     resolve: vi.fn().mockResolvedValue(null),
     backlinks: vi.fn().mockResolvedValue([]),
-    renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [] }),
+    renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [], failure: null }),
     ...overrides,
   }
 }
@@ -144,6 +145,32 @@ describe('persisted internal link helpers', () => {
     expect(parseInternalLinks(markdown)).toEqual([
       expect.objectContaining({ label: 'Target', targetId }),
     ])
+  })
+
+  it.each(linkContract.contextual)('matches the shared contextual vector: $name', ({ markdown, title, allowed }) => {
+    const parsed = parseInternalLinks(markdown)
+
+    if (!allowed) {
+      expect(parsed).toEqual([])
+      return
+    }
+    expect(parsed).toEqual([
+      expect.objectContaining({ label: title, targetId }),
+    ])
+    expect(displayInternalLinks(markdown)).toContain(`[[${title}]]`)
+  })
+
+  it('decorates a durable strong-title link as one atomic display link', () => {
+    const markdown = `[[**Bold**|${targetId}]]`
+    render(createElement(MarkdownSource, {
+      markdown,
+      onChange: vi.fn(),
+      links: linkPort(),
+      linkCache: new Map([[targetId, summary(targetId, '**Bold**')]]),
+    }))
+
+    expect(screen.getByRole('link', { name: '[[**Bold**]]' })).toBeVisible()
+    expect(screen.queryByText(targetId)).not.toBeInTheDocument()
   })
 
   it('inserts a chosen typed note summary as durable syntax and displays it atomically', () => {

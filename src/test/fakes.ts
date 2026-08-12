@@ -27,7 +27,7 @@ export const fakeNotePort = (overrides: Partial<NotePort> = {}): NotePort => ({
   loadNote: vi.fn().mockResolvedValue(note()),
   saveNote: vi.fn().mockResolvedValue(note()),
   listNotes: vi.fn().mockResolvedValue([]),
-  renameNote: vi.fn().mockResolvedValue({ document: note(), linkRepair: { updated: 0, failedSourceIds: [] } }),
+  renameNote: vi.fn().mockResolvedValue({ document: note(), linkRepair: { updated: 0, failedSourceIds: [], failure: null } }),
   moveNote: vi.fn().mockResolvedValue(note()),
   ...overrides,
 })
@@ -86,7 +86,7 @@ export const fakeLinkPort = (overrides: Partial<LinkPort> = {}): LinkPort => ({
   listTargets: vi.fn().mockResolvedValue([]),
   resolve: vi.fn().mockResolvedValue(null),
   backlinks: vi.fn().mockResolvedValue([]),
-  renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [] }),
+  renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [], failure: null }),
   ...overrides,
 })
 

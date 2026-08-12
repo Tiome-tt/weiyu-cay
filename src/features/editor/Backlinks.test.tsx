@@ -28,7 +28,7 @@ function port(backlinks: LinkPort['backlinks']): LinkPort {
     listTargets: vi.fn().mockResolvedValue([]),
     resolve: vi.fn().mockResolvedValue(null),
     backlinks,
-    renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [] }),
+    renameTargetLabels: vi.fn().mockResolvedValue({ updated: 0, failedSourceIds: [], failure: null }),
   }
 }
 

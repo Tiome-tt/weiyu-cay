@@ -58,7 +58,7 @@ describe('TauriClient', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce({ updated: 0, failedSourceIds: [] })
+      .mockResolvedValueOnce({ updated: 0, failedSourceIds: [], failure: null })
     const { links } = createTauriPorts()
 
     await links.listTargets()
@@ -159,6 +159,19 @@ describe('TauriClient', () => {
       ['check_for_update', undefined],
       ['install_pending_update', undefined],
       ['restart_after_update', undefined],
+    ])
+  })
+
+  it('maps close listener readiness and generation acknowledgements to main-only commands', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const { lifecycle } = createTauriPorts()
+
+    await lifecycle.setListenerReady(true, 'renderer-listener-1')
+    await lifecycle.completeClose(9, false)
+
+    expect(invokeMock.mock.calls).toEqual([
+      ['set_main_window_close_listener_ready', { ready: true, listenerId: 'renderer-listener-1' }],
+      ['complete_main_window_close', { generation: 9, saved: false }],
     ])
   })
 

@@ -113,6 +113,23 @@ pub struct NoteSummary {
 pub struct LinkRepairResult {
     pub updated: usize,
     pub failed_source_ids: Vec<NoteId>,
+    pub failure: Option<LinkRepairFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkRepairFailure {
+    pub code: crate::error::CommandErrorCode,
+    pub message: String,
+}
+
+impl From<crate::error::CommandError> for LinkRepairFailure {
+    fn from(error: crate::error::CommandError) -> Self {
+        Self {
+            code: error.code(),
+            message: error.message().to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

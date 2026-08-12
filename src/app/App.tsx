@@ -160,7 +160,7 @@ function MainApplication({ services }: { services: AppServices }) {
     if (lifecycle === undefined) return
     let active = true
     let unlisten: (() => void) | undefined
-    const close = async () => {
+    const close = async (generation: number) => {
       if (closeBusy.current) return
       closeBusy.current = true
       setCloseNotice({ status: 'status', message: '正在安全保存并退出…' })
@@ -169,28 +169,35 @@ function MainApplication({ services }: { services: AppServices }) {
         release = await libraryRef.current?.prepareExit() ?? null
         if (release === null) {
           setCloseNotice({ status: 'error', message: '无法退出：请先解决保存错误，然后重试关闭。' })
-          await lifecycle.completeClose(false)
+          await lifecycle.completeClose(generation, false)
           return
         }
-        await lifecycle.completeClose(true)
+        await lifecycle.completeClose(generation, true)
         release = null
       } catch {
         if (active) setCloseNotice({ status: 'error', message: '无法退出：保存确认失败，请重试关闭。' })
-        await lifecycle.completeClose(false).catch(() => undefined)
+        await lifecycle.completeClose(generation, false).catch(() => undefined)
       } finally {
         release?.()
         closeBusy.current = false
       }
     }
-    void lifecycle.onCloseRequested(() => void close()).then((stop) => {
-      if (!active) stop()
-      else unlisten = stop
+    const listenerId = globalThis.crypto.randomUUID()
+    let listenerReady = false
+    const registration = lifecycle.onCloseRequested((request) => void close(request.generation)).then(async (stop) => {
+      unlisten = stop
+      if (!active) return
+      listenerReady = true
+      await lifecycle.setListenerReady(true, listenerId)
     }).catch(() => {
       if (active) setCloseNotice({ status: 'error', message: '无法监听安全退出请求，请保存后重试。' })
     })
     return () => {
       active = false
-      unlisten?.()
+      void registration.finally(async () => {
+        if (listenerReady) await lifecycle.setListenerReady(false, listenerId).catch(() => undefined)
+        unlisten?.()
+      })
     }
   }, [services.lifecycle])
   return (

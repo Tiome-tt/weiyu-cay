@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { EditorMode, NoteId } from '../../domain/model'
-import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { SearchBox } from '../search/SearchBox'
@@ -37,6 +37,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState(false)
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
+  const [linkRepairRetry, setLinkRepairRetry] = useState<{ noteId: NoteId; title: string } | null>(null)
+  const [linkRepairBusy, setLinkRepairBusy] = useState(false)
   const [deletingNoteId, setDeletingNoteId] = useState<NoteId | null>(null)
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
@@ -51,6 +53,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
   const trashMutationRef = useRef(0)
   const storageMoveLockedRef = useRef(false)
+  const linkRepairBusyRef = useRef(false)
   const mountedRef = useRef(false)
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
@@ -66,7 +69,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }, [])
 
-  useEffect(() => setMetadataNotice(null), [library.activeNoteId])
+  useEffect(() => {
+    setMetadataNotice(null)
+    setLinkRepairRetry(null)
+  }, [library.activeNoteId])
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -135,6 +141,29 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       return null
     } finally {
       if (barrierHeld) activeEditor?.endEditBarrier()
+    }
+  }
+
+  const retryLinkRepair = async () => {
+    const pending = linkRepairRetry
+    if (pending === null || linkRepairBusyRef.current) return
+    linkRepairBusyRef.current = true
+    setLinkRepairBusy(true)
+    try {
+      const result = await navigateAfterSave(() => library.renameNote(pending.noteId, pending.title))
+      if (result === null) throw new Error('link repair retry was blocked')
+      if (linkRepairNeedsRetry(result.linkRepair)) {
+        setLinkRepairRetry({ noteId: result.document.id, title: result.document.title })
+        setMetadataNotice('标题已提交；链接修复仍未完成，可再次重试。')
+      } else {
+        setLinkRepairRetry(null)
+        setMetadataNotice(`链接修复已完成；已刷新 ${result.linkRepair.updated} 篇引用笔记。`)
+      }
+    } catch {
+      setMetadataNotice('标题保持已提交状态；链接修复重试失败，可再次重试。')
+    } finally {
+      linkRepairBusyRef.current = false
+      setLinkRepairBusy(false)
     }
   }
 
@@ -399,11 +428,11 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onRenameNote={async (title) => {
               const result = await navigateAfterSave(() => library.renameNote(library.document!.id, title))
               if (result === null) throw new Error('rename was blocked by an unsaved editor')
-              setMetadataNotice(
-                result.linkRepair.failedSourceIds.length > 0
-                  ? `标题已更新；${result.linkRepair.failedSourceIds.length} 个引用标签将在重试时修复。`
-                  : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`,
-              )
+              const retryRequired = linkRepairNeedsRetry(result.linkRepair)
+              setLinkRepairRetry(retryRequired ? { noteId: result.document.id, title: result.document.title } : null)
+              setMetadataNotice(retryRequired
+                ? '标题已提交；链接修复未完成，可安全重试。'
+                : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`)
               return result
             }}
             onMoveNote={async (folderId) => {
@@ -419,11 +448,20 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           />
         )}
         {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
+        {activeView === 'library' && linkRepairRetry && (
+          <button type="button" disabled={linkRepairBusy} onClick={() => void retryLinkRepair()}>
+            重试链接修复
+          </button>
+        )}
       </section>
       </SplitPane>
     </div>
   )
 })
+
+function linkRepairNeedsRetry(report: LinkRepairReport) {
+  return report.failure !== null || report.failedSourceIds.length > 0
+}
 
 function isColumnPreference(value: unknown): value is LibraryColumnPreference {
   if (typeof value !== 'object' || value === null) return false

@@ -27,6 +27,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const busyRef = useRef(false)
   const draftRef = useRef(value)
   const shortcutStatusRequest = useRef(0)
+  const restartBarrierReleaseRef = useRef<(() => void) | null>(null)
   const operationBusy = busy !== null || exportController?.busy === true
 
   useEffect(() => {
@@ -136,6 +137,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
       if (requestRef.current !== request) return
       setRestartRequired(true)
       onRestartRequired?.()
+      restartBarrierReleaseRef.current = release
       release = null
     } catch {
       release?.()
@@ -153,6 +155,8 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     try {
       await settings.restartApplication()
     } catch {
+      restartBarrierReleaseRef.current?.()
+      restartBarrierReleaseRef.current = null
       setError('无法重新启动应用，请手动退出后重新打开。')
       setRestarting(false)
     }

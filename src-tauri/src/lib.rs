@@ -113,6 +113,7 @@ pub fn run() {
             commands::settings::move_storage_root,
             commands::settings::restart_application,
             commands::export::export_library,
+            windows::main::set_main_window_close_listener_ready,
             windows::main::complete_main_window_close,
         ])
         .build(tauri::generate_context!())
@@ -127,8 +128,10 @@ pub fn run() {
             } if label == windows::main::MAIN_WINDOW_LABEL => {
                 match windows::main::request_renderer_flush(app_handle, &coordinator) {
                     windows::main::CloseRequestDecision::AllowExit => {}
-                    windows::main::CloseRequestDecision::RequestFlush
-                    | windows::main::CloseRequestDecision::WaitForFlush => api.prevent_close(),
+                    windows::main::CloseRequestDecision::RequestFlush { .. }
+                    | windows::main::CloseRequestDecision::WaitForRenderer { .. } => {
+                        api.prevent_close()
+                    }
                 }
                 None
             }
@@ -139,8 +142,8 @@ pub fn run() {
                     windows::main::CloseRequestDecision::AllowExit => {
                         Some(windows::sticky::AppLifecycleEvent::ExitRequested)
                     }
-                    windows::main::CloseRequestDecision::RequestFlush
-                    | windows::main::CloseRequestDecision::WaitForFlush => {
+                    windows::main::CloseRequestDecision::RequestFlush { .. }
+                    | windows::main::CloseRequestDecision::WaitForRenderer { .. } => {
                         api.prevent_exit();
                         None
                     }

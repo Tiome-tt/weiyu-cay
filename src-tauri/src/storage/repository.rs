@@ -1,5 +1,7 @@
 use crate::{
-    domain::{FolderId, LinkRepairResult, NoteDocument, NoteId, NoteKind, NoteSummary},
+    domain::{
+        FolderId, LinkRepairFailure, LinkRepairResult, NoteDocument, NoteId, NoteKind, NoteSummary,
+    },
     error::CommandError,
     storage::{
         atomic_file::{PublishFailure, PublishResult, PublishState},
@@ -32,6 +34,11 @@ pub struct LinkRepository {
 }
 
 pub type DocumentWriter = fn(&StoragePaths, NoteId, NoteKind, &[u8]) -> PublishResult;
+
+pub struct LinkRepairOutcome {
+    pub result: LinkRepairResult,
+    pub target_document: Option<NoteDocument>,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -609,24 +616,65 @@ impl LinkRepository {
         title: &str,
         guard: &crate::platform::IndexMutationLock,
     ) -> Result<LinkRepairResult, CommandError> {
+        self.rename_target_labels_with_target_locked(target_id, title, guard)
+            .map(|outcome| outcome.result)
+    }
+
+    #[doc(hidden)]
+    pub fn rename_target_labels_with_target_locked(
+        &self,
+        target_id: NoteId,
+        title: &str,
+        guard: &crate::platform::IndexMutationLock,
+    ) -> Result<LinkRepairOutcome, CommandError> {
         let title = normalized_link_label(title)?;
         let notes = NoteRepository::new_with_writer(self.paths.clone(), self.writer);
         let (source_ids, mut failed_source_ids) =
-            self.durable_link_sources(&notes, target_id, guard)?;
+            match self.durable_link_sources(&notes, target_id, guard) {
+                Ok(sources) => sources,
+                Err(error) => {
+                    return Ok(LinkRepairOutcome {
+                        result: LinkRepairResult {
+                            updated: 0,
+                            failed_source_ids: Vec::new(),
+                            failure: Some(LinkRepairFailure::from(error)),
+                        },
+                        target_document: None,
+                    });
+                }
+            };
         let mut updated = 0;
+        let mut target_document = None;
         for source_id in source_ids {
             let result = self.repair_source(&notes, source_id, target_id, title, guard);
             match result {
-                Ok(true) => updated += 1,
-                Ok(false) => {}
-                Err(_) => failed_source_ids.push(source_id),
+                Ok(Some(document)) => {
+                    updated += 1;
+                    if source_id == target_id {
+                        target_document = Some(document);
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    if source_id == target_id {
+                        // The Markdown write may already have committed before its index
+                        // transaction failed. Return the durable target revision so the
+                        // renderer never resumes editing from the pre-repair revision.
+                        target_document = notes.load_locked(source_id, guard).ok();
+                    }
+                    failed_source_ids.push(source_id);
+                }
             }
         }
         failed_source_ids.sort_by_key(ToString::to_string);
         failed_source_ids.dedup();
-        Ok(LinkRepairResult {
-            updated,
-            failed_source_ids,
+        Ok(LinkRepairOutcome {
+            result: LinkRepairResult {
+                updated,
+                failed_source_ids,
+                failure: None,
+            },
+            target_document,
         })
     }
 
@@ -685,14 +733,13 @@ impl LinkRepository {
         target_id: NoteId,
         title: &str,
         guard: &crate::platform::IndexMutationLock,
-    ) -> Result<bool, CommandError> {
+    ) -> Result<Option<NoteDocument>, CommandError> {
         let mut document = notes.load_locked(source_id, guard)?;
         let (markdown, changed) = rewrite_target_labels(&document.markdown, target_id, title);
         if changed {
             let revision = document.revision;
             document.markdown = markdown;
-            notes.save_locked(document, revision, guard)?;
-            return Ok(true);
+            return notes.save_locked(document, revision, guard).map(Some);
         }
 
         // A previous attempt may have published Markdown before its index transaction failed.
@@ -700,7 +747,7 @@ impl LinkRepository {
         // rewriting the file or inflating the successful-rewrite count.
         let database = open_database(&self.paths)?;
         notes.persist_after_content(&database, &document)?;
-        Ok(false)
+        Ok(None)
     }
 }
 

@@ -2,10 +2,12 @@ mod support;
 
 use rusqlite::{params, Connection};
 use simple_notes_lib::{
-    commands::notes::rename_note_in_storage,
+    commands::notes::{rename_note_in_storage, rename_note_in_storage_with_repair},
     domain::{NoteDocument, NoteId, NoteKind},
+    error::{CommandError, CommandErrorCode},
     storage::{
         atomic_file::{atomic_replace_contained, PublishFailure, PublishResult},
+        markdown::commonmark_prose_ranges,
         rebuild::rebuild_index,
         repository::{DocumentWriter, LinkRepository, NoteRepository},
     },
@@ -18,6 +20,26 @@ const SOURCE_A: &str = "019c0000-0000-7000-8000-000000000021";
 const SOURCE_B: &str = "019c0000-0000-7000-8000-000000000023";
 const TEMP: &str = "019c0000-0000-7000-8000-000000000024";
 const MISSING: &str = "019c0000-0000-7000-8000-000000000025";
+
+#[test]
+fn shared_contextual_vectors_match_rust_commonmark_prose_ranges() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../src/shared/internal-link-contract.json")).unwrap();
+    for vector in contract["contextual"].as_array().unwrap() {
+        let markdown = vector["markdown"].as_str().unwrap();
+        let from = markdown.find("[[").unwrap();
+        let to = markdown.rfind("]]").unwrap() + 2;
+        let covered = commonmark_prose_ranges(markdown)
+            .iter()
+            .any(|range| range.start <= from && range.end >= to);
+        assert_eq!(
+            covered,
+            vector["allowed"].as_bool().unwrap(),
+            "contextual vector {}",
+            vector["name"].as_str().unwrap()
+        );
+    }
+}
 
 #[test]
 fn save_indexes_only_exact_valid_links_with_byte_safe_unicode_ranges() {
@@ -116,6 +138,61 @@ fn index_and_rename_touch_only_commonmark_prose_links() {
 }
 
 #[test]
+fn index_and_repair_recognize_emphasis_and_strong_titles_as_prose_links() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "**Bold**",
+        "target",
+        "2026-07-30T08:00:00Z",
+    );
+    let markdown = format!("strong [[**Bold**|{TARGET}]] and emphasis [[*Italic*|{TARGET}]]");
+    create_note(
+        &store,
+        note_id(SOURCE_A),
+        "Source",
+        &markdown,
+        "2026-07-30T08:01:00Z",
+    );
+
+    let connection = Connection::open(store.paths.database()).unwrap();
+    let labels = connection
+        .prepare(
+            "SELECT visible_label FROM note_links WHERE source_note_id=?1 ORDER BY source_start",
+        )
+        .unwrap()
+        .query_map([blob(SOURCE_A)], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(labels, vec!["**Bold**", "*Italic*"]);
+
+    let repair = LinkRepository::new(store.paths.clone())
+        .rename_target_labels(note_id(TARGET), "**Fresh**")
+        .unwrap();
+    assert_eq!(repair.updated, 1);
+    assert!(repair.failed_source_ids.is_empty());
+    assert_eq!(
+        NoteRepository::new(store.paths.clone())
+            .load(note_id(SOURCE_A))
+            .unwrap()
+            .markdown,
+        format!("strong [[**Fresh**|{TARGET}]] and emphasis [[**Fresh**|{TARGET}]]")
+    );
+    let repaired_labels = connection
+        .prepare(
+            "SELECT visible_label FROM note_links WHERE source_note_id=?1 ORDER BY source_start",
+        )
+        .unwrap()
+        .query_map([blob(SOURCE_A)], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(repaired_labels, vec!["**Fresh**", "**Fresh**"]);
+}
+
+#[test]
 fn rename_note_returns_the_authoritative_revision_after_atomic_link_repair() {
     let store = TestStore::new();
     let self_link = format!("self [[Old|{TARGET}]]");
@@ -152,6 +229,82 @@ fn rename_note_returns_the_authoritative_revision_after_atomic_link_repair() {
             .markdown,
         format!("source [[New|{TARGET}]]")
     );
+}
+
+#[test]
+fn rename_returns_the_authoritative_self_link_revision_when_repair_indexing_fails() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Old",
+        &format!("self [[Old|{TARGET}]]"),
+        "2026-07-30T08:00:00Z",
+    );
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute_batch(&format!(
+            "CREATE TRIGGER fail_new_self_link BEFORE INSERT ON note_links \
+             WHEN hex(NEW.source_note_id)=upper('{}') AND NEW.visible_label='New' \
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+            TARGET.replace('-', "")
+        ))
+        .unwrap();
+
+    let result = rename_note_in_storage(&store.paths, note_id(TARGET), "New").unwrap();
+
+    assert_eq!(result.document.title, "New");
+    assert_eq!(result.document.revision, 2);
+    assert_eq!(result.document.markdown, format!("self [[New|{TARGET}]]"));
+    assert_eq!(result.link_repair.failed_source_ids, vec![note_id(TARGET)]);
+    assert!(result.link_repair.failure.is_none());
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute("DROP TRIGGER fail_new_self_link", [])
+        .unwrap();
+    let mut edited = result.document;
+    edited.markdown.push_str(" edited");
+    let saved = NoteRepository::new(store.paths.clone())
+        .save(edited, 2)
+        .unwrap();
+    assert_eq!(saved.revision, 3);
+}
+
+#[test]
+fn rename_returns_the_committed_document_when_link_source_enumeration_fails() {
+    let store = TestStore::new();
+    create_note(
+        &store,
+        note_id(TARGET),
+        "Old",
+        "body",
+        "2026-07-30T08:00:00Z",
+    );
+
+    let result = rename_note_in_storage_with_repair(
+        &store.paths,
+        note_id(TARGET),
+        "New",
+        |_links, _target_id, _title, _guard| {
+            Err(CommandError::io(
+                "injected formal note collection enumeration failure",
+            ))
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.document.title, "New");
+    assert_eq!(result.document.revision, 1);
+    assert_eq!(
+        result.link_repair.failure.as_ref().unwrap().code,
+        CommandErrorCode::Io
+    );
+    let notes = NoteRepository::new(store.paths.clone());
+    let mut edited = result.document;
+    edited.markdown = "edited after partial repair".into();
+    let saved = notes.save(edited, 1).unwrap();
+    assert_eq!(saved.revision, 2);
+    assert_eq!(saved.markdown, "edited after partial repair");
 }
 
 #[test]

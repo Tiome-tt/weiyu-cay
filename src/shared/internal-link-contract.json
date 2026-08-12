@@ -23,5 +23,55 @@
     "[[bad]label|019c0000-0000-7000-8000-000000000002]]",
     "[[bad|label|019c0000-0000-7000-8000-000000000002]]",
     "[[Target|019C0000-0000-7000-8000-000000000002]]"
+  ],
+  "contextual": [
+    {
+      "name": "strong label in prose",
+      "markdown": "before [[**Bold**|019c0000-0000-7000-8000-000000000002]] after",
+      "title": "**Bold**",
+      "allowed": true
+    },
+    {
+      "name": "emphasis label in prose",
+      "markdown": "before [[*Italic*|019c0000-0000-7000-8000-000000000002]] after",
+      "title": "*Italic*",
+      "allowed": true
+    },
+    {
+      "name": "strikethrough label in prose",
+      "markdown": "before [[~~Strike~~|019c0000-0000-7000-8000-000000000002]] after",
+      "title": "~~Strike~~",
+      "allowed": true
+    },
+    {
+      "name": "inline code punctuation in a prose label",
+      "markdown": "before [[`Code`|019c0000-0000-7000-8000-000000000002]] after",
+      "title": "`Code`",
+      "allowed": true
+    },
+    {
+      "name": "inline html punctuation in a prose label",
+      "markdown": "before [[<em>HTML</em>|019c0000-0000-7000-8000-000000000002]] after",
+      "title": "<em>HTML</em>",
+      "allowed": true
+    },
+    {
+      "name": "strong label in inline code",
+      "markdown": "before `[[**Bold**|019c0000-0000-7000-8000-000000000002]]` after",
+      "title": "**Bold**",
+      "allowed": false
+    },
+    {
+      "name": "strong label in standard link",
+      "markdown": "[outer [[**Bold**|019c0000-0000-7000-8000-000000000002]]](https://example.invalid)",
+      "title": "**Bold**",
+      "allowed": false
+    },
+    {
+      "name": "strong label in raw html",
+      "markdown": "<span>[[**Bold**|019c0000-0000-7000-8000-000000000002]]</span>",
+      "title": "**Bold**",
+      "allowed": false
+    }
   ]
 }

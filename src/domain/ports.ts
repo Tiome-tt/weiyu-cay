@@ -1,4 +1,5 @@
 import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } from './model'
+import type { CommandErrorCode } from './errors'
 
 export type SearchQuery =
   | { kind: 'tag'; value: string }
@@ -16,7 +17,13 @@ export interface NotePort {
 
 export interface RenameNoteResult {
   document: NoteDocument
-  linkRepair: { updated: number; failedSourceIds: NoteId[] }
+  linkRepair: LinkRepairReport
+}
+
+export interface LinkRepairReport {
+  updated: number
+  failedSourceIds: NoteId[]
+  failure: { code: CommandErrorCode; message: string } | null
 }
 
 export interface FolderPort {
@@ -89,8 +96,9 @@ export interface UpdatePort {
 
 /** Native main-window close requests stay prevented until the renderer acknowledges a flush. */
 export interface AppLifecyclePort {
-  onCloseRequested(handler: () => void): Promise<() => void>
-  completeClose(saved: boolean): Promise<void>
+  onCloseRequested(handler: (request: { generation: number }) => void): Promise<() => void>
+  setListenerReady(ready: boolean, listenerId: string): Promise<void>
+  completeClose(generation: number, saved: boolean): Promise<void>
 }
 
 export interface SearchResult {
@@ -114,7 +122,7 @@ export interface LinkPort {
   renameTargetLabels(
     noteId: NoteId,
     title: string,
-  ): Promise<{ updated: number; failedSourceIds: NoteId[] }>
+  ): Promise<LinkRepairReport>
 }
 
 export interface SystemPort {

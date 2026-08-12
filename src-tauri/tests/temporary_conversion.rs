@@ -1839,6 +1839,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-restart-after-update",
             "allow-move-storage-root",
             "allow-restart-application",
+            "allow-set-main-window-close-listener-ready",
             "allow-complete-main-window-close",
             "allow-export-library"
         ])
