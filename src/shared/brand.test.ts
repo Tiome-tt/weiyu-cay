@@ -26,4 +26,17 @@ describe('brand contract', () => {
     expect(development).toContain('cargo clean --manifest-path src-tauri/Cargo.toml')
     expect(development).toContain('不会删除笔记数据')
   })
+
+  it('keeps the original round-hill island source and platform icon entries aligned', () => {
+    const source = readFileSync('src/assets/weiyu-app-icon.svg', 'utf8')
+    const tauri = readFileSync('src-tauri/tauri.conf.json', 'utf8')
+
+    expect(source).toContain('data-layer="island"')
+    expect(source).toContain('data-layer="sand"')
+    expect(source).toContain('data-layer="waves"')
+    expect(source).toContain('#2F7866')
+    expect(source).toContain('#D59A5E')
+    expect(tauri).toContain('icons/icon.ico')
+    expect(tauri).toContain('icons/icon.icns')
+  })
 })
