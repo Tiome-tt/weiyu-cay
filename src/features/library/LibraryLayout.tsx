@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import type { EditorMode, NoteId } from '../../domain/model'
+import type { EditorMode, FolderId, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
@@ -13,6 +13,7 @@ import { DirectoryRail } from './DirectoryRail'
 import { LibraryRail, type LibraryRailEntry } from './LibraryRail'
 import { useResponsiveColumns } from './useResponsiveColumns'
 import { Icon } from '../../shared/Icon'
+import { CreateNotePopover } from './CreateNotePopover'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -40,8 +41,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
-  const [createBusy, setCreateBusy] = useState(false)
-  const [createError, setCreateError] = useState(false)
+  const [createPopoverOpen, setCreatePopoverOpen] = useState(false)
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
   const [linkRepairRetry, setLinkRepairRetry] = useState<{ noteId: NoteId; title: string } | null>(null)
   const [linkRepairBusy, setLinkRepairBusy] = useState(false)
@@ -55,6 +55,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const preferenceRequest = useRef(0)
   const collapsedPreferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
+  const createTriggerRef = useRef<HTMLButtonElement | null>(null)
   const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
   const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
@@ -202,7 +203,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       })
     },
     createNote: () => {
-      void createFormalNote('未命名笔记')
+      createTriggerRef.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+      setCreatePopoverOpen(true)
     },
   }))
 
@@ -295,17 +297,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const createFormalNote = async (title: string) => {
-    if (createBusy) return
-    setCreateBusy(true)
-    setCreateError(false)
-    try {
-      await navigateAfterSave(() => library.createNote(title))
-    } catch {
-      setCreateError(true)
-    } finally {
-      setCreateBusy(false)
-    }
+  const createFormalNote = async (title: string, folderId: FolderId | null) => {
+    const result = await navigateAfterSave(() => library.createNote(title, folderId))
+    if (result === null) throw new Error('create was blocked by an unsaved editor')
   }
 
   const undoFormalDelete = async () => {
@@ -336,6 +330,15 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
+      {createPopoverOpen && (
+        <CreateNotePopover
+          folders={library.folders}
+          initialFolderId={library.activeFolderId}
+          triggerRef={createTriggerRef}
+          onCreate={createFormalNote}
+          onClose={() => setCreatePopoverOpen(false)}
+        />
+      )}
       <div ref={columnsRef} className="library-columns">
       {collapsed.folder && (
         <LibraryRail
@@ -414,9 +417,6 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             activeId={library.activeNoteId}
             state={library.noteListState}
             onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
-            onCreate={(title) => void createFormalNote(title)}
-            creating={createBusy}
-            createError={createError}
             onDelete={trash === undefined ? undefined : (noteId, title) => void deleteFormalNote(noteId, title)}
             deletingId={deletingNoteId}
             deleteError={trashError}

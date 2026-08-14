@@ -35,6 +35,32 @@ function renderTree(overrides: { onSelect?: (id: FolderId | null) => void; onMov
 afterEach(cleanup)
 
 describe('FolderTree keyboard navigation', () => {
+  it('keeps folder mutations inside a selected-folder more menu', async () => {
+    const user = userEvent.setup()
+    const props = {
+      folders: rows,
+      state: 'ready' as const,
+      onSelect: vi.fn(),
+      onCreate: vi.fn().mockResolvedValue(undefined),
+      onRename: vi.fn().mockResolvedValue(undefined),
+      onMove: vi.fn().mockResolvedValue(undefined),
+      onDelete: vi.fn().mockResolvedValue(undefined),
+    }
+    const rendered = render(<FolderTree {...props} activeId={null} />)
+    const more = screen.getByRole('button', { name: '文件夹更多操作' })
+    expect(more).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '重命名文件夹' })).not.toBeInTheDocument()
+
+    rendered.rerender(<FolderTree {...props} activeId={folderA} />)
+    expect(more).toBeEnabled()
+    await user.click(more)
+    expect(screen.getByRole('menuitem', { name: '重命名文件夹' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: '移动文件夹' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: '删除空文件夹' })).toBeVisible()
+    await user.click(screen.getByRole('menuitem', { name: '重命名文件夹' }))
+    expect(screen.getByRole('textbox', { name: '重命名文件夹' })).toHaveFocus()
+  })
+
   it('offers a labelled header control that collapses only the library column', async () => {
     const onCollapse = vi.fn()
     const user = userEvent.setup()

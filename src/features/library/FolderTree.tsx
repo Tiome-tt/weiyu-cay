@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, t
 import type { Folder, FolderId } from '../../domain/model'
 import { APP_NAME } from '../../shared/brand'
 import { Icon } from '../../shared/Icon'
+import { FolderActionMenu } from './FolderActionMenu'
 
 interface FolderTreeProps {
   folders: Folder[]
@@ -220,39 +221,24 @@ export function FolderTree(props: FolderTreeProps) {
             </button>
           )}
           <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
-            +
+            <Icon name="plus" size={18} />
           </button>
+          <FolderActionMenu
+            enabled={selected !== undefined}
+            onRename={() => {
+              if (!selected) return
+              setRenaming(selected.id)
+              setName(selected.name)
+            }}
+            onMove={() => {
+              if (!selected) return
+              setMoving(selected.id)
+              setMoveTarget(selected.parentId)
+            }}
+            onDelete={() => void runDelete()}
+          />
         </div>
       </header>
-      <div className="folder-actions" aria-label="文件夹操作">
-        <button
-          type="button"
-          aria-label="重命名文件夹"
-          disabled={!selected}
-          onClick={() => {
-            if (!selected) return
-            setRenaming(selected.id)
-            setName(selected.name)
-          }}
-        >
-          重命名
-        </button>
-        <button
-          type="button"
-          aria-label="移动文件夹"
-          disabled={!selected}
-          onClick={() => {
-            if (!selected) return
-            setMoving(selected.id)
-            setMoveTarget(selected.parentId)
-          }}
-        >
-          移动
-        </button>
-        <button type="button" aria-label="删除空文件夹" disabled={!selected} onClick={() => void runDelete()}>
-          删除
-        </button>
-      </div>
       {creating && (
         <form className="folder-form" onSubmit={(event) => void finishCreate(event)}>
           <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} />
