@@ -340,11 +340,23 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       {collapsed.folder && (
         <LibraryRail
           activeEntry={activeRailEntry}
-          onUnfiled={() => void navigateAfterSave(() => {
-            setActiveView('library')
-            library.selectFolder(null)
-          })}
-          onFolders={() => void navigateAfterSave(() => setActiveView('library'))}
+          onUnfiled={() => {
+            if (activeRailEntry === 'unfiled') return
+            void navigateAfterSave(() => {
+              setActiveView('library')
+              library.selectFolder(null)
+            })
+          }}
+          onFolders={() => {
+            if (activeView === 'library') {
+              setColumnCollapsed('folder', false)
+              return
+            }
+            void navigateAfterSave(() => {
+              setActiveView('library')
+              setColumnCollapsed('folder', false)
+            })
+          }}
           onTemporary={temporary === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('temporary'))}
           onTrash={trash === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('trash'))}
           onExpand={() => setColumnCollapsed('folder', false)}

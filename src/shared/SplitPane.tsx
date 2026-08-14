@@ -138,8 +138,9 @@ export function SplitPane({
     if (drag.divider === 0) {
       updateSizes([event.clientX - left, sizesRef.current[1]], drag.divider)
     } else {
+      const firstTrack = (collapsed[0] ? 0 : sizesRef.current[0]) + visibleDividerWidth(0, collapsed)
       updateSizes(
-        [sizesRef.current[0], event.clientX - left - sizesRef.current[0] - DIVIDER_WIDTH],
+        [sizesRef.current[0], event.clientX - left - firstTrack],
         drag.divider,
       )
     }

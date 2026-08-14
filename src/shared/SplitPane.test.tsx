@@ -250,4 +250,30 @@ describe('SplitPane', () => {
     act(() => notifyResize?.([], {} as ResizeObserver))
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '272px' })
   })
+
+  it('pointer-resizes the directory from its effective origin while the remembered folder track is collapsed', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    render(
+      <SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[true, false]}>
+        <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
+      </SplitPane>,
+    )
+    const directoryDivider = screen.getByRole('separator', { name: '调整笔记列表栏宽度' })
+
+    fireEvent.pointerDown(directoryDivider, { clientX: 300, pointerId: 12 })
+    fireEvent.pointerMove(directoryDivider, { clientX: 360, pointerId: 12 })
+    fireEvent.pointerUp(directoryDivider, { pointerId: 12 })
+
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '360px' })
+  })
 })

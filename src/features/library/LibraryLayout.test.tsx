@@ -207,6 +207,42 @@ describe('LibraryLayout', () => {
     expect(screen.getByRole('button', { name: '折叠资料库' })).toBeVisible()
   })
 
+  it('uses the folder rail entry to visibly expand the library from the unfiled destination', async () => {
+    const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-columns': undefined,
+      'library-collapsed': { folder: true, noteList: false },
+    })[key]) as unknown as SystemPort['getWindowPreference']
+    const system = fakeSystemPort({ getWindowPreference })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await user.click(await screen.findByRole('button', { name: '文件夹' }))
+    expect(screen.queryByRole('navigation', { name: '折叠的资料库' })).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
+  })
+
+  it('keeps the current unfiled note selected when its active rail entry is clicked again', async () => {
+    const selected = { ...note('selected body'), id: noteA, title: 'Selected note' }
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, selected.title)]),
+      loadNote: vi.fn().mockResolvedValue(selected),
+    })
+    const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-columns': undefined,
+      'library-collapsed': { folder: true, noteList: false },
+    })[key]) as unknown as SystemPort['getWindowPreference']
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Selected note/ }))
+    expect(await screen.findByRole('heading', { name: 'Selected note' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '未归档笔记' }))
+
+    expect(screen.getByRole('heading', { name: 'Selected note' })).toBeVisible()
+    expect(notes.loadNote).toHaveBeenCalledTimes(1)
+  })
+
   it('automatically collapses at the planned threshold without overwriting manual preferences', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 700,

@@ -44,11 +44,12 @@ describe('collapsed library rails', () => {
 
     await user.click(screen.getByRole('button', { name: '未归档笔记' }))
     await user.click(screen.getByRole('button', { name: '临时收集箱' }))
+    await user.click(screen.getByRole('button', { name: '文件夹' }))
     await user.click(screen.getByRole('button', { name: '回收站' }))
     await user.click(screen.getByRole('button', { name: '展开资料库' }))
 
     expect(onUnfiled).toHaveBeenCalledTimes(1)
-    expect(onFolders).not.toHaveBeenCalled()
+    expect(onFolders).toHaveBeenCalledTimes(1)
     expect(onTemporary).toHaveBeenCalledTimes(1)
     expect(onTrash).toHaveBeenCalledTimes(1)
     expect(onExpand).toHaveBeenCalledTimes(1)
