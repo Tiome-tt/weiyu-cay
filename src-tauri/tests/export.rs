@@ -311,7 +311,7 @@ fn export_publishes_a_unique_child_without_overwriting_existing_content() {
     create_formal_note(&store, note_id(FIRST_ID), "Blocked", None, "blocked body");
     create_formal_note(&store, note_id(SECOND_ID), "Good", None, "good body");
     let destination = tempfile::tempdir().unwrap();
-    let existing = destination.path().join("Simple Notes Export");
+    let existing = destination.path().join("微屿导出");
     fs::create_dir(&existing).unwrap();
     fs::write(existing.join("user.txt"), b"user content").unwrap();
 
@@ -322,7 +322,7 @@ fn export_publishes_a_unique_child_without_overwriting_existing_content() {
         fs::read(existing.join("user.txt")).unwrap(),
         b"user content"
     );
-    assert_eq!(output.file_name().unwrap(), "Simple Notes Export (2)");
+    assert_eq!(output.file_name().unwrap(), "微屿导出 (2)");
     assert_eq!(report.notes_exported, 2);
     assert!(report.failed.is_empty());
     assert!(output.join("Blocked.md").exists());

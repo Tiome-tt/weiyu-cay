@@ -4,12 +4,12 @@ import { createVerifiedReleaseAssetManifest, validateReleaseMetadata, type Relea
 const repository = 'acme/simple-notes'
 const tag = 'v0.1.1-rc.1'
 const updaterAssets: ReleaseAsset[] = [
-  { id: 'RA_kwDOA1b2xM4AAAAB', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/101`, name: 'Simple Notes_0.1.1_x64_en-US.msi.zip' },
-  { id: 'RA_kwDOA1b2xM4AAAAC', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/102`, name: 'Simple Notes_0.1.1_x64_en-US.msi.zip.sig' },
-  { id: 'RA_kwDOA1b2xM4AAAAD', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/201`, name: 'Simple Notes_aarch64.app.tar.gz' },
-  { id: 'RA_kwDOA1b2xM4AAAAE', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/202`, name: 'Simple Notes_aarch64.app.tar.gz.sig' },
-  { id: 'RA_kwDOA1b2xM4AAAAF', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/301`, name: 'Simple Notes_x64.app.tar.gz' },
-  { id: 'RA_kwDOA1b2xM4AAAAG', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/302`, name: 'Simple Notes_x64.app.tar.gz.sig' },
+  { id: 'RA_kwDOA1b2xM4AAAAB', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/101`, name: '微屿_0.1.1_x64_en-US.msi.zip' },
+  { id: 'RA_kwDOA1b2xM4AAAAC', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/102`, name: '微屿_0.1.1_x64_en-US.msi.zip.sig' },
+  { id: 'RA_kwDOA1b2xM4AAAAD', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/201`, name: '微屿_aarch64.app.tar.gz' },
+  { id: 'RA_kwDOA1b2xM4AAAAE', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/202`, name: '微屿_aarch64.app.tar.gz.sig' },
+  { id: 'RA_kwDOA1b2xM4AAAAF', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/301`, name: '微屿_x64.app.tar.gz' },
+  { id: 'RA_kwDOA1b2xM4AAAAG', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/302`, name: '微屿_x64.app.tar.gz.sig' },
 ]
 
 function metadata(repositoryName = repository) {
@@ -23,12 +23,12 @@ function metadata(repositoryName = repository) {
 }
 
 const downloaded = new Map([
-  ['Simple Notes_0.1.1_x64_en-US.msi.zip', Buffer.from('installer')],
-  ['Simple Notes_0.1.1_x64_en-US.msi.zip.sig', Buffer.from('windows-signature\n')],
-  ['Simple Notes_aarch64.app.tar.gz', Buffer.from('arm')],
-  ['Simple Notes_aarch64.app.tar.gz.sig', Buffer.from('arm-signature\n')],
-  ['Simple Notes_x64.app.tar.gz', Buffer.from('intel')],
-  ['Simple Notes_x64.app.tar.gz.sig', Buffer.from('intel-signature\n')],
+  ['微屿_0.1.1_x64_en-US.msi.zip', Buffer.from('installer')],
+  ['微屿_0.1.1_x64_en-US.msi.zip.sig', Buffer.from('windows-signature\n')],
+  ['微屿_aarch64.app.tar.gz', Buffer.from('arm')],
+  ['微屿_aarch64.app.tar.gz.sig', Buffer.from('arm-signature\n')],
+  ['微屿_x64.app.tar.gz', Buffer.from('intel')],
+  ['微屿_x64.app.tar.gz.sig', Buffer.from('intel-signature\n')],
 ])
 
 describe('validateReleaseMetadata', () => {
@@ -68,15 +68,15 @@ describe('validateReleaseMetadata', () => {
   })
 
   it('rejects two macOS platform keys that reuse an ambiguously named updater and signature asset', () => {
-    const ambiguousName = 'Simple Notes_aarch64-x64.app.tar.gz'
-    const assets = updaterAssets.map((asset) => asset.name === 'Simple Notes_aarch64.app.tar.gz'
+    const ambiguousName = '微屿_aarch64-x64.app.tar.gz'
+    const assets = updaterAssets.map((asset) => asset.name === '微屿_aarch64.app.tar.gz'
       ? { ...asset, name: ambiguousName }
-      : asset.name === 'Simple Notes_aarch64.app.tar.gz.sig'
+      : asset.name === '微屿_aarch64.app.tar.gz.sig'
         ? { ...asset, name: `${ambiguousName}.sig` }
         : asset)
     const files = new Map(downloaded)
-    files.delete('Simple Notes_aarch64.app.tar.gz')
-    files.delete('Simple Notes_aarch64.app.tar.gz.sig')
+    files.delete('微屿_aarch64.app.tar.gz')
+    files.delete('微屿_aarch64.app.tar.gz.sig')
     files.set(ambiguousName, Buffer.from('arm'))
     files.set(`${ambiguousName}.sig`, Buffer.from('arm-signature\n'))
     const aliased = metadata()
@@ -87,20 +87,20 @@ describe('validateReleaseMetadata', () => {
   })
 
   it('rejects distinct macOS assets when both filenames contain arm64 and x64 architecture tokens', () => {
-    const ambiguousArmName = 'Simple Notes_aarch64-x64-one.app.tar.gz'
-    const ambiguousIntelName = 'Simple Notes_aarch64-x64-two.app.tar.gz'
+    const ambiguousArmName = '微屿_aarch64-x64-one.app.tar.gz'
+    const ambiguousIntelName = '微屿_aarch64-x64-two.app.tar.gz'
     const assets = updaterAssets.map((asset) => {
-      if (asset.name === 'Simple Notes_aarch64.app.tar.gz') return { ...asset, name: ambiguousArmName }
-      if (asset.name === 'Simple Notes_aarch64.app.tar.gz.sig') return { ...asset, name: `${ambiguousArmName}.sig` }
-      if (asset.name === 'Simple Notes_x64.app.tar.gz') return { ...asset, name: ambiguousIntelName }
-      if (asset.name === 'Simple Notes_x64.app.tar.gz.sig') return { ...asset, name: `${ambiguousIntelName}.sig` }
+      if (asset.name === '微屿_aarch64.app.tar.gz') return { ...asset, name: ambiguousArmName }
+      if (asset.name === '微屿_aarch64.app.tar.gz.sig') return { ...asset, name: `${ambiguousArmName}.sig` }
+      if (asset.name === '微屿_x64.app.tar.gz') return { ...asset, name: ambiguousIntelName }
+      if (asset.name === '微屿_x64.app.tar.gz.sig') return { ...asset, name: `${ambiguousIntelName}.sig` }
       return asset
     })
     const files = new Map(downloaded)
-    files.delete('Simple Notes_aarch64.app.tar.gz')
-    files.delete('Simple Notes_aarch64.app.tar.gz.sig')
-    files.delete('Simple Notes_x64.app.tar.gz')
-    files.delete('Simple Notes_x64.app.tar.gz.sig')
+    files.delete('微屿_aarch64.app.tar.gz')
+    files.delete('微屿_aarch64.app.tar.gz.sig')
+    files.delete('微屿_x64.app.tar.gz')
+    files.delete('微屿_x64.app.tar.gz.sig')
     files.set(ambiguousArmName, Buffer.from('arm'))
     files.set(`${ambiguousArmName}.sig`, Buffer.from('arm-signature\n'))
     files.set(ambiguousIntelName, Buffer.from('intel'))
@@ -111,12 +111,12 @@ describe('validateReleaseMetadata', () => {
   })
 
   it.each([
-    ['windows-x86_64', 'Simple Notes_darwin_x64_en-US.msi.zip'],
-    ['darwin-aarch64', 'Simple Notes_windows_aarch64.app.tar.gz'],
-    ['darwin-x86_64', 'Simple Notes_windows_x64.app.tar.gz'],
-    ['windows-x86_64', 'Simple Notes_x64-aarch64_en-US.msi.zip'],
-    ['windows-x86_64', 'Simple Notes_linux_x64_en-US.msi.zip'],
-    ['darwin-aarch64', 'Simple Notes_linux_arm64.app.tar.gz'],
+    ['windows-x86_64', '微屿_darwin_x64_en-US.msi.zip'],
+    ['darwin-aarch64', '微屿_windows_aarch64.app.tar.gz'],
+    ['darwin-x86_64', '微屿_windows_x64.app.tar.gz'],
+    ['windows-x86_64', '微屿_x64-aarch64_en-US.msi.zip'],
+    ['windows-x86_64', '微屿_linux_x64_en-US.msi.zip'],
+    ['darwin-aarch64', '微屿_linux_arm64.app.tar.gz'],
   ] as const)('rejects a %s asset with contradictory platform or architecture tokens', (platform, invalidName) => {
     const current = metadata().platforms[platform]
     const originalAsset = updaterAssets.find((asset) => asset.apiUrl === current.url)

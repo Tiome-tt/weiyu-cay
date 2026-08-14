@@ -414,7 +414,7 @@ describe('App', () => {
 
     pending.resolve({
       completed: true,
-      outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+      outputRoot: 'D:\\Portable Notes\\微屿导出',
       incompleteRoot: null,
       globalFailure: null,
       notesExported: 2,
@@ -446,7 +446,7 @@ describe('App', () => {
     rendered.unmount()
     pending.resolve({
       completed: true,
-      outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+      outputRoot: 'D:\\Portable Notes\\微屿导出',
       incompleteRoot: null,
       globalFailure: null,
       notesExported: 1,

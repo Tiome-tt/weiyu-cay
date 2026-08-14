@@ -7,7 +7,7 @@ import { ExportLibrary } from './ExportLibrary'
 
 const emptyReport: ExportReport = {
   completed: true,
-  outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+  outputRoot: 'D:\\Portable Notes\\微屿导出',
   incompleteRoot: null,
   globalFailure: null,
   notesExported: 0,
@@ -44,7 +44,7 @@ describe('ExportLibrary', () => {
 
     expect(exporter.exportLibrary).toHaveBeenCalledWith('D:\\Portable Notes')
     expect(await screen.findByRole('status')).toHaveTextContent('Exported 2 notes and 1 asset.')
-    expect(screen.getByRole('status')).toHaveTextContent('Simple Notes Export')
+    expect(screen.getByRole('status')).toHaveTextContent('微屿导出')
     expect(screen.getByText('1 path was renamed for portability.')).toBeVisible()
   })
 

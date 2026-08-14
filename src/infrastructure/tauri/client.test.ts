@@ -127,7 +127,7 @@ describe('TauriClient', () => {
   it('maps portable export to one typed Tauri command', async () => {
     const report = {
       completed: true,
-      outputRoot: 'D:\\Portable Notes\\Simple Notes Export',
+      outputRoot: 'D:\\Portable Notes\\微屿导出',
       incompleteRoot: null,
       globalFailure: null,
       notesExported: 1,

@@ -4,9 +4,9 @@ import { stageRcMetadata } from './stage-rc-release'
 const endpoint = 'https://updates.example.test/rc'
 const repository = 'acme/simple-notes'
 const assets = [
-  { id: 'RA_windows', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/101`, name: 'Simple Notes_0.1.2-rc.2_x64_en-US.msi.zip' },
-  { id: 'RA_arm', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/201`, name: 'Simple Notes_aarch64.app.tar.gz' },
-  { id: 'RA_intel', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/301`, name: 'Simple Notes_x64.app.tar.gz' },
+  { id: 'RA_windows', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/101`, name: '微屿_0.1.2-rc.2_x64_en-US.msi.zip' },
+  { id: 'RA_arm', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/201`, name: '微屿_aarch64.app.tar.gz' },
+  { id: 'RA_intel', apiUrl: `https://api.github.com/repos/${repository}/releases/assets/301`, name: '微屿_x64.app.tar.gz' },
 ]
 
 const metadata = {
@@ -23,9 +23,9 @@ describe('stageRcMetadata', () => {
     expect(stageRcMetadata({ metadata, releaseAssets: assets, endpoint, previousVersion: '0.1.2-rc.1' })).toEqual({
       ...metadata,
       platforms: {
-        'windows-x86_64': { url: `${endpoint}/assets/Simple%20Notes_0.1.2-rc.2_x64_en-US.msi.zip`, signature: 'windows' },
-        'darwin-aarch64': { url: `${endpoint}/assets/Simple%20Notes_aarch64.app.tar.gz`, signature: 'arm' },
-        'darwin-x86_64': { url: `${endpoint}/assets/Simple%20Notes_x64.app.tar.gz`, signature: 'intel' },
+        'windows-x86_64': { url: `${endpoint}/assets/%E5%BE%AE%E5%B1%BF_0.1.2-rc.2_x64_en-US.msi.zip`, signature: 'windows' },
+        'darwin-aarch64': { url: `${endpoint}/assets/%E5%BE%AE%E5%B1%BF_aarch64.app.tar.gz`, signature: 'arm' },
+        'darwin-x86_64': { url: `${endpoint}/assets/%E5%BE%AE%E5%B1%BF_x64.app.tar.gz`, signature: 'intel' },
       },
     })
   })

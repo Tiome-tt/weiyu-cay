@@ -1,4 +1,5 @@
 pub const APP_NAME: &str = "微屿";
+pub const EXPORT_ROOT_NAME: &str = "微屿导出";
 
 #[cfg(test)]
 mod tests {

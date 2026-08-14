@@ -271,7 +271,7 @@ export function createE2EAppServices(): AppServices {
     stickySettings: { async load() { return DEFAULT_STICKY_SETTINGS }, async onChanged() { return () => undefined } },
     exporter: {
       async exportLibrary() {
-        return { completed: true, outputRoot: 'E2E Export/Simple Notes Export', incompleteRoot: null, globalFailure: null, notesExported: state.notes.length, assetsExported: 0, renamedPaths: [], failed: [] }
+        return { completed: true, outputRoot: 'E2E Export/微屿导出', incompleteRoot: null, globalFailure: null, notesExported: state.notes.length, assetsExported: 0, renamedPaths: [], failed: [] }
       },
     },
     exportDestinationPicker: { async chooseExportDestination() { return 'E2E Export' } },

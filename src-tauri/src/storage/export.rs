@@ -1,4 +1,5 @@
 use crate::{
+    brand::EXPORT_ROOT_NAME,
     domain::{FolderId, NoteId, NoteKind},
     error::CommandError,
     platform::{CreateChildFailure, CreateChildFailureState, SafeDirectory, SafeEntryKind},
@@ -26,7 +27,6 @@ const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PORTABLE_COMPONENT_BYTES: usize = 120;
 const MAX_PORTABLE_COMPONENT_UTF16: usize = 120;
 const EXPORT_MANIFEST: &str = "export-manifest.json";
-const EXPORT_ROOT_NAME: &str = "Simple Notes Export";
 const STAGING_PREFIX: &str = ".simple-notes-export-";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1226,7 +1226,7 @@ mod tests {
         let incomplete = PathBuf::from(report.incomplete_root.expect("incomplete root"));
         assert!(incomplete.join("Good.md").exists());
         assert!(!incomplete.join(EXPORT_MANIFEST).exists());
-        assert!(!destination.join("Simple Notes Export").exists());
+        assert!(!destination.join(EXPORT_ROOT_NAME).exists());
         assert!(all_descendants(&destination).iter().all(|path| !path
             .file_name()
             .unwrap()
@@ -1243,10 +1243,10 @@ mod tests {
             published_or_staging_path(
                 parent,
                 ".simple-notes-export-staging.partial",
-                "Simple Notes Export",
+                EXPORT_ROOT_NAME,
                 PublishState::RecoveryRequired,
             ),
-            parent.join("Simple Notes Export")
+            parent.join(EXPORT_ROOT_NAME)
         );
     }
 
