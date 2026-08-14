@@ -1,7 +1,7 @@
 # 微屿主窗口视觉重设计
 
 Date: 2026-08-14
-Status: Approved design, awaiting written-spec review
+Status: Approved
 
 ## 1. 目标与范围
 
