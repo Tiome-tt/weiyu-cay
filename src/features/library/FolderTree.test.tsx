@@ -204,4 +204,25 @@ describe('FolderTree keyboard navigation', () => {
 
     expect(onMove).toHaveBeenCalledWith(folderA, folderB)
   })
+
+  it('hands menu move focus to the existing destination form', async () => {
+    const user = userEvent.setup()
+    render(
+      <FolderTree
+        folders={rows}
+        activeId={folderA}
+        state="ready"
+        onSelect={vi.fn()}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onMove={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.click(screen.getByRole('menuitem', { name: '移动文件夹' }))
+
+    expect(screen.getByRole('combobox', { name: '移动到' })).toHaveFocus()
+  })
 })

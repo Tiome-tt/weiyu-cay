@@ -16,8 +16,12 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
   const [error, setError] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const closedRef = useRef(false)
 
   const close = () => {
+    if (closedRef.current) return
+    closedRef.current = true
     onClose()
     triggerRef.current?.focus()
   }
@@ -25,6 +29,10 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
   useEffect(() => {
     titleRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    if (busy) closeRef.current?.focus()
+  }, [busy])
 
   useEffect(() => {
     const closeFromOutside = (event: PointerEvent) => {
@@ -43,20 +51,18 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
     setError(false)
     try {
       await onCreate(normalizedTitle, folderId)
-      close()
+      if (!closedRef.current) close()
     } catch {
-      setError(true)
+      if (!closedRef.current) setError(true)
     } finally {
-      setBusy(false)
+      if (!closedRef.current) setBusy(false)
     }
   }
 
   const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
-      if (!busy) {
-        event.preventDefault()
-        close()
-      }
+      event.preventDefault()
+      close()
       return
     }
     if (event.key !== 'Tab') return
@@ -80,6 +86,7 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
       ref={popoverRef}
       role="dialog"
       aria-modal="true"
+      aria-busy={busy}
       aria-labelledby="create-note-title"
       className="create-note-popover"
       onKeyDown={keepFocusInside}
@@ -111,9 +118,10 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
               .map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
           </select>
         </label>
+        {busy && <p role="status">正在创建笔记…</p>}
         {error && <p role="alert">无法新建笔记，请重试。</p>}
         <div className="create-note-popover__actions">
-          <button type="button" disabled={busy} onClick={close}>取消</button>
+          <button ref={closeRef} type="button" onClick={close}>{busy ? '关闭' : '取消'}</button>
           <button
             type="submit"
             aria-label={busy ? '正在创建笔记' : '创建笔记'}

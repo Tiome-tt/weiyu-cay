@@ -40,6 +40,30 @@ describe('App', () => {
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
   })
 
+  it('restores the actual toolbar create trigger when pointer activation did not focus it', async () => {
+    render(
+      <App
+        services={{
+          notes: fakeNotePort(),
+          folders: fakeFolderPort(),
+          system: fakeSystemPort(),
+          assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+          search: fakeSearchPort(),
+          links: fakeLinkPort(),
+        }}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: '新建笔记' })
+    screen.getByRole('button', { name: '打开设置' }).focus()
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('textbox', { name: '笔记标题' })).toHaveFocus()
+    await userEvent.setup().keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
   it('mounts main-window chrome while retaining the native safe-close listener', async () => {
     const windowChrome = fakeWindowChromePort()
     const lifecycle = {

@@ -46,9 +46,10 @@ describe('GlobalToolbar', () => {
     )
 
     expect(screen.queryByRole('button', { name: /可用更新|需要重启/ })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    const createTrigger = screen.getByRole('button', { name: '新建笔记' })
+    await user.click(createTrigger)
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    expect(onCreateNote).toHaveBeenCalledOnce()
+    expect(onCreateNote).toHaveBeenCalledWith(createTrigger)
     expect(onOpenSettings).toHaveBeenCalledOnce()
 
     rendered.rerender(

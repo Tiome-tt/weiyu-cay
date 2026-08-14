@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -90,7 +90,7 @@ describe('CreateNotePopover', () => {
     expect(triggerRef.current).toHaveFocus()
   })
 
-  it('prevents duplicate submission while busy and closes after success', async () => {
+  it('keeps a focus target while busy, ignores outside dismissal, and closes once on Escape', async () => {
     const pending = deferred()
     const onCreate = vi.fn(() => pending.promise)
     const onClose = vi.fn()
@@ -111,11 +111,23 @@ describe('CreateNotePopover', () => {
     await user.click(screen.getByRole('button', { name: '创建笔记' }))
     expect(onCreate).toHaveBeenCalledWith('潮汐设计', folderId)
     expect(screen.getByRole('button', { name: '正在创建笔记' })).toBeDisabled()
+    const close = screen.getByRole('button', { name: '关闭' })
+    expect(close).toBeEnabled()
+    expect(close).toHaveFocus()
+    expect(screen.getByRole('dialog', { name: '新建笔记' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('正在创建笔记')
+    await user.tab()
+    expect(close).toHaveFocus()
     fireEvent.submit(screen.getByRole('form', { name: '新建笔记' }))
     expect(onCreate).toHaveBeenCalledOnce()
+    fireEvent.pointerDown(document.body)
+    expect(onClose).not.toHaveBeenCalled()
 
-    pending.resolve()
-    expect(await screen.findByRole('button', { name: '创建笔记' })).toBeEnabled()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(triggerRef.current).toHaveFocus()
+
+    await act(async () => pending.resolve())
     expect(onClose).toHaveBeenCalledOnce()
   })
 })

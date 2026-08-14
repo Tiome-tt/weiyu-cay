@@ -10,6 +10,7 @@ interface FolderActionMenuProps {
 
 export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: FolderActionMenuProps) {
   const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -25,17 +26,36 @@ export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: Folder
 
   useEffect(() => {
     if (!open) return
-    itemRefs.current[0]?.focus()
+    itemRefs.current[activeIndex]?.focus()
     const closeFromOutside = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) close(false)
     }
     document.addEventListener('pointerdown', closeFromOutside)
     return () => document.removeEventListener('pointerdown', closeFromOutside)
-  }, [open])
+  }, [activeIndex, open])
 
-  const run = (action: () => void) => {
+  const openMenu = (index: number) => {
+    setActiveIndex(index)
+    setOpen(true)
+  }
+
+  const run = (action: () => void, restoreFocus: boolean) => {
     action()
+    close(restoreFocus)
+  }
+
+  const leaveMenu = (reverse: boolean) => {
+    const root = rootRef.current
+    const trigger = triggerRef.current
+    const focusable = Array.from(document.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element === trigger || !root?.contains(element))
+    const triggerIndex = trigger === null ? -1 : focusable.indexOf(trigger)
+    const destination = triggerIndex < 0
+      ? trigger
+      : focusable[triggerIndex + (reverse ? -1 : 1)] ?? trigger
     close(false)
+    queueMicrotask(() => destination?.focus())
   }
 
   const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -49,19 +69,31 @@ export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: Folder
       close()
       return
     }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      leaveMenu(event.shiftKey)
+      return
+    }
     if (next === null) return
     event.preventDefault()
+    setActiveIndex(next)
     itemRefs.current[next]?.focus()
   }
 
   const actions = [
-    { label: '重命名文件夹', run: onRename },
-    { label: '移动文件夹', run: onMove },
-    { label: '删除空文件夹', run: onDelete, danger: true },
+    { label: '重命名文件夹', run: onRename, restoreFocus: false },
+    { label: '移动文件夹', run: onMove, restoreFocus: false },
+    { label: '删除空文件夹', run: onDelete, danger: true, restoreFocus: true },
   ]
 
   return (
-    <div ref={rootRef} className="folder-action-menu">
+    <div
+      ref={rootRef}
+      className="folder-action-menu"
+      onBlur={(event) => {
+        if (open && !event.currentTarget.contains(event.relatedTarget as Node | null)) close(false)
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -70,11 +102,14 @@ export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: Folder
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={!enabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          if (open) close(false)
+          else openMenu(0)
+        }}
         onKeyDown={(event) => {
-          if (enabled && !open && event.key === 'ArrowDown') {
+          if (enabled && !open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
             event.preventDefault()
-            setOpen(true)
+            openMenu(event.key === 'ArrowUp' ? actions.length - 1 : 0)
           }
         }}
       >
@@ -88,10 +123,12 @@ export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: Folder
               ref={(node) => { itemRefs.current[index] = node }}
               role="menuitem"
               type="button"
+              tabIndex={activeIndex === index ? 0 : -1}
               data-variant={action.danger ? 'danger' : undefined}
               className={action.danger ? 'folder-action-menu__item folder-action-menu__item--danger' : 'folder-action-menu__item'}
+              onFocus={() => setActiveIndex(index)}
               onKeyDown={(event) => moveFocus(event, index)}
-              onClick={() => run(action.run)}
+              onClick={() => run(action.run, action.restoreFocus)}
             >
               {action.label}
             </button>

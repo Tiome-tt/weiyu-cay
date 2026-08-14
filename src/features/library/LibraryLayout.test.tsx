@@ -67,7 +67,7 @@ describe('LibraryLayout', () => {
     const user = userEvent.setup()
     const layoutRef = createRef<LibraryLayoutHandle>()
     render(<>
-      <button type="button" onClick={() => layoutRef.current?.createNote()}>新建笔记</button>
+      <button type="button" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
       <LibraryLayout ref={layoutRef} notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />
     </>)
 
@@ -94,7 +94,7 @@ describe('LibraryLayout', () => {
     const user = userEvent.setup()
     const layoutRef = createRef<LibraryLayoutHandle>()
     render(<>
-      <button type="button" onClick={() => layoutRef.current?.createNote()}>新建笔记</button>
+      <button type="button" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
       <LibraryLayout ref={layoutRef} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />
     </>)
     await user.click(await screen.findByRole('button', { name: /^Note A/ }))

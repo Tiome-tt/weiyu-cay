@@ -230,7 +230,7 @@ function MainApplication({ services }: { services: AppServices }) {
           saveState="hidden"
           updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
           onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
-          onCreateNote={() => libraryRef.current?.createNote()}
+          onCreateNote={(trigger) => libraryRef.current?.createNote(trigger)}
           onOpenSettings={() => { if (services.settings !== undefined) setSettingsOpen(true) }}
         />
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />

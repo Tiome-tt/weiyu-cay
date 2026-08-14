@@ -34,7 +34,7 @@ export interface LibraryLayoutHandle {
   prepareExit(): Promise<(() => void) | null>
   refreshAfterRecovery(): Promise<void>
   selectSearchResult(noteId: NoteId): void
-  createNote(): void
+  createNote(trigger: HTMLButtonElement): void
 }
 
 export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs }, ref) {
@@ -202,8 +202,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         library.selectNote(noteId)
       })
     },
-    createNote: () => {
-      createTriggerRef.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+    createNote: (trigger) => {
+      createTriggerRef.current = trigger
       setCreatePopoverOpen(true)
     },
   }))
