@@ -35,6 +35,27 @@ function renderTree(overrides: { onSelect?: (id: FolderId | null) => void; onMov
 afterEach(cleanup)
 
 describe('FolderTree keyboard navigation', () => {
+  it('offers a labelled header control that collapses only the library column', async () => {
+    const onCollapse = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <FolderTree
+        folders={rows}
+        activeId={null}
+        state="ready"
+        onSelect={vi.fn()}
+        onCollapse={onCollapse}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onMove={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '折叠资料库' }))
+    expect(onCollapse).toHaveBeenCalledTimes(1)
+  })
+
   it('offers the application trash as a special keyboard-accessible navigation item', async () => {
     const user = userEvent.setup()
     const onTrash = vi.fn()

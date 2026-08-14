@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SplitPane } from './SplitPane'
 
@@ -203,5 +203,51 @@ describe('SplitPane', () => {
       <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
     </SplitPane>)
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '256px' })
+  })
+
+  it('removes a collapsed divider from layout and preserves its resized width through narrow measurements', () => {
+    let width = 1200
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }))
+    let notifyResize: ResizeObserverCallback | null = null
+    class ResizeObserverDouble implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { notifyResize = callback }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverDouble)
+    const children = [
+      <div data-testid="first-pane" key="first" />,
+      <div data-testid="second-pane" key="second" />,
+      <div data-testid="third-pane" key="third" />,
+    ]
+    const { rerender } = render(
+      <SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels}>{children}</SplitPane>,
+    )
+    fireEvent.keyDown(screen.getAllByRole('separator')[0], { key: 'ArrowRight' })
+    fireEvent.keyDown(screen.getAllByRole('separator')[0], { key: 'ArrowRight' })
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '272px' })
+
+    rerender(<SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[true, false]}>{children}</SplitPane>)
+    width = 700
+    act(() => notifyResize?.([], {} as ResizeObserver))
+
+    const collapsedDivider = screen.getAllByRole('separator', { hidden: true })[0]
+    expect(collapsedDivider).toHaveStyle({ width: '0px' })
+    expect(collapsedDivider).toHaveAttribute('tabindex', '-1')
+    width = 1200
+    rerender(<SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels}>{children}</SplitPane>)
+    act(() => notifyResize?.([], {} as ResizeObserver))
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '272px' })
   })
 })

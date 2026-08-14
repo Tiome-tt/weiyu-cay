@@ -189,7 +189,7 @@ describe('LibraryLayout', () => {
     release?.()
   })
 
-  it('restores and persists keyboard-accessible collapsed columns without losing proportions', async () => {
+  it('restores a manual collapse as a functional rail and persists only explicit expansion', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': { folder: 0.25, noteList: 0.3 },
       'library-collapsed': { folder: true, noteList: false },
@@ -199,12 +199,72 @@ describe('LibraryLayout', () => {
     })
     const user = userEvent.setup()
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
-    expect(await screen.findByRole('button', { name: '展开文件夹栏' })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByRole('button', { name: '展开资料库' })).toBeVisible()
     expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '0px' })
-    await user.click(screen.getByRole('button', { name: '展开文件夹栏' }))
+    await user.click(screen.getByRole('button', { name: '展开资料库' }))
     expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
     expect(screen.getByTestId('folder-pane')).not.toHaveStyle({ width: '0px' })
-    expect(screen.getByRole('button', { name: '折叠文件夹栏' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '折叠资料库' })).toBeVisible()
+  })
+
+  it('automatically collapses at the planned threshold without overwriting manual preferences', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 820,
+      top: 0,
+      width: 820,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const system = fakeSystemPort()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    expect(await screen.findByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '展开目录，0 篇笔记' })).toHaveTextContent('目录 · 0')
+    expect(screen.getByTestId('folder-pane')).toHaveAttribute('inert')
+    expect(screen.getByTestId('note-list-pane')).toHaveAttribute('inert')
+    expect(system.setWindowPreference).not.toHaveBeenCalledWith('library-collapsed', expect.anything())
+  })
+
+  it('records an explicit rail expansion as a cleared manual preference while responsive collapse remains effective', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const system = fakeSystemPort()
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await user.click(await screen.findByRole('button', { name: '展开资料库' }))
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
+    expect(screen.getByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
+    expect(screen.getByTestId('folder-pane')).toHaveAttribute('inert')
+  })
+
+  it('manually collapses and restores the note directory independently from the library', async () => {
+    const system = fakeSystemPort()
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await user.click(await screen.findByRole('button', { name: '折叠目录' }))
+    expect(screen.getByRole('button', { name: '展开目录，0 篇笔记' })).toHaveTextContent('目录 · 0')
+    expect(screen.getByTestId('folder-pane')).not.toHaveAttribute('inert')
+    expect(screen.getByTestId('note-list-pane')).toHaveAttribute('inert')
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: true })
+
+    await user.click(screen.getByRole('button', { name: '展开目录，0 篇笔记' }))
+    expect(screen.getByTestId('note-list-pane')).not.toHaveAttribute('inert')
+    expect(system.setWindowPreference).toHaveBeenLastCalledWith('library-collapsed', { folder: false, noteList: false })
   })
   it('holds the active editor behind a barrier while flushing for a storage move', async () => {
     const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))

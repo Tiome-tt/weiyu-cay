@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import { StatusNotice } from '../../shared/StatusNotice'
+import { Icon } from '../../shared/Icon'
 
 interface NoteListProps {
   notes: NoteSummary[]
@@ -17,9 +18,10 @@ interface NoteListProps {
   undoAvailable?: boolean
   undoBusy?: boolean
   onUndoDelete?: () => void
+  onCollapse?: () => void
 }
 
-export function NoteList({ notes, activeId, state, onSelect, onCreate, creating = false, createError = false, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete }: NoteListProps) {
+export function NoteList({ notes, activeId, state, onSelect, onCreate, creating = false, createError = false, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onCollapse }: NoteListProps) {
   const feedbackRef = useRef<HTMLParagraphElement>(null)
   const [creatingForm, setCreatingForm] = useState(false)
   const [newTitle, setNewTitle] = useState('')
@@ -45,11 +47,18 @@ export function NoteList({ notes, activeId, state, onSelect, onCreate, creating 
           <span className="library-pane__eyebrow">当前文件夹</span>
           <h2>笔记</h2>
         </div>
-        {onCreate && (
-          <button className="icon-button" type="button" aria-label="新建笔记" disabled={creating} onClick={() => setCreatingForm(true)}>
-            <span aria-hidden="true">+</span>
-          </button>
-        )}
+        <div className="library-pane__header-actions">
+          {onCollapse && (
+            <button className="icon-button" type="button" aria-label="折叠目录" onClick={onCollapse}>
+              <Icon name="collapse" size={18} />
+            </button>
+          )}
+          {onCreate && (
+            <button className="icon-button" type="button" aria-label="新建笔记" disabled={creating} onClick={() => setCreatingForm(true)}>
+              <span aria-hidden="true">+</span>
+            </button>
+          )}
+        </div>
       </header>
       {creatingForm && onCreate && (
         <form className="note-list__create" onSubmit={submitCreate}>

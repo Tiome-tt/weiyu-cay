@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
 import { APP_NAME } from '../../shared/brand'
+import { Icon } from '../../shared/Icon'
 
 interface FolderTreeProps {
   folders: Folder[]
@@ -11,6 +12,7 @@ interface FolderTreeProps {
   onSelect: (id: FolderId | null) => void
   onTemporaryInbox?: () => void
   onTrash?: () => void
+  onCollapse?: () => void
   onCreate: (parentId: FolderId | null, name: string) => Promise<void>
   onRename: (id: FolderId, name: string) => Promise<void>
   onMove: (id: FolderId, parentId: FolderId | null) => Promise<void>
@@ -211,9 +213,16 @@ export function FolderTree(props: FolderTreeProps) {
           <span className="library-pane__eyebrow">资料库</span>
           <h1>{APP_NAME}</h1>
         </div>
-        <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
-          +
-        </button>
+        <div className="library-pane__header-actions">
+          {props.onCollapse && (
+            <button className="icon-button" type="button" aria-label="折叠资料库" onClick={props.onCollapse}>
+              <Icon name="collapse" size={18} />
+            </button>
+          )}
+          <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
+            +
+          </button>
+        </div>
       </header>
       <div className="folder-actions" aria-label="文件夹操作">
         <button

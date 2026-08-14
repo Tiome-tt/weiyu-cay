@@ -9,6 +9,10 @@ import { useLibrary, type LibraryNotePort } from './useLibrary'
 import { TemporaryInbox, type TemporaryInboxHandle } from '../temporary/TemporaryInbox'
 import { TrashView } from './TrashView'
 import { APP_TAGLINE } from '../../shared/brand'
+import { DirectoryRail } from './DirectoryRail'
+import { LibraryRail, type LibraryRailEntry } from './LibraryRail'
+import { useResponsiveColumns } from './useResponsiveColumns'
+import { Icon } from '../../shared/Icon'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -46,7 +50,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
   const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
-  const [collapsed, setCollapsed] = useState<LibraryCollapsedPreference>({ folder: false, noteList: false })
+  const manualCollapsedRef = useRef<LibraryCollapsedPreference>({ folder: false, noteList: false })
+  const [manualCollapsed, setManualCollapsed] = useState<LibraryCollapsedPreference>(manualCollapsedRef.current)
   const preferenceRequest = useRef(0)
   const collapsedPreferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
@@ -57,6 +62,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const storageMoveLockedRef = useRef(false)
   const linkRepairBusyRef = useRef(false)
   const mountedRef = useRef(false)
+  const columnsRef = useRef<HTMLDivElement>(null)
+  const responsiveCollapsed = useResponsiveColumns(columnsRef)
+  const collapsed: LibraryCollapsedPreference = {
+    folder: manualCollapsed.folder || responsiveCollapsed.folder,
+    noteList: manualCollapsed.noteList || responsiveCollapsed.noteList,
+  }
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
     [library.notes],
@@ -99,7 +110,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       .getWindowPreference('library-collapsed')
       .then((value) => {
         if (current && collapsedPreferenceRequest.current === request && isCollapsedPreference(value)) {
-          setCollapsed(value)
+          manualCollapsedRef.current = value
+          setManualCollapsed(value)
         }
       })
       .catch(() => undefined)
@@ -119,14 +131,19 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     void system.setWindowPreference('library-columns', value).catch(() => undefined)
   }
 
-  const toggleColumn = (column: keyof LibraryCollapsedPreference) => {
+  const setColumnCollapsed = (column: keyof LibraryCollapsedPreference, value: boolean) => {
     collapsedPreferenceRequest.current += 1
-    setCollapsed((current) => {
-      const next = { ...current, [column]: !current[column] }
-      void system.setWindowPreference('library-collapsed', next).catch(() => undefined)
-      return next
-    })
+    const next = { ...manualCollapsedRef.current, [column]: value }
+    manualCollapsedRef.current = next
+    setManualCollapsed(next)
+    void system.setWindowPreference('library-collapsed', next).catch(() => undefined)
   }
+
+  const activeRailEntry: LibraryRailEntry = activeView === 'temporary'
+    ? 'temporary'
+    : activeView === 'trash'
+      ? 'trash'
+      : library.activeFolderId === null ? 'unfiled' : 'folders'
 
   const navigateAfterSave = async <Result,>(navigate: () => Result | Promise<Result>): Promise<Result | null> => {
     if (trashBusyRef.current === 'delete' || storageMoveLockedRef.current) return null
@@ -319,24 +336,21 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
-      <div className="library-collapse-controls" role="toolbar" aria-label="侧栏显示">
-        <button
-          type="button"
-          aria-label={collapsed.folder ? '展开文件夹栏' : '折叠文件夹栏'}
-          aria-pressed={collapsed.folder}
-          onClick={() => toggleColumn('folder')}
-        >
-          <span aria-hidden="true">{collapsed.folder ? '▸' : '◂'}</span>
-        </button>
-        <button
-          type="button"
-          aria-label={collapsed.noteList ? '展开笔记列表栏' : '折叠笔记列表栏'}
-          aria-pressed={collapsed.noteList}
-          onClick={() => toggleColumn('noteList')}
-        >
-          <span aria-hidden="true">{collapsed.noteList ? '▸' : '◂'}</span>
-        </button>
-      </div>
+      <div ref={columnsRef} className="library-columns">
+      {collapsed.folder && (
+        <LibraryRail
+          activeEntry={activeRailEntry}
+          onUnfiled={() => void navigateAfterSave(() => {
+            setActiveView('library')
+            library.selectFolder(null)
+          })}
+          onFolders={() => void navigateAfterSave(() => setActiveView('library'))}
+          onTemporary={temporary === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('temporary'))}
+          onTrash={trash === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('trash'))}
+          onExpand={() => setColumnCollapsed('folder', false)}
+        />
+      )}
+      {collapsed.noteList && <DirectoryRail count={library.notes.length} onExpand={() => setColumnCollapsed('noteList', false)} />}
       <SplitPane
         defaultSizes={[240, 300]}
         minimumSizes={[180, 220, 420]}
@@ -352,6 +366,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           temporaryInboxActive={activeView === 'temporary'}
           trashActive={activeView === 'trash'}
           state={library.folderState}
+          onCollapse={() => setColumnCollapsed('folder', true)}
           onSelect={(folderId) => void navigateAfterSave(() => {
             setActiveView('library')
             library.selectFolder(folderId)
@@ -369,6 +384,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           <section className="note-list" aria-label="临时收集箱导航">
             <header className="library-pane__header library-pane__header--compact">
               <div><span className="library-pane__eyebrow">临时捕捉</span><h2>收集箱</h2></div>
+              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
             <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>
           </section>
@@ -376,6 +392,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           <section className="note-list" aria-label="回收站导航">
             <header className="library-pane__header library-pane__header--compact">
               <div><span className="library-pane__eyebrow">安全恢复</span><h2>回收站</h2></div>
+              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
             <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
           </section>
@@ -395,6 +412,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             undoAvailable={recentTrashOperationId !== null}
             undoBusy={trashBusy === 'undo'}
             onUndoDelete={() => void undoFormalDelete()}
+            onCollapse={() => setColumnCollapsed('noteList', true)}
           />
         )}
       </aside>
@@ -463,6 +481,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         )}
       </section>
       </SplitPane>
+      </div>
     </div>
   )
 })
