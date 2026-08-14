@@ -11,10 +11,12 @@ const folders: Folder[] = [{ id: folderId, parentId: null, name: '设计', sortO
 
 function deferred() {
   let resolve!: () => void
-  const promise = new Promise<void>((done) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<void>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 afterEach(cleanup)
@@ -90,9 +92,11 @@ describe('CreateNotePopover', () => {
     expect(triggerRef.current).toHaveFocus()
   })
 
-  it('keeps a focus target while busy, ignores outside dismissal, and closes once on Escape', async () => {
+  it('keeps pending creation open and preserves a late failure for retry', async () => {
     const pending = deferred()
-    const onCreate = vi.fn(() => pending.promise)
+    const onCreate = vi.fn()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValueOnce(undefined)
     const onClose = vi.fn()
     const triggerRef = createRef<HTMLButtonElement>()
     const user = userEvent.setup()
@@ -111,23 +115,32 @@ describe('CreateNotePopover', () => {
     await user.click(screen.getByRole('button', { name: '创建笔记' }))
     expect(onCreate).toHaveBeenCalledWith('潮汐设计', folderId)
     expect(screen.getByRole('button', { name: '正在创建笔记' })).toBeDisabled()
-    const close = screen.getByRole('button', { name: '关闭' })
-    expect(close).toBeEnabled()
-    expect(close).toHaveFocus()
+    const title = screen.getByRole('textbox', { name: '笔记标题' })
+    expect(title).toHaveFocus()
+    expect(title).toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: '取消' })).toBeDisabled()
     expect(screen.getByRole('dialog', { name: '新建笔记' })).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByRole('status')).toHaveTextContent('正在创建笔记')
     await user.tab()
-    expect(close).toHaveFocus()
+    expect(title).toHaveFocus()
     fireEvent.submit(screen.getByRole('form', { name: '新建笔记' }))
     expect(onCreate).toHaveBeenCalledOnce()
     fireEvent.pointerDown(document.body)
     expect(onClose).not.toHaveBeenCalled()
 
     await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+
+    await act(async () => pending.reject(new Error('late disk failure')))
+    expect(screen.getByRole('alert')).toHaveTextContent('无法新建笔记')
+    expect(title).toHaveValue('  潮汐设计  ')
+    expect(screen.getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderId)
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '创建笔记' }))
+    expect(onCreate).toHaveBeenCalledTimes(2)
+    expect(onCreate).toHaveBeenLastCalledWith('潮汐设计', folderId)
     expect(onClose).toHaveBeenCalledOnce()
     expect(triggerRef.current).toHaveFocus()
-
-    await act(async () => pending.resolve())
-    expect(onClose).toHaveBeenCalledOnce()
   })
 })

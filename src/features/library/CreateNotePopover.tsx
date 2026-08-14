@@ -16,12 +16,8 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
   const [error, setError] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const closedRef = useRef(false)
 
   const close = () => {
-    if (closedRef.current) return
-    closedRef.current = true
     onClose()
     triggerRef.current?.focus()
   }
@@ -31,7 +27,7 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
   }, [])
 
   useEffect(() => {
-    if (busy) closeRef.current?.focus()
+    if (busy) titleRef.current?.focus()
   }, [busy])
 
   useEffect(() => {
@@ -51,16 +47,17 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
     setError(false)
     try {
       await onCreate(normalizedTitle, folderId)
-      if (!closedRef.current) close()
+      setBusy(false)
+      close()
     } catch {
-      if (!closedRef.current) setError(true)
-    } finally {
-      if (!closedRef.current) setBusy(false)
+      setError(true)
+      setBusy(false)
     }
   }
 
   const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
+      if (busy) return
       event.preventDefault()
       close()
       return
@@ -98,7 +95,7 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
           <input
             ref={titleRef}
             aria-label="笔记标题"
-            disabled={busy}
+            readOnly={busy}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
@@ -121,7 +118,7 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
         {busy && <p role="status">正在创建笔记…</p>}
         {error && <p role="alert">无法新建笔记，请重试。</p>}
         <div className="create-note-popover__actions">
-          <button ref={closeRef} type="button" onClick={close}>{busy ? '关闭' : '取消'}</button>
+          <button type="button" disabled={busy} onClick={close}>取消</button>
           <button
             type="submit"
             aria-label={busy ? '正在创建笔记' : '创建笔记'}

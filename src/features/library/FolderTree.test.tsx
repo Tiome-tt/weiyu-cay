@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId } from '../../domain/model'
 import { FolderTree } from './FolderTree'
@@ -13,6 +14,14 @@ const rows: Folder[] = [
   { id: childA, parentId: folderA, name: '子项目', sortOrder: 0 },
   { id: folderB, parentId: null, name: '项目 B', sortOrder: 1 },
 ]
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 
 function renderTree(overrides: { onSelect?: (id: FolderId | null) => void; onMove?: (id: FolderId, parentId: FolderId | null) => Promise<void> } = {}) {
   const onSelect = overrides.onSelect ?? vi.fn()
@@ -224,5 +233,44 @@ describe('FolderTree keyboard navigation', () => {
     await user.click(screen.getByRole('menuitem', { name: '移动文件夹' }))
 
     expect(screen.getByRole('combobox', { name: '移动到' })).toHaveFocus()
+  })
+
+  it('moves final focus to unfiled after an asynchronous selected-folder deletion', async () => {
+    const pending = deferred()
+    const onDelete = vi.fn()
+    function DeleteHarness() {
+      const [folders, setFolders] = useState(rows)
+      const [activeId, setActiveId] = useState<FolderId | null>(folderB)
+      return (
+        <FolderTree
+          folders={folders}
+          activeId={activeId}
+          state="ready"
+          onSelect={setActiveId}
+          onCreate={vi.fn().mockResolvedValue(undefined)}
+          onRename={vi.fn().mockResolvedValue(undefined)}
+          onMove={vi.fn().mockResolvedValue(undefined)}
+          onDelete={async (id) => {
+            onDelete(id)
+            await pending.promise
+            setFolders((current) => current.filter((folder) => folder.id !== id))
+            setActiveId(null)
+          }}
+        />
+      )
+    }
+    const user = userEvent.setup()
+    render(<DeleteHarness />)
+    const more = screen.getByRole('button', { name: '文件夹更多操作' })
+
+    await user.click(more)
+    await user.click(screen.getByRole('menuitem', { name: '删除空文件夹' }))
+    expect(onDelete).toHaveBeenCalledWith(folderB)
+
+    await act(async () => pending.resolve())
+    const unfiled = screen.getByRole('treeitem', { name: '未归档笔记' })
+    await waitFor(() => expect(unfiled).toHaveFocus())
+    expect(unfiled).toHaveAttribute('aria-selected', 'true')
+    expect(more).toBeDisabled()
   })
 })

@@ -60,6 +60,7 @@ export function FolderTree(props: FolderTreeProps) {
     try {
       await props.onDelete(props.activeId)
       setError(false)
+      focusItem('root')
     } catch {
       setError(true)
     }

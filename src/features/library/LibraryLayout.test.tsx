@@ -35,10 +35,12 @@ function summary(id: NoteId, title: string, folderId: FolderId | null = null): N
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 beforeEach(() => {
@@ -115,6 +117,45 @@ describe('LibraryLayout', () => {
     await waitFor(() => expect(notes.createNote).toHaveBeenCalledOnce())
     expect(await screen.findByRole('heading', { name: 'Draft title' })).toBeVisible()
     expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+  })
+
+  it('keeps a late create failure in the popover and retries the same title and folder', async () => {
+    const pendingCreate = deferred<NoteDocument>()
+    const created = { ...note(''), id: noteC, title: '晚到失败', folderId: folderB }
+    const createNote = vi.fn()
+      .mockImplementationOnce(() => pendingCreate.promise)
+      .mockResolvedValueOnce(created)
+    const notes = fakeNotePort({ createNote, listNotes: vi.fn().mockResolvedValue([]) })
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<>
+      <button type="button" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
+      <LibraryLayout
+        ref={layoutRef}
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+      />
+    </>)
+
+    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    const dialog = screen.getByRole('dialog', { name: '新建笔记' })
+    const title = within(dialog).getByRole('textbox', { name: '笔记标题' })
+    await user.type(title, '晚到失败')
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: '保存到目录' }), folderB)
+    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    await user.keyboard('{Escape}')
+    expect(dialog).toBeVisible()
+
+    await act(async () => pendingCreate.reject(new Error('late disk failure')))
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('无法新建笔记')
+    expect(title).toHaveValue('晚到失败')
+    expect(within(dialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderB)
+
+    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    expect(createNote).toHaveBeenCalledTimes(2)
+    expect(createNote).toHaveBeenLastCalledWith({ folderId: folderB, title: '晚到失败' })
+    expect(await screen.findByRole('heading', { name: '晚到失败' })).toBeVisible()
   })
 
   it('renames and moves a formal note through the authoritative production port', async () => {
