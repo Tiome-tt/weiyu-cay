@@ -6,6 +6,12 @@ Cay (微屿) is a local-first Markdown note application for Windows and macOS. T
 
 Read `docs/superpowers/specs/2026-07-30-simple-notes-design.md` before changing product behavior or architecture. Keep that specification and this file aligned when an approved design decision changes.
 
+## Brand naming
+
+- Use `微屿` as the primary user-visible name in the application UI, native window titles, installers, system menus, and Chinese product copy.
+- Use `Cay` in English prose and English release titles. When a bilingual first mention is useful, write `Cay (微屿)`.
+- Keep technical compatibility identifiers such as `app.simplenotes.desktop`, the `simple-notes` package/crate name, `.simple-notes-*` file prefixes, command names, and persisted keys stable unless an approved migration explicitly changes them.
+
 ## Planned technology
 
 - Tauri 2 for desktop windows, operating-system integration, packaging, and privileged commands.
@@ -92,13 +98,21 @@ Do not claim a command passes unless it was run in the current worktree. If scaf
 
 ## Testing requirements
 
+- Verification must be proportional to the risk and scope of the change. Default to the smallest focused command that proves the changed behavior.
+- Do not automatically run the complete frontend suite, complete Rust suite, E2E suite, production build, desktop bundle, or 10,000-note fixture after every task.
+- For documentation or copy-only changes, use `git diff --check` plus a directly related contract test when one exists. Do not compile the application merely because text changed.
+- For React or TypeScript changes, run the affected Vitest file or test name first. Add `pnpm typecheck` when types or production TypeScript changed; run lint or a production build only when the touched code or integration boundary makes them relevant.
+- For Rust changes, run the affected unit or integration test and `cargo check` for the touched crate. Run Clippy when production Rust changed. Reserve the complete Rust suite for cross-cutting storage, recovery, migration, security, concurrency, or release-critical changes.
+- Run the 10,000-note fixture only when search, indexing, index rebuild, parsing that feeds the index, or relevant performance behavior changes.
+- Run Windows/macOS platform smoke tests when platform integration code changes or for a release candidate, not for unrelated UI text, documentation, or domain-only work.
+- Do not repeat a command that already passed on the same code unless a later change can affect its result. Reuse fresh focused evidence and state which broader checks were intentionally skipped.
+- If the user explicitly requests reduced verification, honor that scope unless skipping a check would leave a concrete data-loss, security, or release-blocking risk; explain that specific risk before expanding the checks.
 - Write or update tests before implementation for every behavior change and bug fix.
 - Unit-test frontmatter, tag normalization, UUID handling, link parsing/rendering, title derivation, and safe filename generation.
 - Integration-test atomic saves, crash leftovers, image moves, trash recovery, batch conversion, migrations, and full index rebuilds.
 - Editor tests must cover all three views, atomic two-step link deletion, link-title refresh, scroll preservation, and split-view synchronization.
 - UI tests must cover resize boundaries, minimum widths, multi-selection, undo deletion, and window-state restoration.
-- Run platform smoke tests on both Windows and macOS for global shortcuts, multiple sticky windows, always-on-top behavior, autostart, installers, signing, and updates.
-- Test with at least 10,000 generated notes before changing search or indexing code.
+- Before releasing, cover global shortcuts, multiple sticky windows, always-on-top behavior, autostart, installers, signing, and updates on both Windows and macOS.
 
 ## Scope discipline
 
