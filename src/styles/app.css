@@ -181,7 +181,7 @@ body,
 .search-results span { color: var(--color-muted); font-size: 0.78rem; }
 
 @media (max-width: 820px) {
-  .global-toolbar { grid-template-columns: auto minmax(180px, 1fr) auto; gap: 9px; }
+  .global-toolbar { grid-template-columns: minmax(132px, 1fr) minmax(180px, 560px) minmax(132px, 1fr); gap: 9px; }
   .global-toolbar__save { display: none; }
   .global-toolbar__create span { display: none; }
   .global-toolbar__create { width: 34px; padding: 0; }

@@ -56,7 +56,7 @@ function MainApplication({ services }: { services: AppServices }) {
     }
   }, [services.updater, updateState.status])
   const installUpdate = useCallback(async () => {
-    if (services.updater === undefined || updateState.status !== 'available') return
+    if (services.updater === undefined || (updateState.status !== 'available' && updateState.status !== 'install-error')) return
     setUpdateState({ status: 'installing', update: updateState.update })
     try {
       await services.updater.install()
@@ -66,7 +66,7 @@ function MainApplication({ services }: { services: AppServices }) {
     }
   }, [services.updater, updateState])
   const restartAfterUpdate = useCallback(async () => {
-    if (services.updater === undefined || updateState.status !== 'installed') return
+    if (services.updater === undefined || (updateState.status !== 'installed' && updateState.status !== 'restart-error')) return
     setUpdateState({ status: 'restarting', update: updateState.update })
     let release: (() => void) | null = null
     try {

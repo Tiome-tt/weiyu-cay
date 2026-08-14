@@ -20,7 +20,9 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
   const [guidance, setGuidance] = useState('')
   const [dismissed, setDismissed] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [retryRequest, setRetryRequest] = useState(0)
   const generation = useRef(0)
+  const inputRef = useRef<HTMLInputElement>(null)
   const resultsId = useId()
 
   useEffect(() => () => { generation.current += 1 }, [])
@@ -58,14 +60,15 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
       }
     }, SEARCH_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [input, search])
+  }, [input, retryRequest, search])
 
-  const close = () => {
+  const close = (restoreFocus = false) => {
     generation.current += 1
     setDismissed(true)
     setResults([])
     setState('idle')
     setActiveIndex(-1)
+    if (restoreFocus) inputRef.current?.focus()
   }
 
   const select = (noteId: NoteId) => {
@@ -73,9 +76,18 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
     onSelect(noteId)
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const retry = () => {
+    generation.current += 1
+    setDismissed(false)
+    setResults([])
+    setState('idle')
+    setActiveIndex(-1)
+    setRetryRequest((current) => current + 1)
+  }
+
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {
-      close()
+      close(true)
       return
     }
     if (results.length === 0 || dismissed) return
@@ -94,8 +106,9 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
   const open = !dismissed && (state !== 'idle' || results.length > 0)
 
   return (
-    <div className="library-search">
+    <div className="library-search" onKeyDown={onKeyDown}>
       <input
+        ref={inputRef}
         type="search"
         role="searchbox"
         aria-label="搜索笔记"
@@ -114,13 +127,13 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
           setDismissed(false)
           setActiveIndex(-1)
         }}
-        onKeyDown={onKeyDown}
       />
       {open && results.length === 0 && (
         <div className="search-results search-results--message" id={resultsId}>
           <p role={state === 'error' ? 'alert' : 'status'}>
             {guidance || (state === 'loading' ? '正在搜索…' : state === 'empty' ? '没有匹配的笔记' : '搜索失败，请重试')}
           </p>
+          {state === 'error' && <button type="button" onClick={retry}>重新搜索</button>}
         </div>
       )}
       {open && results.length > 0 && <SearchResults id={resultsId} results={results} activeIndex={activeIndex} onSelect={select} />}

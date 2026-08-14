@@ -112,4 +112,39 @@ describe('SearchBox', () => {
     expect(onSelect).toHaveBeenCalledWith(secondId)
     expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
+
+  it('closes the result popup with Escape after a result receives focus', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '焦点结果')]) })
+    render(<SearchBox search={search} onSelect={vi.fn()} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    fireEvent.change(field, { target: { value: '焦点' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    const item = screen.getByRole('button', { name: /焦点结果/ })
+    item.focus()
+    fireEvent.keyDown(item, { key: 'Escape' })
+
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+    expect(field).toHaveFocus()
+  })
+
+  it('retries a failed search without changing its query', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({
+      search: vi.fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce([result(secondId, '重试结果')]),
+    })
+    render(<SearchBox search={search} onSelect={vi.fn()} />)
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索笔记' }), { target: { value: '重试' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    expect(screen.getByRole('alert')).toHaveTextContent('搜索失败')
+    fireEvent.click(screen.getByRole('button', { name: '重新搜索' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+
+    expect(search.search).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: /重试结果/ })).toBeVisible()
+  })
 })

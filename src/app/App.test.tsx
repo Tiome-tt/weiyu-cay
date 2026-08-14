@@ -184,7 +184,9 @@ describe('App', () => {
   it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
     const user = userEvent.setup()
     const check = vi.fn().mockResolvedValue({ version: '0.1.1', notes: 'Security fixes' })
-    const install = vi.fn().mockRejectedValue(new Error('signature verification failed'))
+    const install = vi.fn()
+      .mockRejectedValueOnce(new Error('signature verification failed'))
+      .mockResolvedValueOnce(undefined)
     const restart = vi.fn()
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
@@ -205,6 +207,9 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '下载并安装 0.1.1' }))
     expect(install).toHaveBeenCalledOnce()
     expect(await screen.findByRole('alert')).toHaveTextContent('更新安装失败')
+    await user.click(screen.getByRole('button', { name: '重新安装 0.1.1' }))
+    expect(install).toHaveBeenCalledTimes(2)
+    expect(await screen.findByRole('button', { name: '重启以完成更新' })).toBeVisible()
   })
 
   it('keeps an installed update recoverable when explicit restart fails', async () => {
@@ -224,6 +229,9 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     expect(restart).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
+    await user.click(screen.getByRole('button', { name: '重新尝试重启' }))
+    expect(restart).toHaveBeenCalledTimes(2)
     expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
   })
 
