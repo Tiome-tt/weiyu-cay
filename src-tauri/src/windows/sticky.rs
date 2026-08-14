@@ -821,7 +821,7 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
                 .into(),
             ),
         )
-        .title("Simple Notes")
+        .title(crate::brand::APP_NAME)
         .decorations(false)
         .resizable(true)
         .visible(false)

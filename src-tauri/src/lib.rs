@@ -1,3 +1,4 @@
+mod brand;
 pub mod commands;
 pub mod domain;
 pub mod error;
