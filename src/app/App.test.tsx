@@ -668,7 +668,7 @@ describe('App', () => {
       settings: fakeSettingsPort({ load: vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, theme: 'system' }) }),
     }} />)
     const app = screen.getByRole('application', { name: '微屿' })
-    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#202729'))
+    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#101B18'))
     act(() => listener({ matches: false } as MediaQueryListEvent))
     await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#edf0f2'))
     rendered.unmount()
