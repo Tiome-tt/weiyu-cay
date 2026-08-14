@@ -1,4 +1,4 @@
-import { useRef, type PointerEvent, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { WindowChromePort } from '../domain/ports'
 import { Icon, type IconName } from './Icon'
 
@@ -15,7 +15,6 @@ interface WindowControl {
 
 /** Frameless main-window shell. Product branding belongs in the toolbar below this row. */
 export function AppChrome({ children, windowChrome }: AppChromeProps) {
-  const lastDragStartedAt = useRef(Number.NEGATIVE_INFINITY)
   const controls: WindowControl[] = [
     { icon: 'minimize', label: '最小化窗口', run: () => windowChrome.minimize() },
     { icon: 'maximize', label: '最大化或还原窗口', run: () => windowChrome.toggleMaximize() },
@@ -26,15 +25,6 @@ export function AppChrome({ children, windowChrome }: AppChromeProps) {
     : controls
   const controlGroup = <WindowControls controls={orderedControls} />
 
-  const startDragging = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || event.target !== event.currentTarget) return
-    // A double-click emits two pointerdown events before onDoubleClick. One
-    // native drag request is enough and preserves the maximize/restore gesture.
-    if (event.timeStamp - lastDragStartedAt.current < 250) return
-    lastDragStartedAt.current = event.timeStamp
-    ignoreWindowOperationFailure(windowChrome.startDragging())
-  }
-
   return (
     <div className={`window-chrome window-chrome--${windowChrome.platform}`}>
       <header className="window-titlebar" data-testid="window-titlebar">
@@ -43,10 +33,6 @@ export function AppChrome({ children, windowChrome }: AppChromeProps) {
           className="window-drag-region"
           data-tauri-drag-region=""
           data-testid="window-drag-region"
-          onDoubleClick={(event) => {
-            if (event.target === event.currentTarget) ignoreWindowOperationFailure(windowChrome.toggleMaximize())
-          }}
-          onPointerDown={startDragging}
         />
         {windowChrome.platform === 'windows' ? controlGroup : null}
       </header>

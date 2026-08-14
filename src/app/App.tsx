@@ -231,9 +231,7 @@ function MainApplication({ services }: { services: AppServices }) {
     </>
   return (
     <main role="application" aria-label={APP_NAME} className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
-      {services.windowChrome === undefined
-        ? content
-        : <AppChrome windowChrome={services.windowChrome}>{content}</AppChrome>}
+      <AppChrome windowChrome={services.windowChrome}>{content}</AppChrome>
     </main>
   )
 }

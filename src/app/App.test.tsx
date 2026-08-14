@@ -1,13 +1,23 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { App } from './App'
+import { App as ProductionApp } from './App'
 import userEvent from '@testing-library/user-event'
 import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeWindowChromePort } from '../test/fakes'
 import type { AppSettings, ExportReport, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
 import type { FolderId, NoteDocument, NoteId } from '../domain/model'
+import type { AppServices } from './services'
+
+type TestAppServices = Omit<AppServices, 'windowChrome'> & Partial<Pick<AppServices, 'windowChrome'>>
+
+function App({ services }: { services: TestAppServices }) {
+  return <ProductionApp services={{
+    ...services,
+    windowChrome: services.windowChrome ?? fakeWindowChromePort(),
+  }} />
+}
 
 describe('App', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
@@ -25,6 +35,7 @@ describe('App', () => {
       />,
     )
     expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
+    expect(screen.getByTestId('window-titlebar')).toBeVisible()
     expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
   })
@@ -494,7 +505,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '移动数据' }))
     expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
     expect(screen.queryByRole('navigation', { name: '文件夹' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(within(screen.getByRole('alertdialog')).getAllByRole('button')).toHaveLength(1)
   })
 
   it('releases the editor barrier and permits native close when relocation restart is rejected', async () => {

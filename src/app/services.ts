@@ -20,7 +20,7 @@ export interface AppServices {
   recovery?: RecoveryPort
   updater?: UpdatePort
   lifecycle?: AppLifecyclePort
-  windowChrome?: WindowChromePort
+  windowChrome: WindowChromePort
 }
 
 export function createAppServices(): AppServices {

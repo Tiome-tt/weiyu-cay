@@ -9,7 +9,7 @@ import { AppChrome } from './AppChrome'
 describe('AppChrome', () => {
   afterEach(cleanup)
 
-  it('keeps branding out of the drag row and routes labelled controls through the port', async () => {
+  it('leaves drag gestures to the Tauri region and routes labelled controls through the port', async () => {
     const chrome = fakeWindowChromePort()
     const user = userEvent.setup()
     render(<AppChrome windowChrome={chrome}><p>workspace</p></AppChrome>)
@@ -25,8 +25,8 @@ describe('AppChrome', () => {
     await user.click(screen.getByRole('button', { name: '最大化或还原窗口' }))
     await user.click(screen.getByRole('button', { name: '关闭窗口' }))
 
-    expect(chrome.startDragging).toHaveBeenCalledTimes(1)
-    expect(chrome.toggleMaximize).toHaveBeenCalledTimes(2)
+    expect(chrome.startDragging).not.toHaveBeenCalled()
+    expect(chrome.toggleMaximize).toHaveBeenCalledTimes(1)
     expect(chrome.minimize).toHaveBeenCalledTimes(1)
     expect(chrome.requestClose).toHaveBeenCalledTimes(1)
   })
