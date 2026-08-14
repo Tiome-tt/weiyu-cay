@@ -15,4 +15,12 @@ describe('brand contract', () => {
   it('uses the Chinese name in the HTML title', () => {
     expect(readFileSync('index.html', 'utf8')).toContain('<title>微屿</title>')
   })
+
+  it('documents the approved names and safe cache cleanup', () => {
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    const development = readFileSync('docs/development.md', 'utf8')
+    expect(agents).toContain('微屿 (Cay)')
+    expect(development).toContain('cargo clean --manifest-path src-tauri/Cargo.toml')
+    expect(development).toContain('不会删除笔记数据')
+  })
 })

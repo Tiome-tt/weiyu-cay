@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Simple Notes is a local-first Markdown note application for Windows and macOS. The product favors a small, reliable feature set over an all-in-one workspace. Users can work fully offline without an account. A future account will be optional and used only for synchronization.
+微屿 (Cay) is a local-first Markdown note application for Windows and macOS. The product favors a small, reliable feature set over an all-in-one workspace. Users can work fully offline without an account. A future account will be optional and used only for synchronization.
 
 Read `docs/superpowers/specs/2026-07-30-simple-notes-design.md` before changing product behavior or architecture. Keep that specification and this file aligned when an approved design decision changes.
 
