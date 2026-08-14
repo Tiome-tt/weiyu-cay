@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteId } from '../../domain/model'
 import type { SearchResult } from '../../domain/ports'
@@ -110,7 +111,35 @@ describe('SearchBox', () => {
     fireEvent.keyDown(field, { key: 'Enter' })
 
     expect(onSelect).toHaveBeenCalledWith(secondId)
+    expect(onSelect).toHaveBeenCalledOnce()
     expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+  })
+
+  it('lets native Enter activate the focused result once after arrow and Tab navigation', async () => {
+    vi.useFakeTimers()
+    const onSelect = vi.fn()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '第一篇'), result(secondId, '第二篇')]) })
+    render(<SearchBox search={search} onSelect={onSelect} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    fireEvent.change(field, { target: { value: '篇' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    vi.useRealTimers()
+    const user = userEvent.setup()
+    const first = screen.getByRole('button', { name: /第一篇/ })
+    const second = screen.getByRole('button', { name: /第二篇/ })
+    field.focus()
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    expect(first).toHaveAttribute('data-active')
+
+    await user.tab()
+    await user.tab()
+    expect(second).toHaveFocus()
+    expect(second).toHaveAttribute('data-active')
+    await user.keyboard('{Enter}')
+
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(onSelect).toHaveBeenCalledWith(secondId)
   })
 
   it('closes the result popup with Escape after a result receives focus', async () => {

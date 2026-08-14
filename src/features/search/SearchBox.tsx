@@ -90,6 +90,7 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
       close(true)
       return
     }
+    if (event.target !== inputRef.current) return
     if (results.length === 0 || dismissed) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
@@ -136,7 +137,7 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
           {state === 'error' && <button type="button" onClick={retry}>重新搜索</button>}
         </div>
       )}
-      {open && results.length > 0 && <SearchResults id={resultsId} results={results} activeIndex={activeIndex} onSelect={select} />}
+      {open && results.length > 0 && <SearchResults id={resultsId} results={results} activeIndex={activeIndex} onActiveIndexChange={setActiveIndex} onSelect={select} />}
     </div>
   )
 }

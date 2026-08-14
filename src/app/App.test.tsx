@@ -235,6 +235,43 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
   })
 
+  it('selects the keyboard-focused search result through the App safe navigation bridge', async () => {
+    const firstId = '019c0000-0000-7000-8000-000000000061' as NoteId
+    const secondId = '019c0000-0000-7000-8000-000000000062' as NoteId
+    const loadNote = vi.fn(async (noteId: NoteId) => fakeNotePortDocument(noteId, noteId === firstId ? '第一篇' : '第二篇'))
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([
+        { ...fakeNotePortDocument(firstId, '第一篇'), excerpt: '' },
+        { ...fakeNotePortDocument(secondId, '第二篇'), excerpt: '' },
+      ]),
+      loadNote,
+    })
+    const search = fakeSearchPort({
+      search: vi.fn().mockResolvedValue([
+        { noteId: firstId, title: '第一篇', folderBreadcrumb: [], tags: [], excerpt: '', score: 2 },
+        { noteId: secondId, title: '第二篇', folderBreadcrumb: [], tags: [], excerpt: '', score: 1 },
+      ]),
+    })
+    const user = userEvent.setup()
+    render(<App services={{
+      notes, folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search, links: fakeLinkPort(),
+    }} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    await user.type(field, '篇')
+    const results = await screen.findByRole('list', { name: '搜索结果' })
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    await user.tab()
+    await user.tab()
+    expect(within(results).getByRole('button', { name: /第二篇/ })).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(loadNote).toHaveBeenCalledWith(secondId))
+    expect(loadNote).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('heading', { name: '第二篇' })).toBeVisible()
+  })
+
   it('flushes and locks a dirty editor before restarting into an installed update', async () => {
     const pendingSave = deferred<NoteDocument>()
     const activeId = '019c0000-0000-7000-8000-000000000053' as NoteId
