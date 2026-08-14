@@ -186,7 +186,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
         <div className="settings-view__body">
           <fieldset disabled={operationBusy}>
             <legend>外观与编辑</legend>
-            <label>主题<select aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">森林</option><option value="sand">沙丘</option><option value="system">跟随系统</option></select></label>
+            <label>主题<select aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">潮汐浅色</option><option value="sand">沙岸暖色</option><option value="night">夜海深色</option><option value="system">跟随系统</option></select></label>
             <label>正文字体<input aria-label="正文字体" value={draft.bodyFont} onChange={(event) => editDraft({ bodyFont: event.target.value })} onBlur={() => void update({ bodyFont: draftRef.current.bodyFont })} /></label>
             <label>代码字体<input aria-label="代码字体" value={draft.codeFont} onChange={(event) => editDraft({ codeFont: event.target.value })} onBlur={() => void update({ codeFont: draftRef.current.codeFont })} /></label>
             <label>字号<input aria-label="字号" type="number" min="12" max="28" value={draft.fontSize} onChange={updateNumberDraft('fontSize')} onBlur={() => void update({ fontSize: draftRef.current.fontSize })} /></label>

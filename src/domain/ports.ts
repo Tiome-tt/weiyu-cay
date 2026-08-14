@@ -239,7 +239,7 @@ export interface TrashPort {
 }
 
 export interface AppSettings {
-  theme: 'forest' | 'sand' | 'system'
+  theme: 'forest' | 'sand' | 'night' | 'system'
   stickyColorMode: 'follow-theme'
   bodyFont: string
   codeFont: string

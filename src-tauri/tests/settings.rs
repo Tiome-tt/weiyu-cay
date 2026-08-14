@@ -4,7 +4,7 @@ use simple_notes_lib::{
         authorize_restart_request, authorize_settings_caller, authorize_sticky_settings_caller,
         finalize_reopened_relocation, load_bootstrap_settings, open_configured_storage,
         quarantine_incomplete_destination_with_hook, recover_interrupted_source_relocation,
-        AppSettings, DataRootSetting, SettingsPatch, SettingsService, SettingsStore,
+        AppSettings, AppTheme, DataRootSetting, SettingsPatch, SettingsService, SettingsStore,
         StickySettings, StorageMoveFailurePoint, SystemSettings,
     },
     error::CommandError,
@@ -22,6 +22,18 @@ use std::{
     },
     time::Duration,
 };
+
+#[test]
+fn night_theme_round_trips_without_changing_existing_defaults() {
+    for existing in ["forest", "sand", "system"] {
+        let theme: AppTheme = serde_json::from_str(&format!("\"{existing}\"")).unwrap();
+        assert_eq!(theme.as_str(), existing);
+    }
+    let night: AppTheme = serde_json::from_str("\"night\"").unwrap();
+    assert_eq!(night.as_str(), "night");
+    assert_eq!(serde_json::to_string(&night).unwrap(), "\"night\"");
+    assert_eq!(AppSettings::default().theme.as_str(), "forest");
+}
 
 #[test]
 fn sticky_settings_expose_only_shared_appearance_fields() {

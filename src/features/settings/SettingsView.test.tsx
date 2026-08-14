@@ -28,6 +28,7 @@ describe('SettingsView', () => {
     expect(screen.getByRole('dialog', { name: '设置' })).toHaveTextContent('微屿')
     expect(screen.queryByText('Simple Notes')).not.toBeInTheDocument()
     expect(screen.getByLabelText('主题')).toHaveValue('forest')
+    expect(screen.getByRole('option', { name: '夜海深色' })).toHaveValue('night')
     expect(screen.getByLabelText('正文字体')).toBeVisible()
     expect(screen.getByLabelText('代码字体')).toBeVisible()
     expect(screen.getByLabelText('字号')).toHaveAttribute('min', '12')
