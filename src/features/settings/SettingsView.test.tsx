@@ -25,6 +25,8 @@ describe('SettingsView', () => {
   it('exposes the complete accessible settings surface and loads storage information', async () => {
     render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
     expect(screen.getByRole('heading', { name: '设置' })).toBeVisible()
+    expect(screen.getByRole('dialog', { name: '设置' })).toHaveTextContent('微屿')
+    expect(screen.queryByText('Simple Notes')).not.toBeInTheDocument()
     expect(screen.getByLabelText('主题')).toHaveValue('forest')
     expect(screen.getByLabelText('正文字体')).toBeVisible()
     expect(screen.getByLabelText('代码字体')).toBeVisible()

@@ -24,7 +24,7 @@ describe('App', () => {
         }}
       />,
     )
-    expect(screen.getByRole('application', { name: 'Simple Notes' })).toBeVisible()
+    expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
     expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
   })
@@ -187,7 +187,7 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
 
     expect(restart).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('Update installed, but restart failed. Restart Simple Notes manually.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('重新启动微屿')
   })
 
   it('flushes and locks a dirty editor before restarting into an installed update', async () => {
@@ -253,7 +253,7 @@ describe('App', () => {
     }} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('本地索引恢复未完成')
-    expect(screen.getByRole('application', { name: 'Simple Notes' })).toBeVisible()
+    expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
     await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledOnce())
     expect(screen.getByRole('alert')).toHaveTextContent('本地索引恢复仍未完成')
@@ -382,7 +382,7 @@ describe('App', () => {
         }) }),
       }} />,
     )
-    const app = screen.getByRole('application', { name: 'Simple Notes' })
+    const app = screen.getByRole('application', { name: '微屿' })
     await waitFor(() => expect(app).toHaveAttribute('data-theme', 'sand'))
     expect(app.style.getPropertyValue('--body-font-size')).toBe('18px')
     await user.click(screen.getByRole('button', { name: '打开设置' }))
@@ -533,10 +533,10 @@ describe('App', () => {
     }} />)
     await waitFor(() => expect(settings.onChanged).toHaveBeenCalledOnce())
     publish({ ...DEFAULT_APP_SETTINGS, theme: 'sand' })
-    await waitFor(() => expect(screen.getByRole('application', { name: 'Simple Notes' })).toHaveAttribute('data-theme', 'sand'))
+    await waitFor(() => expect(screen.getByRole('application', { name: '微屿' })).toHaveAttribute('data-theme', 'sand'))
     pending.resolve({ ...DEFAULT_APP_SETTINGS, theme: 'forest' })
     await Promise.resolve()
-    expect(screen.getByRole('application', { name: 'Simple Notes' })).toHaveAttribute('data-theme', 'sand')
+    expect(screen.getByRole('application', { name: '微屿' })).toHaveAttribute('data-theme', 'sand')
     rendered.unmount()
     expect(unlisten).toHaveBeenCalledOnce()
   })
@@ -557,7 +557,7 @@ describe('App', () => {
     publish({ ...DEFAULT_APP_SETTINGS, theme: 'sand' })
     first.reject(new Error('broken store'))
     expect(await screen.findByRole('alert')).toHaveTextContent('无法加载设置')
-    expect(screen.getByRole('application', { name: 'Simple Notes' })).toHaveAttribute('data-theme', 'sand')
+    expect(screen.getByRole('application', { name: '微屿' })).toHaveAttribute('data-theme', 'sand')
     await userEvent.setup().click(screen.getByRole('button', { name: '重试加载设置' }))
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -667,7 +667,7 @@ describe('App', () => {
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
       settings: fakeSettingsPort({ load: vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, theme: 'system' }) }),
     }} />)
-    const app = screen.getByRole('application', { name: 'Simple Notes' })
+    const app = screen.getByRole('application', { name: '微屿' })
     await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#202729'))
     act(() => listener({ matches: false } as MediaQueryListEvent))
     await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#edf0f2'))

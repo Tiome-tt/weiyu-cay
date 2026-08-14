@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
 import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
+import { APP_NAME } from '../../shared/brand'
 
 interface SettingsViewProps {
   settings: SettingsPort
@@ -168,7 +169,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
         <section className="settings-restart" role="alertdialog" aria-modal="true" aria-labelledby="restart-heading">
           <span aria-hidden="true" className="content-placeholder__leaf">↻</span>
           <h1 id="restart-heading">需要重新启动</h1>
-          <p>数据已安全移动。重新启动后，Simple Notes 将从新的位置继续工作。</p>
+          <p>数据已安全移动。重新启动后，{APP_NAME} 将从新的位置继续工作。</p>
           {error && <p className="settings-view__error" role="alert">{error}</p>}
           <button type="button" disabled={restarting} onClick={() => void restart()}>立即重启</button>
         </section>
@@ -179,7 +180,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
-        <header><div><span className="library-pane__eyebrow">Simple Notes</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={operationBusy} onClick={onClose} aria-label="关闭设置">×</button></header>
+        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={operationBusy} onClick={onClose} aria-label="关闭设置">×</button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
         {shortcutWarning && <p className="settings-view__warning" role="status" aria-label="快捷键状态警告">{shortcutWarning}</p>}
         <div className="settings-view__body">
@@ -209,7 +210,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
                   {cleanupExpanded ? '收起旧位置候选项' : '查看旧位置候选项'}
                 </button>
                 {cleanupExpanded && <div id="settings-cleanup-candidates" className="settings-cleanup__guidance">
-                  <p><strong>Simple Notes 不提供自动删除。</strong>请先核验新位置的笔记与附件。绝不要删除旧位置根目录、<code>settings.json</code>、应用配置或任何未知文件。</p>
+                  <p><strong>{APP_NAME} 不提供自动删除。</strong>请先核验新位置的笔记与附件。绝不要删除旧位置根目录、<code>settings.json</code>、应用配置或任何未知文件。</p>
                   <label>旧位置（仅供核对）<input aria-label="旧位置（仅供核对）" readOnly value={storage.previousStorageCleanup.root} onFocus={(event) => event.currentTarget.select()} /></label>
                   <ul aria-label="可手动核对的旧数据候选项">
                     {storage.previousStorageCleanup.candidates.map((candidate) => <li key={`${candidate.kind}:${candidate.relativePath}`}><code>{candidate.relativePath}</code> <span>{candidate.kind}</span></li>)}

@@ -12,6 +12,7 @@ import { SettingsView } from '../features/settings/SettingsView'
 import { useExportLibraryController } from '../features/settings/ExportLibrary'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeStyle } from '../features/settings/theme'
 import { StatusNotice, type StatusNoticeState } from '../shared/StatusNotice'
+import { APP_NAME } from '../shared/brand'
 
 const defaultServices = createAppServices()
 
@@ -217,7 +218,7 @@ function MainApplication({ services }: { services: AppServices }) {
     }
   }, [services.lifecycle])
   return (
-    <main role="application" aria-label="Simple Notes" className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
+    <main role="application" aria-label={APP_NAME} className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
       <StatusNotice state={closeNotice} className="startup-recovery-notice" />
@@ -240,14 +241,14 @@ function UpdateControls({ state, onCheck, onInstall, onRestart }: { state: Updat
   return <section className="update-controls" aria-label="Application updates">
     <button type="button" onClick={onCheck} disabled={state.status === 'checking' || state.status === 'installing' || state.status === 'restarting'}>Check for updates</button>
     {state.status === 'checking' && <p role="status">Checking for updates…</p>}
-    {state.status === 'none' && <p role="status">Simple Notes is up to date.</p>}
+    {state.status === 'none' && <p role="status">{APP_NAME} is up to date.</p>}
     {state.status === 'check-error' && <p role="alert">Could not check for updates. Your notes are unchanged.</p>}
     {state.status === 'available' && update !== null && <><p role="status">Version {update.version} is ready to install.</p><button type="button" onClick={onInstall}>Download and install version {update.version}</button></>}
     {state.status === 'installing' && <p role="status">Downloading and verifying update…</p>}
     {state.status === 'install-error' && <p role="alert">Update installation failed. Your notes are unchanged.</p>}
     {state.status === 'installed' && <><p role="status">Update installed. Restart to finish.</p><button type="button" onClick={onRestart}>Restart to finish update</button></>}
-    {state.status === 'restarting' && <p role="status">Restarting Simple Notes…</p>}
-    {state.status === 'restart-error' && <p role="alert">Update installed, but restart failed. Restart Simple Notes manually.</p>}
+    {state.status === 'restarting' && <p role="status">正在重新启动{APP_NAME}…</p>}
+    {state.status === 'restart-error' && <p role="alert">更新已安装，但重启失败。请手动重新启动{APP_NAME}。</p>}
   </section>
 }
 

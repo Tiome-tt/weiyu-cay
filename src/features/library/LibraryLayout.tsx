@@ -9,6 +9,7 @@ import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
 import { TemporaryInbox, type TemporaryInboxHandle } from '../temporary/TemporaryInbox'
 import { TrashView } from './TrashView'
+import { APP_TAGLINE } from '../../shared/brand'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -409,6 +410,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
           <div className="content-placeholder">
             <span aria-hidden="true" className="content-placeholder__leaf">⌁</span>
+            <p>{APP_TAGLINE}</p>
             <p>选择一篇笔记开始阅读。</p>
           </div>
         )}

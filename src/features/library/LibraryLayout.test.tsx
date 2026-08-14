@@ -1069,6 +1069,7 @@ describe('LibraryLayout', () => {
     const { unmount } = render(
       <LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />,
     )
+    expect(screen.getByText('每个念头，都是一座小岛。')).toBeVisible()
     expect(screen.getByText('正在加载笔记…')).toBeVisible()
     pending.resolve([])
     expect(await screen.findByText('此文件夹中还没有笔记。')).toBeVisible()

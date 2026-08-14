@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
+import { APP_NAME } from '../../shared/brand'
 
 interface FolderTreeProps {
   folders: Folder[]
@@ -208,7 +209,7 @@ export function FolderTree(props: FolderTreeProps) {
       <header className="library-pane__header">
         <div>
           <span className="library-pane__eyebrow">资料库</span>
-          <h1>Simple Notes</h1>
+          <h1>{APP_NAME}</h1>
         </div>
         <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
           +
