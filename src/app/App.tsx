@@ -13,6 +13,7 @@ import { useExportLibraryController } from '../features/settings/ExportLibrary'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeStyle } from '../features/settings/theme'
 import { StatusNotice, type StatusNoticeState } from '../shared/StatusNotice'
 import { APP_NAME } from '../shared/brand'
+import { AppChrome } from '../shared/AppChrome'
 
 const defaultServices = createAppServices()
 
@@ -217,8 +218,7 @@ function MainApplication({ services }: { services: AppServices }) {
       })
     }
   }, [services.lifecycle])
-  return (
-    <main role="application" aria-label={APP_NAME} className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
+  const content = <>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
       <StatusNotice state={closeNotice} className="startup-recovery-notice" />
@@ -228,6 +228,12 @@ function MainApplication({ services }: { services: AppServices }) {
         {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} />}
+    </>
+  return (
+    <main role="application" aria-label={APP_NAME} className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
+      {services.windowChrome === undefined
+        ? content
+        : <AppChrome windowChrome={services.windowChrome}>{content}</AppChrome>}
     </main>
   )
 }

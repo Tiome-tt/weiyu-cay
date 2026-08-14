@@ -276,6 +276,13 @@ export function createE2EAppServices(): AppServices {
     },
     exportDestinationPicker: { async chooseExportDestination() { return 'E2E Export' } },
     recovery: { async load() { return recoveryReport }, async retry() { return recoveryReport } },
+    windowChrome: {
+      platform: 'windows',
+      async startDragging() { return },
+      async minimize() { return },
+      async toggleMaximize() { return },
+      async requestClose() { return },
+    },
     // E2E keeps updater behavior local and deterministic; production invokes the main-only Rust commands.
     updater: {
       async check() { return { version: '0.1.1', notes: 'E2E updater fixture' } },

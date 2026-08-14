@@ -2,7 +2,7 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -85,6 +85,33 @@ class TauriAppLifecyclePort implements AppLifecyclePort {
   async completeClose(generation: number, saved: boolean) {
     await this.client.invoke<void>('complete_main_window_close', { generation, saved })
   }
+}
+
+class TauriWindowChromePort implements WindowChromePort {
+  readonly platform = normalizeWindowPlatform(
+    typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  )
+
+  startDragging() {
+    return getCurrentWebviewWindow().startDragging()
+  }
+
+  minimize() {
+    return getCurrentWebviewWindow().minimize()
+  }
+
+  toggleMaximize() {
+    return getCurrentWebviewWindow().toggleMaximize()
+  }
+
+  requestClose() {
+    // A normal close request is intercepted by the existing safe-close protocol.
+    return getCurrentWebviewWindow().close()
+  }
+}
+
+function normalizeWindowPlatform(userAgent: string): WindowChromePort['platform'] {
+  return /Macintosh|Mac OS X/u.test(userAgent) ? 'macos' : 'windows'
 }
 
 class TauriFolderPort implements FolderPort {
@@ -355,6 +382,7 @@ export function createTauriPorts(): {
   recovery: RecoveryPort
   updater: UpdatePort
   lifecycle: AppLifecyclePort
+  windowChrome: WindowChromePort
 } {
   const client = new TauriClient()
   return {
@@ -374,5 +402,6 @@ export function createTauriPorts(): {
     recovery: new TauriRecoveryPort(client),
     updater: new TauriUpdatePort(client),
     lifecycle: new TauriAppLifecyclePort(client),
+    windowChrome: new TauriWindowChromePort(),
   }
 }

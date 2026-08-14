@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import userEvent from '@testing-library/user-event'
-import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort } from '../test/fakes'
+import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeWindowChromePort } from '../test/fakes'
 import type { AppSettings, ExportReport, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
@@ -27,6 +27,27 @@ describe('App', () => {
     expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
     expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
+  })
+
+  it('mounts main-window chrome while retaining the native safe-close listener', async () => {
+    const windowChrome = fakeWindowChromePort()
+    const lifecycle = {
+      beginCloseListenerRegistration: vi.fn().mockResolvedValue(81),
+      onCloseRequested: vi.fn().mockResolvedValue(() => undefined),
+      setListenerReady: vi.fn().mockResolvedValue(undefined),
+      completeClose: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle, windowChrome,
+    }} />)
+
+    await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
+    await userEvent.setup().click(screen.getByRole('button', { name: '关闭窗口' }))
+
+    expect(windowChrome.requestClose).toHaveBeenCalledOnce()
+    expect(lifecycle.completeClose).not.toHaveBeenCalled()
   })
 
   it('acknowledges a native close only after the dirty editor flushes behind a barrier', async () => {

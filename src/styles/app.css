@@ -11,6 +11,40 @@ body,
 
 .app-workspace { width: 100%; height: 100%; }
 
+.window-chrome {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: 32px minmax(0, 1fr);
+}
+
+.window-titlebar {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-soft);
+  user-select: none;
+}
+
+.window-drag-region { flex: 1; min-width: 24px; cursor: default; }
+.window-controls { display: flex; align-items: stretch; }
+.window-control {
+  display: grid;
+  width: 46px;
+  padding: 0;
+  color: var(--color-muted);
+  background: transparent;
+  border: 0;
+  place-items: center;
+}
+.window-control:hover { color: var(--color-heading); background: var(--color-panel-warm); }
+.window-control--close:hover { color: #fff; background: var(--color-error); }
+.window-chrome--macos .window-controls { gap: 3px; padding: 0 8px; align-items: center; }
+.window-chrome--macos .window-control { width: 24px; height: 24px; border-radius: 50%; }
+.window-chrome__content { min-width: 0; min-height: 0; }
+
 .library-shell {
   position: relative;
   display: grid;

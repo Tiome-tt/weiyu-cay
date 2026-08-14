@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../domain/model'
-import type { AssetPort, FolderPort, ImageReadPort, LinkPort, NotePort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, SystemPort, TemporaryPort } from '../domain/ports'
+import type { AssetPort, FolderPort, ImageReadPort, LinkPort, NotePort, SearchPort, SettingsPort, StickySettings, StickySettingsPort, SystemPort, TemporaryPort, WindowChromePort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS } from '../features/settings/theme'
 
 export const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
@@ -53,6 +53,15 @@ export const fakeSystemPort = (overrides: Partial<SystemPort> = {}): SystemPort 
   setWindowPreference: vi.fn().mockResolvedValue(undefined),
   hideTemporaryWindow: vi.fn().mockResolvedValue(undefined),
   openExternal: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
+})
+
+export const fakeWindowChromePort = (overrides: Partial<WindowChromePort> = {}): WindowChromePort => ({
+  platform: 'windows',
+  startDragging: vi.fn().mockResolvedValue(undefined),
+  minimize: vi.fn().mockResolvedValue(undefined),
+  toggleMaximize: vi.fn().mockResolvedValue(undefined),
+  requestClose: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 })
 
