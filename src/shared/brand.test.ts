@@ -18,8 +18,11 @@ describe('brand contract', () => {
 
   it('documents the approved names and safe cache cleanup', () => {
     const agents = readFileSync('AGENTS.md', 'utf8')
+    const design = readFileSync('docs/superpowers/specs/2026-07-30-simple-notes-design.md', 'utf8')
     const development = readFileSync('docs/development.md', 'utf8')
-    expect(agents).toContain('微屿 (Cay)')
+    expect(agents).toContain('Cay (微屿) is a local-first Markdown note application')
+    expect(design).toContain('# Cay (微屿) product and architecture design')
+    expect(design).toContain('Cay (微屿) is a small, approachable desktop note application')
     expect(development).toContain('cargo clean --manifest-path src-tauri/Cargo.toml')
     expect(development).toContain('不会删除笔记数据')
   })

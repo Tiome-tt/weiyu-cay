@@ -1,11 +1,11 @@
-# 微屿 (Cay) product and architecture design
+# Cay (微屿) product and architecture design
 
 Date: 2026-07-30
 Status: Approved design, awaiting written-spec review
 
 ## 1. Product intent
 
-微屿 (Cay) is a small, approachable desktop note application for computer developers. It prioritizes fast Markdown capture, clear organization, durable local storage, and links between notes. It is not intended to become an all-in-one workspace.
+Cay (微屿) is a small, approachable desktop note application for computer developers. It prioritizes fast Markdown capture, clear organization, durable local storage, and links between notes. It is not intended to become an all-in-one workspace.
 
 The first supported platforms are Windows and macOS. Linux is not an MVP target, although platform-specific code must remain isolated so Linux support is not unnecessarily blocked.
 

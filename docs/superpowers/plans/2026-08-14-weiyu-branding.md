@@ -301,7 +301,7 @@ Extend `src/shared/brand.test.ts`:
 it('documents the approved names and safe cache cleanup', () => {
   const agents = readFileSync('AGENTS.md', 'utf8')
   const development = readFileSync('docs/development.md', 'utf8')
-  expect(agents).toContain('微屿 (Cay)')
+  expect(agents).toContain('Cay (微屿)')
   expect(development).toContain('cargo clean --manifest-path src-tauri/Cargo.toml')
   expect(development).toContain('不会删除笔记数据')
 })
@@ -319,7 +319,7 @@ Expected: FAIL because `docs/development.md` does not exist and AGENTS still nam
 
 - [ ] **Step 3: Align documentation**
 
-Change the AGENTS project overview to begin with `微屿 (Cay) is a local-first...`. Change the approved product specification title and product-intent name without altering feature decisions. Create `docs/development.md` with this exact safety boundary:
+Change the AGENTS project overview to begin with `Cay (微屿) is a local-first...`. Change the approved product specification title and product-intent name without altering feature decisions. Create `docs/development.md` with this exact safety boundary:
 
 ```md
 ## Rust 构建缓存

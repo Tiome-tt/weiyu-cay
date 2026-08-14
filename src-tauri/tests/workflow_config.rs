@@ -136,6 +136,12 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
         "retryAttempts",
         "3",
     );
+    assert_step_with(
+        build,
+        "Build and attach signed installers and updater metadata",
+        "releaseName",
+        "Cay ${{ github.ref_name }}",
+    );
     assert_step_env(
         build,
         "Materialize release-only updater configuration",

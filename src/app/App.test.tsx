@@ -187,7 +187,7 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
 
     expect(restart).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('重新启动微屿')
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败。请手动重新启动微屿。')
   })
 
   it('flushes and locks a dirty editor before restarting into an installed update', async () => {

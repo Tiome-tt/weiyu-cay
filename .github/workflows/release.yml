@@ -234,7 +234,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Simple Notes ${{ github.ref_name }}'
+          releaseName: 'Cay ${{ github.ref_name }}'
           generateReleaseNotes: true
           releaseDraft: true
           prerelease: ${{ needs.verify-tag.outputs.channel == 'rc' }}
