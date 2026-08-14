@@ -3,6 +3,7 @@ import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
 import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
 import { APP_NAME } from '../../shared/brand'
+import { UpdateSettings, type UpdateController } from './UpdateSettings'
 
 interface SettingsViewProps {
   settings: SettingsPort
@@ -12,9 +13,10 @@ interface SettingsViewProps {
   prepareStorageMove(): Promise<(() => void) | null>
   onRestartRequired?(): void
   exportController?: ExportLibraryController
+  updateController?: UpdateController
 }
 
-export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController }: SettingsViewProps) {
+export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController, updateController }: SettingsViewProps) {
   const [draft, setDraft] = useState(value)
   const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [destination, setDestination] = useState('')
@@ -199,6 +201,12 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
             <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" value={draft.shortcut} onChange={(event) => editDraft({ shortcut: event.target.value })} /><button type="button" onClick={() => void update({ shortcut: draftRef.current.shortcut }, 'shortcut')}>应用快捷键</button></label>
             <label className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} />开机启动</label>
           </fieldset>
+          {updateController !== undefined && (
+            <fieldset disabled={operationBusy}>
+              <legend>应用更新</legend>
+              <UpdateSettings controller={updateController} />
+            </fieldset>
+          )}
           <fieldset disabled={operationBusy}>
             <legend>本地存储</legend>
             <p>{storage ? `${storage.root} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>

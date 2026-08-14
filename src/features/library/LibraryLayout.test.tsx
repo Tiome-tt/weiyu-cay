@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { SystemPort, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
-import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
+import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
 import { createRef } from 'react'
 import type { LibraryLayoutHandle } from './LibraryLayout'
@@ -519,28 +519,27 @@ describe('LibraryLayout', () => {
     expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
   })
 
-  it('returns to the library when a search result is selected from the temporary inbox', async () => {
+  it('flushes the active temporary editor before a toolbar search result returns to the library', async () => {
+    const pendingSave = deferred<NoteDocument>()
     const notes = fakeNotePort({
       listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Search target')]),
       loadNote: vi.fn().mockResolvedValue({ ...note('body'), id: noteA, title: 'Search target' }),
     })
-    const search = fakeSearchPort({
-      search: vi.fn().mockResolvedValue([{
-        noteId: noteA,
-        title: 'Search target',
-        folderBreadcrumb: [],
-        tags: [],
-        excerpt: 'body',
-        score: 1,
-      }]),
-    })
+    const temporary = fakeTemporaryPort(twoCaptures())
+    temporary.save = vi.fn(() => pendingSave.promise)
+    const ref = createRef<LibraryLayoutHandle>()
     const user = userEvent.setup()
-    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={fakeTemporaryPort(twoCaptures())} search={search} />)
+    render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={temporary} autosaveDelayMs={2000} />)
     await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
-    await user.type(screen.getByRole('searchbox', { name: '搜索笔记' }), 'target')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    await user.click(await screen.findByRole('button', { name: /Search target/ }))
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '尚未保存的临时内容' } }))
+    act(() => ref.current?.selectSearchResult(noteA))
 
+    await waitFor(() => expect(temporary.save).toHaveBeenCalledOnce())
+    expect(notes.loadNote).not.toHaveBeenCalled()
+    await act(async () => pendingSave.resolve({ ...twoCaptures()[0], markdown: '尚未保存的临时内容', revision: 2 }))
     expect(await screen.findByRole('heading', { name: 'Search target' })).toBeVisible()
   })
 

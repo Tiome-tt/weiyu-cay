@@ -4,7 +4,7 @@ import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/Lib
 import { createAppServices, type AppServices } from './services'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../domain/model'
-import type { StartupRecoveryReport, StickySettings, TemporaryWindowState, UpdatePort } from '../domain/ports'
+import type { StartupRecoveryReport, StickySettings, TemporaryWindowState } from '../domain/ports'
 import { isCanonicalUuidV7 } from '../domain/ids'
 import { StickyWindow } from '../features/temporary/StickyWindow'
 import type { AppSettings } from '../domain/ports'
@@ -14,6 +14,8 @@ import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, norma
 import { StatusNotice, type StatusNoticeState } from '../shared/StatusNotice'
 import { APP_NAME } from '../shared/brand'
 import { AppChrome } from '../shared/AppChrome'
+import { GlobalToolbar } from '../features/library/GlobalToolbar'
+import type { UpdateController, UpdateViewState } from '../features/settings/UpdateSettings'
 
 const defaultServices = createAppServices()
 
@@ -40,7 +42,7 @@ function MainApplication({ services }: { services: AppServices }) {
     [services.exportDestinationPicker],
   )
   const exportController = useExportLibraryController(services.exporter, chooseExportDestination)
-  const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' })
+  const [updateState, setUpdateState] = useState<UpdateViewState>({ status: 'idle' })
   const [closeNotice, setCloseNotice] = useState<StatusNoticeState>({ status: 'idle' })
   const closeBusy = useRef(false)
   const checkForUpdates = useCallback(async () => {
@@ -222,38 +224,24 @@ function MainApplication({ services }: { services: AppServices }) {
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
       <StatusNotice state={closeNotice} className="startup-recovery-notice" />
-      {services.updater !== undefined && <UpdateControls state={updateState} onCheck={() => void checkForUpdates()} onInstall={() => void installUpdate()} onRestart={() => void restartAfterUpdate()} />}
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
+        <GlobalToolbar
+          search={services.search}
+          saveState="hidden"
+          updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
+          onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
+          onCreateNote={() => libraryRef.current?.createNote()}
+          onOpenSettings={() => { if (services.settings !== undefined) setSettingsOpen(true) }}
+        />
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
-        {services.settings && <button type="button" className="settings-launcher" aria-label="打开设置" disabled={restartRequired} onClick={() => setSettingsOpen(true)}>⚙</button>}
       </div>
-      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} />}
+      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} updateController={services.updater === undefined ? undefined : { state: updateState, check: checkForUpdates, install: installUpdate, restart: restartAfterUpdate } satisfies UpdateController} />}
     </>
   return (
     <main role="application" aria-label={APP_NAME} className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       <AppChrome windowChrome={services.windowChrome}>{content}</AppChrome>
     </main>
   )
-}
-
-type UpdateState =
-  | { status: 'idle' | 'checking' | 'none' | 'check-error' }
-  | { status: 'available' | 'installing' | 'installed' | 'install-error' | 'restarting' | 'restart-error'; update: Awaited<ReturnType<UpdatePort['check']>> & {} }
-
-function UpdateControls({ state, onCheck, onInstall, onRestart }: { state: UpdateState; onCheck(): void; onInstall(): void; onRestart(): void }) {
-  const update = 'update' in state ? state.update : null
-  return <section className="update-controls" aria-label="Application updates">
-    <button type="button" onClick={onCheck} disabled={state.status === 'checking' || state.status === 'installing' || state.status === 'restarting'}>Check for updates</button>
-    {state.status === 'checking' && <p role="status">Checking for updates…</p>}
-    {state.status === 'none' && <p role="status">{APP_NAME} is up to date.</p>}
-    {state.status === 'check-error' && <p role="alert">Could not check for updates. Your notes are unchanged.</p>}
-    {state.status === 'available' && update !== null && <><p role="status">Version {update.version} is ready to install.</p><button type="button" onClick={onInstall}>Download and install version {update.version}</button></>}
-    {state.status === 'installing' && <p role="status">Downloading and verifying update…</p>}
-    {state.status === 'install-error' && <p role="alert">Update installation failed. Your notes are unchanged.</p>}
-    {state.status === 'installed' && <><p role="status">Update installed. Restart to finish.</p><button type="button" onClick={onRestart}>Restart to finish update</button></>}
-    {state.status === 'restarting' && <p role="status">正在重新启动{APP_NAME}…</p>}
-    {state.status === 'restart-error' && <p role="alert">更新已安装，但重启失败。请手动重新启动{APP_NAME}。</p>}
-  </section>
 }
 
 function StickyApplication({ services, route }: { services: AppServices; route: StickyRoute }) {

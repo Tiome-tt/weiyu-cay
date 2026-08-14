@@ -2,16 +2,18 @@ import type { NoteId } from '../../domain/model'
 import type { SearchResult } from '../../domain/ports'
 
 interface SearchResultsProps {
+  id: string
   results: SearchResult[]
+  activeIndex: number
   onSelect: (noteId: NoteId) => void
 }
 
-export function SearchResults({ results, onSelect }: SearchResultsProps) {
+export function SearchResults({ id, results, activeIndex, onSelect }: SearchResultsProps) {
   return (
-    <ul className="search-results" aria-label="搜索结果">
-      {results.map((result) => (
+    <ul className="search-results" id={id} aria-label="搜索结果">
+      {results.map((result, index) => (
         <li key={result.noteId}>
-          <button type="button" onClick={() => onSelect(result.noteId)}>
+          <button id={`${id}-${index}`} type="button" data-active={index === activeIndex || undefined} onClick={() => onSelect(result.noteId)}>
             <strong>{result.title}</strong>
             <span>{result.folderBreadcrumb.join(' / ') || '未分类'}</span>
             {result.tags.length > 0 && <span>{result.tags.map((tag) => `#${tag}`).join(' ')}</span>}

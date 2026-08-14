@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSettings, SettingsPort } from '../../domain/ports'
 import { SettingsView } from './SettingsView'
 import { DEFAULT_APP_SETTINGS } from './theme'
+import type { UpdateController } from './UpdateSettings'
 
 function settingsPort(overrides: Partial<SettingsPort> = {}): SettingsPort {
   return {
@@ -38,6 +39,16 @@ describe('SettingsView', () => {
     expect(screen.getByLabelText('默认编辑视图')).toBeVisible()
     expect(screen.getByLabelText('自动保存延迟')).toHaveAttribute('min', '150')
     expect(await screen.findByText(/3 KB/)).toBeVisible()
+  })
+
+  it('hosts the explicit update controls inside settings', async () => {
+    const check = vi.fn().mockResolvedValue(undefined)
+    const updateController: UpdateController = { state: { status: 'idle' }, check, install: vi.fn(), restart: vi.fn() }
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} updateController={updateController} />)
+
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(check).toHaveBeenCalledOnce()
   })
 
   it('shows a startup shortcut registration warning without disabling local notes', async () => {

@@ -3,7 +3,6 @@ import type { EditorMode, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
-import { SearchBox } from '../search/SearchBox'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
@@ -29,6 +28,8 @@ export interface LibraryLayoutHandle {
   prepareStorageMove(): Promise<(() => void) | null>
   prepareExit(): Promise<(() => void) | null>
   refreshAfterRecovery(): Promise<void>
+  selectSearchResult(noteId: NoteId): void
+  createNote(): void
 }
 
 export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs }, ref) {
@@ -177,7 +178,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     },
     prepareStorageMove: prepareEditorFlush,
     prepareExit: prepareEditorFlush,
-  }), [library.refreshLibrary])
+    selectSearchResult: (noteId) => {
+      void navigateAfterSave(() => {
+        setActiveView('library')
+        library.selectNote(noteId)
+      })
+    },
+    createNote: () => {
+      void createFormalNote('未命名笔记')
+    },
+  }))
 
   async function prepareEditorFlush(): Promise<(() => void) | null> {
       if (storageMoveLockedRef.current) return null
@@ -309,10 +319,6 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
-      {search && <SearchBox search={search} onSelect={(noteId) => void navigateAfterSave(() => {
-        setActiveView('library')
-        library.selectNote(noteId)
-      })} />}
       <div className="library-collapse-controls" role="toolbar" aria-label="侧栏显示">
         <button
           type="button"

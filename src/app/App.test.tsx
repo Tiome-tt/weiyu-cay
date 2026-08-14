@@ -189,19 +189,22 @@ describe('App', () => {
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
       updater: { check, install, restart },
     }
     render(<App services={services} />)
 
     expect(check).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
+    expect(screen.queryByRole('button', { name: '检查更新' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
     expect(check).toHaveBeenCalledOnce()
-    expect(await screen.findByText('Version 0.1.1 is ready to install.')).toBeVisible()
+    expect(await screen.findByText('版本 0.1.1 可以安装。')).toBeVisible()
     expect(install).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: 'Download and install version 0.1.1' }))
+    await user.click(screen.getByRole('button', { name: '下载并安装 0.1.1' }))
     expect(install).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('Update installation failed. Your notes are unchanged.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新安装失败')
   })
 
   it('keeps an installed update recoverable when explicit restart fails', async () => {
@@ -210,16 +213,18 @@ describe('App', () => {
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
       updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
     }
     render(<App services={services} />)
 
-    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
-    await user.click(await screen.findByRole('button', { name: 'Download and install version 0.1.1' }))
-    await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(await screen.findByRole('button', { name: '下载并安装 0.1.1' }))
+    await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     expect(restart).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败。请手动重新启动微屿。')
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
   })
 
   it('flushes and locks a dirty editor before restarting into an installed update', async () => {
@@ -234,6 +239,7 @@ describe('App', () => {
     const services = {
       notes, folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
       updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
     }
     const user = userEvent.setup()
@@ -242,9 +248,10 @@ describe('App', () => {
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty update draft' } }))
-    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
-    await user.click(await screen.findByRole('button', { name: 'Download and install version 0.1.1' }))
-    await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(await screen.findByRole('button', { name: '下载并安装 0.1.1' }))
+    await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(restart).not.toHaveBeenCalled()
