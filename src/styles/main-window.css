@@ -813,16 +813,16 @@
   gap: 5px;
 }
 
-.main-window .editor-actions-menu { position: relative; flex: 0 0 auto; }
+.main-window .editor-actions-menu { position: static; flex: 0 0 auto; }
 .main-window .editor-actions-menu__trigger[aria-expanded="true"] { color: var(--color-accent-strong); background: var(--color-accent-soft); border-color: var(--color-accent-border); }
 
 .main-window .editor-actions-menu__popover {
   position: absolute;
   z-index: 16;
   top: calc(100% + 7px);
-  right: 0;
+  right: 10px;
   display: grid;
-  width: min(330px, calc(100vw - 28px));
+  width: min(330px, calc(100% - 20px));
   max-height: min(420px, calc(100vh - 126px));
   gap: 10px;
   padding: 11px;

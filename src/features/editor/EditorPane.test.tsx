@@ -119,6 +119,7 @@ describe('EditorPane', () => {
 
     await user.click(trigger)
     const menu = screen.getByRole('menu', { name: '笔记操作' })
+    expect(toolbar).toContainElement(menu)
     const linkTarget = within(menu).getByRole('combobox', { name: '内部链接目标' })
     const folderTarget = within(menu).getByRole('combobox', { name: '笔记文件夹' })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')

@@ -15,6 +15,24 @@ describe('main window layout contracts', () => {
     expect(mainWindowCss).not.toMatch(/scrollbar-width:\s*none/)
   })
 
+  it('keeps the more-actions popover inside the 420px editor boundary even with save status present', () => {
+    const anchor = cssRule('.main-window .editor-actions-menu')
+    const popover = cssRule('.main-window .editor-actions-menu__popover')
+    expect(anchor).toMatch(/position:\s*static/)
+
+    const rightInset = pixels(popover, /right:\s*(\d+)px/, 'right inset')
+    const widthCap = pixels(popover, /width:\s*min\((\d+)px/, 'width cap')
+    const horizontalAllowance = pixels(popover, /calc\(100%\s*-\s*(\d+)px\)/, 'horizontal allowance')
+    const editorWidth = 420
+    const usedWidth = Math.min(widthCap, editorWidth - horizontalAllowance)
+    const leftEdge = editorWidth - rightInset - usedWidth
+
+    expect(leftEdge).toBeGreaterThanOrEqual(0)
+    expect(leftEdge + usedWidth).toBeLessThanOrEqual(editorWidth)
+    expect(mainWindowCss).toMatch(/\.main-window \.editor-toolbar\s*{[^}]*position:\s*relative/s)
+    expect(mainWindowCss).toMatch(/\.main-window \.split-pane__pane\s*{[^}]*overflow:\s*hidden/s)
+  })
+
   it('uses a light-theme timestamp color with at least 4.5 to 1 contrast', () => {
     const foreground = token('--color-muted')
     const background = token('--color-panel')
@@ -27,6 +45,19 @@ function token(name: string) {
   const match = new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i').exec(tokensCss)
   if (match === null) throw new Error(`missing token ${name}`)
   return match[1]
+}
+
+function cssRule(selector: string) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(mainWindowCss)
+  if (match === null) throw new Error(`missing rule ${selector}`)
+  return match[1]
+}
+
+function pixels(rule: string, pattern: RegExp, label: string) {
+  const match = pattern.exec(rule)
+  if (match === null) throw new Error(`missing ${label}`)
+  return Number(match[1])
 }
 
 function contrast(foreground: string, background: string) {
