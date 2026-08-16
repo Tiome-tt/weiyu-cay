@@ -1,46 +1,52 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createRef } from 'react'
+import { createRef, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId } from '../../domain/model'
-import { CreateNotePopover } from './CreateNotePopover'
+import { CreateNotePopover, type CreateNoteDraft, type CreateNoteStatus } from './CreateNotePopover'
 
 const folderId = '019c0000-0000-7000-8000-000000000111' as FolderId
 const folders: Folder[] = [{ id: folderId, parentId: null, name: '设计', sortOrder: 0 }]
 
-function deferred() {
-  let resolve!: () => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<void>((done, fail) => {
-    resolve = done
-    reject = fail
-  })
-  return { promise, resolve, reject }
-}
-
 afterEach(cleanup)
 
+function ControlledPopover({
+  initialDraft = { title: '', folderId: null },
+  status = 'idle',
+  onCreate = vi.fn(),
+  onClose = vi.fn(),
+}: {
+  initialDraft?: CreateNoteDraft
+  status?: CreateNoteStatus
+  onCreate?: (title: string, folderId: FolderId | null) => void
+  onClose?: () => void
+}) {
+  const [draft, setDraft] = useState(initialDraft)
+  const triggerRef = createRef<HTMLButtonElement>()
+  return <>
+    <button ref={triggerRef}>新建笔记</button>
+    <CreateNotePopover
+      folders={folders}
+      draft={draft}
+      status={status}
+      triggerRef={triggerRef}
+      onDraftChange={setDraft}
+      onCreate={onCreate}
+      onClose={onClose}
+    />
+  </>
+}
+
 describe('CreateNotePopover', () => {
-  it('retains title and folder after failure and restores trigger focus on Escape', async () => {
+  it('retains the owner draft after failure and restores trigger focus on Escape', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
-    const onCreate = vi.fn().mockRejectedValue(new Error('disk full'))
-    const triggerRef = createRef<HTMLButtonElement>()
-    render(<>
-      <button ref={triggerRef}>新建笔记</button>
-      <CreateNotePopover
-        folders={folders}
-        initialFolderId={null}
-        triggerRef={triggerRef}
-        onCreate={onCreate}
-        onClose={onClose}
-      />
-    </>)
-
-    await user.type(screen.getByRole('textbox', { name: '笔记标题' }), '潮汐设计')
-    await user.selectOptions(screen.getByRole('combobox', { name: '保存到目录' }), folderId)
-    await user.click(screen.getByRole('button', { name: '创建笔记' }))
+    render(<ControlledPopover
+      initialDraft={{ title: '潮汐设计', folderId }}
+      status="error"
+      onClose={onClose}
+    />)
 
     expect(screen.getByRole('alert')).toHaveTextContent('无法新建笔记')
     expect(screen.getByRole('textbox', { name: '笔记标题' })).toHaveValue('潮汐设计')
@@ -52,17 +58,7 @@ describe('CreateNotePopover', () => {
 
   it('moves focus into the title and keeps Tab focus inside the popover', async () => {
     const user = userEvent.setup()
-    const triggerRef = createRef<HTMLButtonElement>()
-    render(<>
-      <button ref={triggerRef}>新建笔记</button>
-      <CreateNotePopover
-        folders={folders}
-        initialFolderId={folderId}
-        triggerRef={triggerRef}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onClose={vi.fn()}
-      />
-    </>)
+    render(<ControlledPopover initialDraft={{ title: '', folderId }} />)
 
     const title = screen.getByRole('textbox', { name: '笔记标题' })
     expect(title).toHaveFocus()
@@ -74,73 +70,37 @@ describe('CreateNotePopover', () => {
 
   it('closes on an outside pointer action and restores the trigger focus', () => {
     const onClose = vi.fn()
-    const triggerRef = createRef<HTMLButtonElement>()
-    render(<>
-      <button ref={triggerRef}>新建笔记</button>
-      <CreateNotePopover
-        folders={folders}
-        initialFolderId={null}
-        triggerRef={triggerRef}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onClose={onClose}
-      />
-    </>)
+    render(<ControlledPopover onClose={onClose} />)
 
     const outsidePointer = createEvent.pointerDown(document.body)
     fireEvent(document.body, outsidePointer)
     expect(onClose).toHaveBeenCalledOnce()
-    expect(triggerRef.current).toHaveFocus()
+    expect(screen.getByRole('button', { name: '新建笔记' })).toHaveFocus()
   })
 
-  it('keeps pending creation open and preserves a late failure for retry', async () => {
-    const pending = deferred()
-    const onCreate = vi.fn()
-      .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce(undefined)
-    const onClose = vi.fn()
-    const triggerRef = createRef<HTMLButtonElement>()
+  it('allows Escape while pending and keeps the submitted draft read-only', async () => {
     const user = userEvent.setup()
-    render(<>
-      <button ref={triggerRef}>新建笔记</button>
-      <CreateNotePopover
-        folders={folders}
-        initialFolderId={folderId}
-        triggerRef={triggerRef}
-        onCreate={onCreate}
-        onClose={onClose}
-      />
-    </>)
+    const onCreate = vi.fn()
+    const onClose = vi.fn()
+    render(<ControlledPopover
+      initialDraft={{ title: '  潮汐设计  ', folderId }}
+      status="pending"
+      onCreate={onCreate}
+      onClose={onClose}
+    />)
 
-    await user.type(screen.getByRole('textbox', { name: '笔记标题' }), '  潮汐设计  ')
-    await user.click(screen.getByRole('button', { name: '创建笔记' }))
-    expect(onCreate).toHaveBeenCalledWith('潮汐设计', folderId)
-    expect(screen.getByRole('button', { name: '正在创建笔记' })).toBeDisabled()
     const title = screen.getByRole('textbox', { name: '笔记标题' })
     expect(title).toHaveFocus()
     expect(title).toHaveAttribute('readonly')
-    expect(screen.getByRole('button', { name: '取消' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '正在创建笔记' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled()
     expect(screen.getByRole('dialog', { name: '新建笔记' })).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByRole('status')).toHaveTextContent('正在创建笔记')
-    await user.tab()
-    expect(title).toHaveFocus()
     fireEvent.submit(screen.getByRole('form', { name: '新建笔记' }))
-    expect(onCreate).toHaveBeenCalledOnce()
-    fireEvent.pointerDown(document.body)
-    expect(onClose).not.toHaveBeenCalled()
+    expect(onCreate).not.toHaveBeenCalled()
 
     await user.keyboard('{Escape}')
-    expect(onClose).not.toHaveBeenCalled()
-
-    await act(async () => pending.reject(new Error('late disk failure')))
-    expect(screen.getByRole('alert')).toHaveTextContent('无法新建笔记')
-    expect(title).toHaveValue('  潮汐设计  ')
-    expect(screen.getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderId)
-    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled()
-
-    await user.click(screen.getByRole('button', { name: '创建笔记' }))
-    expect(onCreate).toHaveBeenCalledTimes(2)
-    expect(onCreate).toHaveBeenLastCalledWith('潮汐设计', folderId)
     expect(onClose).toHaveBeenCalledOnce()
-    expect(triggerRef.current).toHaveFocus()
+    expect(screen.getByRole('button', { name: '新建笔记' })).toHaveFocus()
   })
 })

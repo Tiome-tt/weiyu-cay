@@ -1,19 +1,33 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
+
+export interface CreateNoteDraft {
+  title: string
+  folderId: FolderId | null
+}
+
+export type CreateNoteStatus = 'idle' | 'pending' | 'error'
 
 export interface CreateNotePopoverProps {
   folders: Folder[]
-  initialFolderId: FolderId | null
+  draft: CreateNoteDraft
+  status: CreateNoteStatus
   triggerRef: RefObject<HTMLButtonElement | null>
-  onCreate(title: string, folderId: FolderId | null): Promise<void>
+  onDraftChange(draft: CreateNoteDraft): void
+  onCreate(title: string, folderId: FolderId | null): void
   onClose(): void
 }
 
-export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCreate, onClose }: CreateNotePopoverProps) {
-  const [title, setTitle] = useState('')
-  const [folderId, setFolderId] = useState<FolderId | null>(initialFolderId)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
+export function CreateNotePopover({
+  folders,
+  draft,
+  status,
+  triggerRef,
+  onDraftChange,
+  onCreate,
+  onClose,
+}: CreateNotePopoverProps) {
+  const busy = status === 'pending'
   const popoverRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -32,32 +46,22 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
 
   useEffect(() => {
     const closeFromOutside = (event: PointerEvent) => {
-      if (busy || popoverRef.current?.contains(event.target as Node)) return
+      if (popoverRef.current?.contains(event.target as Node)) return
       close()
     }
     document.addEventListener('pointerdown', closeFromOutside)
     return () => document.removeEventListener('pointerdown', closeFromOutside)
   })
 
-  const submit = async (event: FormEvent) => {
+  const submit = (event: FormEvent) => {
     event.preventDefault()
-    const normalizedTitle = title.trim()
+    const normalizedTitle = draft.title.trim()
     if (busy || normalizedTitle.length === 0) return
-    setBusy(true)
-    setError(false)
-    try {
-      await onCreate(normalizedTitle, folderId)
-      setBusy(false)
-      close()
-    } catch {
-      setError(true)
-      setBusy(false)
-    }
+    onCreate(normalizedTitle, draft.folderId)
   }
 
   const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
-      if (busy) return
       event.preventDefault()
       close()
       return
@@ -88,7 +92,7 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
       className="create-note-popover"
       onKeyDown={keepFocusInside}
     >
-      <form aria-label="新建笔记" onSubmit={(event) => void submit(event)}>
+      <form aria-label="新建笔记" onSubmit={submit}>
         <h2 id="create-note-title">新建笔记</h2>
         <label>
           <span>笔记标题</span>
@@ -96,8 +100,8 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
             ref={titleRef}
             aria-label="笔记标题"
             readOnly={busy}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            value={draft.title}
+            onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
           />
         </label>
         <label>
@@ -105,8 +109,8 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
           <select
             aria-label="保存到目录"
             disabled={busy}
-            value={folderId ?? ''}
-            onChange={(event) => setFolderId((event.target.value || null) as FolderId | null)}
+            value={draft.folderId ?? ''}
+            onChange={(event) => onDraftChange({ ...draft, folderId: (event.target.value || null) as FolderId | null })}
           >
             <option value="">未归档笔记</option>
             {folders
@@ -116,13 +120,13 @@ export function CreateNotePopover({ folders, initialFolderId, triggerRef, onCrea
           </select>
         </label>
         {busy && <p role="status">正在创建笔记…</p>}
-        {error && <p role="alert">无法新建笔记，请重试。</p>}
+        {status === 'error' && <p role="alert">无法新建笔记，请重试。</p>}
         <div className="create-note-popover__actions">
-          <button type="button" disabled={busy} onClick={close}>取消</button>
+          <button type="button" onClick={close}>取消</button>
           <button
             type="submit"
             aria-label={busy ? '正在创建笔记' : '创建笔记'}
-            disabled={busy || title.trim().length === 0}
+            disabled={busy || draft.title.trim().length === 0}
           >
             {busy ? '正在创建…' : '创建笔记'}
           </button>

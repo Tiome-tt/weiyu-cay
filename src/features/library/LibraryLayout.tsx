@@ -13,7 +13,7 @@ import { DirectoryRail } from './DirectoryRail'
 import { LibraryRail, type LibraryRailEntry } from './LibraryRail'
 import { useResponsiveColumns } from './useResponsiveColumns'
 import { Icon } from '../../shared/Icon'
-import { CreateNotePopover } from './CreateNotePopover'
+import { CreateNotePopover, type CreateNoteDraft, type CreateNoteStatus } from './CreateNotePopover'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -42,6 +42,11 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
   const [createPopoverOpen, setCreatePopoverOpen] = useState(false)
+  const [createOperation, setCreateOperation] = useState<CreateNoteDraft & { status: CreateNoteStatus }>({
+    title: '',
+    folderId: null,
+    status: 'idle',
+  })
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
   const [linkRepairRetry, setLinkRepairRetry] = useState<{ noteId: NoteId; title: string } | null>(null)
   const [linkRepairBusy, setLinkRepairBusy] = useState(false)
@@ -56,6 +61,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const collapsedPreferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
   const createTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const createPopoverOpenRef = useRef(false)
+  const createOperationRef = useRef(createOperation)
+  const createInFlightRef = useRef<Promise<void> | null>(null)
+  const createOperationRequest = useRef(0)
   const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
   const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
@@ -80,6 +89,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       mountedRef.current = false
       navigationRequest.current += 1
       trashMutationRef.current += 1
+      createOperationRequest.current += 1
     }
   }, [])
 
@@ -146,6 +156,19 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       ? 'trash'
       : library.activeFolderId === null ? 'unfiled' : 'folders'
 
+  const updateCreateOperation = (
+    update: (current: CreateNoteDraft & { status: CreateNoteStatus }) => CreateNoteDraft & { status: CreateNoteStatus },
+  ) => {
+    const next = update(createOperationRef.current)
+    createOperationRef.current = next
+    setCreateOperation(next)
+  }
+
+  const closeCreatePopover = () => {
+    createPopoverOpenRef.current = false
+    setCreatePopoverOpen(false)
+  }
+
   const navigateAfterSave = async <Result,>(navigate: () => Result | Promise<Result>): Promise<Result | null> => {
     if (trashBusyRef.current === 'delete' || storageMoveLockedRef.current) return null
     const request = ++navigationRequest.current
@@ -204,6 +227,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     },
     createNote: (trigger) => {
       createTriggerRef.current = trigger
+      if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
+        updateCreateOperation((current) => ({ ...current, folderId: library.activeFolderId }))
+      }
+      createPopoverOpenRef.current = true
       setCreatePopoverOpen(true)
     },
   }))
@@ -297,9 +324,29 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const createFormalNote = async (title: string, folderId: FolderId | null) => {
-    const result = await navigateAfterSave(() => library.createNote(title, folderId))
-    if (result === null) throw new Error('create was blocked by an unsaved editor')
+  const createFormalNote = (title: string, folderId: FolderId | null) => {
+    if (createInFlightRef.current !== null) return
+    const request = ++createOperationRequest.current
+    updateCreateOperation((current) => ({ ...current, status: 'pending' }))
+    const operation = (async () => {
+      try {
+        const result = await navigateAfterSave(() => library.createNote(title, folderId))
+        if (result === null) throw new Error('create was blocked by an unsaved editor')
+        if (!mountedRef.current || createOperationRequest.current !== request) return
+        updateCreateOperation(() => ({ title: '', folderId, status: 'idle' }))
+        if (createPopoverOpenRef.current) {
+          closeCreatePopover()
+          createTriggerRef.current?.focus()
+        }
+      } catch {
+        if (mountedRef.current && createOperationRequest.current === request) {
+          updateCreateOperation((current) => ({ ...current, status: 'error' }))
+        }
+      } finally {
+        if (createOperationRequest.current === request) createInFlightRef.current = null
+      }
+    })()
+    createInFlightRef.current = operation
   }
 
   const undoFormalDelete = async () => {
@@ -330,13 +377,25 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
+      {!createPopoverOpen && createOperation.status === 'pending' && (
+        <p className="sr-only" role="status">正在创建“{createOperation.title.trim()}”…</p>
+      )}
+      {!createPopoverOpen && createOperation.status === 'error' && (
+        <p className="sr-only" role="alert">
+          无法新建“{createOperation.title.trim()}”。请重新打开“新建笔记”重试。
+        </p>
+      )}
       {createPopoverOpen && (
         <CreateNotePopover
           folders={library.folders}
-          initialFolderId={library.activeFolderId}
+          draft={{ title: createOperation.title, folderId: createOperation.folderId }}
+          status={createOperation.status}
           triggerRef={createTriggerRef}
+          onDraftChange={(draft) => updateCreateOperation((current) => (
+            current.status === 'pending' ? current : { ...draft, status: 'idle' }
+          ))}
           onCreate={createFormalNote}
-          onClose={() => setCreatePopoverOpen(false)}
+          onClose={closeCreatePopover}
         />
       )}
       <div ref={columnsRef} className="library-columns">

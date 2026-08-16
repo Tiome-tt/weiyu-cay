@@ -119,7 +119,7 @@ describe('LibraryLayout', () => {
     expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
   })
 
-  it('keeps a late create failure in the popover and retries the same title and folder', async () => {
+  it('closes a pending create while retaining one operation and its late failure for retry', async () => {
     const pendingCreate = deferred<NoteDocument>()
     const created = { ...note(''), id: noteC, title: '晚到失败', folderId: folderB }
     const createNote = vi.fn()
@@ -145,17 +145,63 @@ describe('LibraryLayout', () => {
     await user.selectOptions(within(dialog).getByRole('combobox', { name: '保存到目录' }), folderB)
     await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
     await user.keyboard('{Escape}')
-    expect(dialog).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新建笔记' })).toHaveFocus()
+    expect(screen.getByText('正在创建“晚到失败”…')).toHaveAttribute('role', 'status')
+
+    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    const pendingDialog = screen.getByRole('dialog', { name: '新建笔记' })
+    expect(within(pendingDialog).getByRole('textbox', { name: '笔记标题' })).toHaveValue('晚到失败')
+    expect(within(pendingDialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderB)
+    expect(within(pendingDialog).getByRole('button', { name: '正在创建笔记' })).toBeDisabled()
+    fireEvent.submit(within(pendingDialog).getByRole('form', { name: '新建笔记' }))
+    expect(createNote).toHaveBeenCalledOnce()
+    await user.keyboard('{Escape}')
 
     await act(async () => pendingCreate.reject(new Error('late disk failure')))
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('无法新建笔记')
-    expect(title).toHaveValue('晚到失败')
-    expect(within(dialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderB)
+    expect(screen.getByText('无法新建“晚到失败”。请重新打开“新建笔记”重试。')).toHaveAttribute('role', 'alert')
 
-    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    const retryDialog = screen.getByRole('dialog', { name: '新建笔记' })
+    expect(within(retryDialog).getByRole('alert')).toHaveTextContent('无法新建笔记')
+    expect(within(retryDialog).getByRole('textbox', { name: '笔记标题' })).toHaveValue('晚到失败')
+    expect(within(retryDialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderB)
+    await user.click(within(retryDialog).getByRole('button', { name: '创建笔记' }))
     expect(createNote).toHaveBeenCalledTimes(2)
     expect(createNote).toHaveBeenLastCalledWith({ folderId: folderB, title: '晚到失败' })
     expect(await screen.findByRole('heading', { name: '晚到失败' })).toBeVisible()
+  })
+
+  it('converges a late successful create after the popover closes without creating twice', async () => {
+    const pendingCreate = deferred<NoteDocument>()
+    const created = { ...note(''), id: noteC, title: '离岸成功', folderId: folderA }
+    const createNote = vi.fn(() => pendingCreate.promise)
+    const notes = fakeNotePort({ createNote, listNotes: vi.fn().mockResolvedValue([]) })
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<>
+      <button type="button" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
+      <LibraryLayout
+        ref={layoutRef}
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+      />
+    </>)
+
+    await user.click(screen.getByRole('button', { name: '新建笔记' }))
+    const dialog = screen.getByRole('dialog', { name: '新建笔记' })
+    await user.type(within(dialog).getByRole('textbox', { name: '笔记标题' }), '离岸成功')
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: '保存到目录' }), folderA)
+    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+
+    await act(async () => pendingCreate.resolve(created))
+    expect(await screen.findByRole('heading', { name: '离岸成功' })).toBeVisible()
+    expect(createNote).toHaveBeenCalledOnce()
+    expect(screen.queryByText('正在创建“离岸成功”…')).not.toBeInTheDocument()
+    expect(screen.queryByText(/无法新建“离岸成功”/)).not.toBeInTheDocument()
   })
 
   it('renames and moves a formal note through the authoritative production port', async () => {
