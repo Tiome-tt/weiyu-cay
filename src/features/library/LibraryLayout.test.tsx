@@ -302,6 +302,7 @@ describe('LibraryLayout', () => {
 
     expect(notes.renameNote).toHaveBeenCalledWith(noteA, 'Renamed note')
     expect(await screen.findByRole('heading', { name: 'Renamed note' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '笔记更多操作' }))
     await user.selectOptions(screen.getByRole('combobox', { name: '笔记文件夹' }), folderB)
     expect(notes.moveNote).toHaveBeenCalledWith(noteA, folderB)
     expect(await screen.findByText('笔记已移动。', { selector: '[role="status"]' })).toBeVisible()

@@ -10,7 +10,9 @@ describe('main window layout contracts', () => {
     expect(mainWindowCss).toMatch(/grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto/)
     expect(mainWindowCss).toMatch(/\.main-window \.editor-document\s*{[^}]*grid-area:\s*document/s)
     expect(mainWindowCss).toMatch(/\.main-window \.editor-toolbar\s*{[^}]*height:\s*44px/s)
-    expect(mainWindowCss).toMatch(/\.main-window \.editor-toolbar__secondary\s*{[^}]*white-space:\s*nowrap[^}]*overflow-x:\s*auto/s)
+    expect(mainWindowCss).not.toContain('.editor-toolbar__secondary')
+    expect(mainWindowCss).toMatch(/\.main-window \.editor-actions-menu__popover\s*{[^}]*position:\s*absolute[^}]*max-height:/s)
+    expect(mainWindowCss).not.toMatch(/scrollbar-width:\s*none/)
   })
 
   it('uses a light-theme timestamp color with at least 4.5 to 1 contrast', () => {

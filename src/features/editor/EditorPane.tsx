@@ -11,6 +11,7 @@ import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } 
 import type { AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, SearchPort, SystemPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
 import { Backlinks } from './Backlinks'
+import { EditorActionsMenu } from './EditorActionsMenu'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
@@ -90,6 +91,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const splitPointerRef = useRef<number | null>(null)
   const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
   const tagRequestRef = useRef(0)
+  const hasSecondaryActions = links !== undefined || (folders !== undefined && onMoveNote !== undefined) || search !== undefined
 
   useEffect(() => setImageError(null), [document.id])
   useEffect(() => onSaveStateChange?.(autosave.state.status), [autosave.state.status, onSaveStateChange])
@@ -243,42 +245,59 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           )}
         </div>
         <div className="editor-toolbar__actions">
-          <div className="editor-toolbar__secondary">
-            {links && (
-              <div className="editor-link-actions" role="group" aria-label="内部链接">
-                <label>
-                  <span className="sr-only">内部链接目标</span>
-                  <select
-                    aria-label="内部链接目标"
-                    value={selectedLinkTarget}
-                    disabled={linkTargets.length === 0}
-                    onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
-                  >
-                    {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
-                    {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
-                  </select>
-                </label>
-                <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('insert')}>插入内部链接</button>
-                <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('retarget')}>重定向内部链接</button>
-              </div>
-            )}
-            {folders && onMoveNote && (
-              <label>
-                <span className="sr-only">笔记文件夹</span>
-                <select
-                  aria-label="笔记文件夹"
-                  value={document.folderId ?? ''}
-                  disabled={metadataBusy}
-                  onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
-                >
-                  <option value="">未归档笔记</option>
-                  {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                </select>
-              </label>
-            )}
-            {search && <TagsEditor tags={document.tags} onChange={updateTags} />}
-          </div>
           <div className="editor-toolbar__primary">
+            {hasSecondaryActions && (
+              <EditorActionsMenu>
+                {(close) => (
+                  <>
+                    {links && (
+                      <div className="editor-actions-menu__section editor-link-actions" role="group" aria-label="内部链接">
+                        <span className="editor-actions-menu__heading">内部链接</span>
+                        <label>
+                          <span className="sr-only">内部链接目标</span>
+                          <select
+                            aria-label="内部链接目标"
+                            value={selectedLinkTarget}
+                            disabled={linkTargets.length === 0}
+                            onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
+                          >
+                            {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
+                            {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+                          </select>
+                        </label>
+                        <div className="editor-actions-menu__buttons">
+                          <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('insert'); close() }}>插入内部链接</button>
+                          <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('retarget'); close() }}>重定向内部链接</button>
+                        </div>
+                      </div>
+                    )}
+                    {folders && onMoveNote && (
+                      <div className="editor-actions-menu__section" role="group" aria-label="目录">
+                        <span className="editor-actions-menu__heading">目录</span>
+                        <label>
+                          <span className="sr-only">笔记文件夹</span>
+                          <select
+                            aria-label="笔记文件夹"
+                            value={document.folderId ?? ''}
+                            disabled={metadataBusy}
+                            onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
+                          >
+                            <option value="">未归档笔记</option>
+                            {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                    {search && (
+                      <div className="editor-actions-menu__section" role="group" aria-label="标签">
+                        <span className="editor-actions-menu__heading">标签</span>
+                        <TagsEditor tags={document.tags} onChange={updateTags} />
+                      </div>
+                    )}
+                  </>
+                )}
+              </EditorActionsMenu>
+            )}
             <SaveStatus state={autosave.state} />
             {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
             {modes.map((item) => (
