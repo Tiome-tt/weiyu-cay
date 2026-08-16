@@ -88,6 +88,45 @@ describe('EditorPane', () => {
     )
   })
 
+  it('keeps secondary metadata controls separate from the fixed save and view controls', async () => {
+    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([]) })
+    render(
+      <EditorPane
+        document={{ ...note('# Goal'), title: 'Goal' }}
+        notes={fakeNotePort()}
+        links={links}
+        folders={[]}
+        onMoveNote={vi.fn()}
+        search={fakeSearchPort()}
+      />,
+    )
+
+    const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
+    const secondary = toolbar.querySelector('.editor-toolbar__secondary')
+    const primary = toolbar.querySelector('.editor-toolbar__primary')
+    expect(secondary).not.toBeNull()
+    expect(primary).not.toBeNull()
+    expect(within(secondary as HTMLElement).getByRole('combobox', { name: '内部链接目标' })).toBeVisible()
+    expect(within(secondary as HTMLElement).getByRole('combobox', { name: '笔记文件夹' })).toBeVisible()
+    expect(within(primary as HTMLElement).getAllByRole('button')).toHaveLength(3)
+  })
+
+  it('assigns notices, document, and backlinks to stable editor grid regions', () => {
+    render(
+      <EditorPane
+        document={note('# Goal')}
+        notes={fakeNotePort()}
+        links={fakeLinkPort()}
+        onNavigateNote={vi.fn()}
+      />,
+    )
+
+    const pane = screen.getByRole('toolbar', { name: '编辑器视图' }).parentElement
+    expect(pane?.querySelector(':scope > .editor-notices')).not.toBeNull()
+    expect(pane?.querySelector(':scope > .editor-document')).not.toBeNull()
+    expect(pane?.querySelector(':scope > .backlinks')).not.toBeNull()
+  })
+
   it('keeps one document while switching source, split, and preview modes', async () => {
     const user = userEvent.setup()
     render(<EditorPane document={note('# Goal')} notes={fakeNotePort()} />)

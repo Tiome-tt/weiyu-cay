@@ -70,7 +70,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingI
                   disabled={deletingId !== null || undoBusy}
                   onClick={() => onDelete(note.id, note.title)}
                 >
-                  {deletingId === note.id ? '…' : '×'}
+                  {deletingId === note.id ? '…' : <Icon name="close" size={14} />}
                 </button>
               )}
             </li>

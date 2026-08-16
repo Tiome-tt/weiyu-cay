@@ -243,59 +243,65 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           )}
         </div>
         <div className="editor-toolbar__actions">
-          {links && (
-            <div className="editor-link-actions" role="group" aria-label="内部链接">
+          <div className="editor-toolbar__secondary">
+            {links && (
+              <div className="editor-link-actions" role="group" aria-label="内部链接">
+                <label>
+                  <span className="sr-only">内部链接目标</span>
+                  <select
+                    aria-label="内部链接目标"
+                    value={selectedLinkTarget}
+                    disabled={linkTargets.length === 0}
+                    onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
+                  >
+                    {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
+                    {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+                  </select>
+                </label>
+                <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('insert')}>插入内部链接</button>
+                <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('retarget')}>重定向内部链接</button>
+              </div>
+            )}
+            {folders && onMoveNote && (
               <label>
-                <span className="sr-only">内部链接目标</span>
+                <span className="sr-only">笔记文件夹</span>
                 <select
-                  aria-label="内部链接目标"
-                  value={selectedLinkTarget}
-                  disabled={linkTargets.length === 0}
-                  onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
+                  aria-label="笔记文件夹"
+                  value={document.folderId ?? ''}
+                  disabled={metadataBusy}
+                  onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
                 >
-                  {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
-                  {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+                  <option value="">未归档笔记</option>
+                  {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                 </select>
               </label>
-              <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('insert')}>插入内部链接</button>
-              <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('retarget')}>重定向内部链接</button>
-            </div>
-          )}
-          {folders && onMoveNote && (
-            <label>
-              <span className="sr-only">笔记文件夹</span>
-              <select
-                aria-label="笔记文件夹"
-                value={document.folderId ?? ''}
-                disabled={metadataBusy}
-                onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
+            )}
+            {search && <TagsEditor tags={document.tags} onChange={updateTags} />}
+          </div>
+          <div className="editor-toolbar__primary">
+            <SaveStatus state={autosave.state} />
+            {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
+            {modes.map((item) => (
+              <button
+                key={item.mode}
+                type="button"
+                className="editor-mode-button"
+                aria-label={item.label}
+                aria-pressed={mode === item.mode}
+                title={item.label}
+                onClick={() => setMode(item.mode)}
               >
-                <option value="">未归档笔记</option>
-                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-              </select>
-            </label>
-          )}
-          {search && <TagsEditor tags={document.tags} onChange={updateTags} />}
-          <SaveStatus state={autosave.state} />
-          {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
-          {modes.map((item) => (
-            <button
-              key={item.mode}
-              type="button"
-              className="editor-mode-button"
-              aria-label={item.label}
-              aria-pressed={mode === item.mode}
-              title={item.label}
-              onClick={() => setMode(item.mode)}
-            >
-              <Icon name={item.icon} size={17} />
-            </button>
-          ))}
+                <Icon name={item.icon} size={17} />
+              </button>
+            ))}
+          </div>
         </div>
       </header>
-      {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
-      {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
-      {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
+      <div className="editor-notices">
+        {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
+        {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
+        {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
+      </div>
       <div
         className={`editor-document editor-document--${mode}`}
         style={

@@ -197,7 +197,8 @@ export function FolderTree(props: FolderTreeProps) {
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => void dropFolder(event, folder.id)}
               >
-                <span aria-hidden="true">▱</span> {folder.name}
+                <Icon name="folder" size={16} />
+                <span>{folder.name}</span>
               </button>
             )}
             {hasChildren && <ul role="group">{renderBranch(folder.id)}</ul>}
@@ -282,7 +283,8 @@ export function FolderTree(props: FolderTreeProps) {
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => void dropFolder(event, null)}
           >
-            <span aria-hidden="true">⌂</span> 未归档笔记
+            <Icon name="folder" size={16} />
+            <span>未归档笔记</span>
           </button>
         </li>
         {props.onTemporaryInbox && (
@@ -298,7 +300,8 @@ export function FolderTree(props: FolderTreeProps) {
               onKeyDown={(event) => handleTreeKey(event, 'temporary-inbox')}
               onClick={props.onTemporaryInbox}
             >
-              <span aria-hidden="true">✦</span> 临时收集箱
+              <Icon name="inbox" size={16} />
+              <span>临时收集箱</span>
             </button>
           </li>
         )}
@@ -315,7 +318,8 @@ export function FolderTree(props: FolderTreeProps) {
               onKeyDown={(event) => handleTreeKey(event, 'trash')}
               onClick={props.onTrash}
             >
-              <span aria-hidden="true">♲</span> 回收站
+              <Icon name="trash" size={16} />
+              <span>回收站</span>
             </button>
           </li>
         )}

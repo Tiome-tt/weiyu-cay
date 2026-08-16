@@ -136,8 +136,31 @@ describe('FolderTree keyboard navigation', () => {
 
     const inbox = screen.getByRole('treeitem', { name: '临时收集箱' })
     expect(inbox).toHaveAttribute('aria-selected', 'true')
+    expect(inbox).toContainElement(screen.getByTestId('icon-inbox'))
     await user.click(inbox)
     expect(onTemporaryInbox).toHaveBeenCalledOnce()
+  })
+
+  it('uses shared SVG icons while preserving navigation accessible names', () => {
+    render(
+      <FolderTree
+        folders={rows}
+        activeId={null}
+        state="ready"
+        onSelect={vi.fn()}
+        onTemporaryInbox={vi.fn()}
+        onTrash={vi.fn()}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onMove={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByRole('treeitem', { name: '未归档笔记' })).toContainElement(screen.getAllByTestId('icon-folder')[0])
+    expect(screen.getByRole('treeitem', { name: '项目 A' })).toContainElement(screen.getAllByTestId('icon-folder')[1])
+    expect(screen.getByRole('treeitem', { name: '临时收集箱' })).toContainElement(screen.getByTestId('icon-inbox'))
+    expect(screen.getByRole('treeitem', { name: '回收站' })).toContainElement(screen.getByTestId('icon-trash'))
   })
 
   it('uses roving focus with vertical and hierarchy-aware arrow navigation', async () => {

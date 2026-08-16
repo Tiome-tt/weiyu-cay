@@ -1,7 +1,7 @@
 import { Icon } from '../../shared/Icon'
 
 interface MainWindowEmptyStateProps {
-  onCreateNote(): void
+  onCreateNote(trigger: HTMLButtonElement): void
 }
 
 /** Quiet invitation shown only when the formal-note workspace has no open document. */
@@ -25,7 +25,11 @@ export function MainWindowEmptyState({ onCreateNote }: MainWindowEmptyStateProps
         <h2>每个念头，都是一座小岛。</h2>
         <p>写下此刻的念头，内容会自动保存在本地。</p>
       </div>
-      <button type="button" className="main-window-empty-state__action" onClick={onCreateNote}>
+      <button
+        type="button"
+        className="main-window-empty-state__action"
+        onClick={(event) => onCreateNote(event.currentTarget)}
+      >
         <Icon name="plus" size={17} />
         新建笔记
       </button>

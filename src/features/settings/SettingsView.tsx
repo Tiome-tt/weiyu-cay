@@ -3,6 +3,7 @@ import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
 import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
 import { APP_NAME } from '../../shared/brand'
+import { Icon } from '../../shared/Icon'
 import { UpdateSettings, type UpdateController } from './UpdateSettings'
 
 interface SettingsViewProps {
@@ -182,7 +183,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
-        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={operationBusy} onClick={onClose} aria-label="关闭设置">×</button></header>
+        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={operationBusy} onClick={onClose} aria-label="关闭设置"><Icon name="close" size={17} /></button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
         {shortcutWarning && <p className="settings-view__warning" role="status" aria-label="快捷键状态警告">{shortcutWarning}</p>}
         <div className="settings-view__body">

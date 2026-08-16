@@ -517,7 +517,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
         {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
-          <MainWindowEmptyState onCreateNote={() => openCreatePopover(null)} />
+          <MainWindowEmptyState onCreateNote={openCreatePopover} />
         )}
         {activeView === 'library' && library.document && (
           <EditorPane

@@ -68,8 +68,28 @@ describe('LibraryLayout', () => {
 
     expect(screen.getByRole('button', { name: '新建笔记' })).toBeVisible()
     expect(screen.getByTestId('empty-island')).toHaveAttribute('aria-hidden', 'true')
-    await user.click(screen.getByRole('button', { name: '新建笔记' }))
-    expect(onCreateNote).toHaveBeenCalledOnce()
+    const trigger = screen.getByRole('button', { name: '新建笔记' })
+    await user.click(trigger)
+    expect(onCreateNote).toHaveBeenCalledWith(trigger)
+  })
+
+  it('returns focus to the empty-state create trigger when its popover closes', async () => {
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) })}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+      />,
+    )
+
+    const trigger = await screen.findByRole('button', { name: '新建笔记' })
+    await user.click(trigger)
+    expect(screen.getByRole('dialog', { name: '新建笔记' })).toBeVisible()
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   it('removes the main-window empty state after opening a document', async () => {
@@ -500,7 +520,9 @@ describe('LibraryLayout', () => {
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'saved body' } }))
-    screen.getByRole('button', { name: '删除 Note A' }).click()
+    const deleteButton = screen.getByRole('button', { name: '删除 Note A' })
+    expect(within(deleteButton).getByTestId('icon-close')).toBeVisible()
+    deleteButton.click()
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(trash.trash).not.toHaveBeenCalled()
@@ -1276,7 +1298,7 @@ describe('LibraryLayout', () => {
 
     await waitFor(() => {
       const labels = screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())
-      expect(labels).toEqual(['⌂ 未归档笔记', '▱ 项目 C', '▱ 项目 B', '▱ 项目 A'])
+      expect(labels).toEqual(['未归档笔记', '项目 C', '项目 B', '项目 A'])
     })
   })
 
@@ -1304,7 +1326,7 @@ describe('LibraryLayout', () => {
     await waitFor(() => {
       const items = screen.getAllByRole('treeitem')
       const labels = items.map((item) => item.textContent?.trim())
-      expect(labels).toEqual(['⌂ 未归档笔记', '▱ 项目 C', '▱ 项目 A'])
+      expect(labels).toEqual(['未归档笔记', '项目 C', '项目 A'])
       expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
     })
   })
