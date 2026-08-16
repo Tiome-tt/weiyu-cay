@@ -15,6 +15,7 @@ import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
 import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
+import { Icon, type IconName } from '../../shared/Icon'
 
 interface EditorPaneProps {
   document: NoteDocument
@@ -32,6 +33,7 @@ interface EditorPaneProps {
   onRenameNote?(title: string): Promise<RenameNoteResult>
   onMoveNote?(folderId: FolderId | null): Promise<NoteDocument>
   external?: Pick<SystemPort, 'openExternal'>
+  onSaveStateChange?(status: SaveState['status']): void
 }
 
 export interface EditorPaneHandle {
@@ -40,10 +42,10 @@ export interface EditorPaneHandle {
   endEditBarrier: () => void
 }
 
-const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: string }> = [
-  { mode: 'source', label: '源码视图', icon: '<>' },
-  { mode: 'split', label: '分栏视图', icon: '◫' },
-  { mode: 'preview', label: '预览视图', icon: '◉' },
+const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
+  { mode: 'source', label: '源码视图', icon: 'source' },
+  { mode: 'split', label: '分栏视图', icon: 'split' },
+  { mode: 'preview', label: '预览视图', icon: 'preview' },
 ]
 
 const minimumSplitPercent = 25
@@ -65,6 +67,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     onMoveNote,
     external,
     onDocumentAdopt,
+    onSaveStateChange,
     autosaveDelayMs,
     initialMode = 'source',
   },
@@ -89,6 +92,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const tagRequestRef = useRef(0)
 
   useEffect(() => setImageError(null), [document.id])
+  useEffect(() => onSaveStateChange?.(autosave.state.status), [autosave.state.status, onSaveStateChange])
   useEffect(() => setTitleDraft(document.title), [document.id, document.title])
   useEffect(() => {
     let current = true
@@ -284,7 +288,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
               title={item.label}
               onClick={() => setMode(item.mode)}
             >
-              <span aria-hidden="true">{item.icon}</span>
+              <Icon name={item.icon} size={17} />
             </button>
           ))}
         </div>

@@ -1,19 +1,20 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
+import type { SaveState } from '../editor/useAutosave'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
 import { TemporaryInbox, type TemporaryInboxHandle } from '../temporary/TemporaryInbox'
 import { TrashView } from './TrashView'
-import { APP_TAGLINE } from '../../shared/brand'
 import { DirectoryRail } from './DirectoryRail'
 import { LibraryRail, type LibraryRailEntry } from './LibraryRail'
 import { useResponsiveColumns } from './useResponsiveColumns'
 import { Icon } from '../../shared/Icon'
 import { CreateNotePopover, type CreateNoteDraft, type CreateNoteStatus } from './CreateNotePopover'
+import { MainWindowEmptyState } from './MainWindowEmptyState'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -27,6 +28,7 @@ interface LibraryLayoutProps {
   trash?: TrashPort
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
+  onSaveStateChange?(status: Exclude<SaveState['status'], 'idle'> | 'hidden'): void
 }
 
 export interface LibraryLayoutHandle {
@@ -37,7 +39,7 @@ export interface LibraryLayoutHandle {
   createNote(trigger: HTMLButtonElement): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs, onSaveStateChange }, ref) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
@@ -82,6 +84,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
     [library.notes],
   )
+  const reportEditorSaveState = useCallback(
+    (status: SaveState['status']) => onSaveStateChange?.(status === 'idle' ? 'hidden' : status),
+    [onSaveStateChange],
+  )
+
+  useEffect(() => {
+    if (activeView !== 'library' || library.documentState !== 'ready' || library.document === null) {
+      onSaveStateChange?.('hidden')
+    }
+  }, [activeView, library.document, library.documentState, onSaveStateChange])
 
   useEffect(() => {
     mountedRef.current = true
@@ -210,6 +222,15 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
+  const openCreatePopover = (trigger: HTMLButtonElement | null) => {
+    createTriggerRef.current = trigger
+    if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
+      updateCreateOperation((current) => ({ ...current, folderId: library.activeFolderId }))
+    }
+    createPopoverOpenRef.current = true
+    setCreatePopoverOpen(true)
+  }
+
   useImperativeHandle(ref, () => ({
     refreshAfterRecovery: async () => {
       await Promise.all([
@@ -225,14 +246,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         library.selectNote(noteId)
       })
     },
-    createNote: (trigger) => {
-      createTriggerRef.current = trigger
-      if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
-        updateCreateOperation((current) => ({ ...current, folderId: library.activeFolderId }))
-      }
-      createPopoverOpenRef.current = true
-      setCreatePopoverOpen(true)
-    },
+    createNote: (trigger) => openCreatePopover(trigger),
   }))
 
   async function prepareEditorFlush(): Promise<(() => void) | null> {
@@ -503,11 +517,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
         {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
-          <div className="content-placeholder">
-            <span aria-hidden="true" className="content-placeholder__leaf">⌁</span>
-            <p>{APP_TAGLINE}</p>
-            <p>选择一篇笔记开始阅读。</p>
-          </div>
+          <MainWindowEmptyState onCreateNote={() => openCreatePopover(null)} />
         )}
         {activeView === 'library' && library.document && (
           <EditorPane
@@ -542,6 +552,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onDocumentAdopt={library.adoptDocument}
             initialMode={defaultEditorMode}
             autosaveDelayMs={autosaveDelayMs}
+            onSaveStateChange={reportEditorSaveState}
           />
         )}
         {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}

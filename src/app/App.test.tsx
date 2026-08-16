@@ -37,7 +37,32 @@ describe('App', () => {
     expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
     expect(screen.getByTestId('window-titlebar')).toBeVisible()
     expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
+    expect(screen.getAllByText('微屿')).toHaveLength(1)
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the active editor autosave state in the global toolbar', async () => {
+    const activeId = '019c0000-0000-7000-8000-000000000053' as NoteId
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([{ ...fakeNotePortDocument(activeId, 'Toolbar note'), excerpt: '' }]),
+      loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Toolbar note', 'old body')),
+    })
+    const user = userEvent.setup()
+    render(<App services={{
+      notes,
+      folders: fakeFolderPort(),
+      system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+      search: fakeSearchPort(),
+      links: fakeLinkPort(),
+    }} />)
+    await user.click(await screen.findByRole('button', { name: /^Toolbar note/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'changed body' } }))
+
+    expect(await screen.findByLabelText('保存状态')).toHaveTextContent('待保存')
   })
 
   it('restores the actual toolbar create trigger when pointer activation did not focus it', async () => {
@@ -53,7 +78,7 @@ describe('App', () => {
         }}
       />,
     )
-    const trigger = screen.getByRole('button', { name: '新建笔记' })
+    const trigger = within(screen.getByRole('toolbar', { name: '全局应用栏' })).getByRole('button', { name: '新建笔记' })
     screen.getByRole('button', { name: '打开设置' }).focus()
 
     fireEvent.click(trigger)

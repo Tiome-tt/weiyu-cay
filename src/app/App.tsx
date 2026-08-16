@@ -1,5 +1,6 @@
 import '../styles/tokens.css'
 import '../styles/app.css'
+import '../styles/main-window.css'
 import { LibraryLayout, type LibraryLayoutHandle } from '../features/library/LibraryLayout'
 import { createAppServices, type AppServices } from './services'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -14,7 +15,7 @@ import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, norma
 import { StatusNotice, type StatusNoticeState } from '../shared/StatusNotice'
 import { APP_NAME } from '../shared/brand'
 import { AppChrome } from '../shared/AppChrome'
-import { GlobalToolbar } from '../features/library/GlobalToolbar'
+import { GlobalToolbar, type ToolbarSaveState } from '../features/library/GlobalToolbar'
 import type { UpdateController, UpdateViewState } from '../features/settings/UpdateSettings'
 
 const defaultServices = createAppServices()
@@ -44,6 +45,7 @@ function MainApplication({ services }: { services: AppServices }) {
   const exportController = useExportLibraryController(services.exporter, chooseExportDestination)
   const [updateState, setUpdateState] = useState<UpdateViewState>({ status: 'idle' })
   const [closeNotice, setCloseNotice] = useState<StatusNoticeState>({ status: 'idle' })
+  const [saveState, setSaveState] = useState<ToolbarSaveState>('hidden')
   const closeBusy = useRef(false)
   const checkForUpdates = useCallback(async () => {
     if (services.updater === undefined || updateState.status === 'checking' || updateState.status === 'installing') return
@@ -227,18 +229,18 @@ function MainApplication({ services }: { services: AppServices }) {
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
         <GlobalToolbar
           search={services.search}
-          saveState="hidden"
+          saveState={saveState}
           updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
           onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
           onCreateNote={(trigger) => libraryRef.current?.createNote(trigger)}
           onOpenSettings={() => { if (services.settings !== undefined) setSettingsOpen(true) }}
         />
-        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} />
+        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} />
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} updateController={services.updater === undefined ? undefined : { state: updateState, check: checkForUpdates, install: installUpdate, restart: restartAfterUpdate } satisfies UpdateController} />}
     </>
   return (
-    <main role="application" aria-label={APP_NAME} className="app-shell" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
+    <main role="application" aria-label={APP_NAME} className="app-shell main-window" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
       <AppChrome windowChrome={services.windowChrome}>{content}</AppChrome>
     </main>
   )

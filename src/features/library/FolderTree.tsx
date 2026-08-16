@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
-import { APP_NAME } from '../../shared/brand'
 import { Icon } from '../../shared/Icon'
 import { FolderActionMenu } from './FolderActionMenu'
 
@@ -212,8 +211,8 @@ export function FolderTree(props: FolderTreeProps) {
     <nav aria-label="文件夹" className="folder-tree">
       <header className="library-pane__header">
         <div>
-          <span className="library-pane__eyebrow">资料库</span>
-          <h1>{APP_NAME}</h1>
+          <span className="library-pane__eyebrow">本地笔记</span>
+          <h1>资料库</h1>
         </div>
         <div className="library-pane__header-actions">
           {props.onCollapse && (

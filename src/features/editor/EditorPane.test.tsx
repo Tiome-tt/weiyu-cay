@@ -52,6 +52,23 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('# Preview')} notes={fakeNotePort()} initialMode="preview" autosaveDelayMs={10_000} />)
     expect(screen.getByRole('button', { name: '预览视图' })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('reports autosave state to the global toolbar while preserving detailed editor errors', async () => {
+    const onSaveStateChange = vi.fn()
+    render(
+      <EditorPane
+        document={note('')}
+        notes={fakeNotePort()}
+        onSaveStateChange={onSaveStateChange}
+        autosaveDelayMs={10_000}
+      />,
+    )
+
+    act(() => view().dispatch({ changes: { from: 0, insert: '新的正文' } }))
+
+    await waitFor(() => expect(onSaveStateChange).toHaveBeenCalledWith('dirty'))
+  })
+
   it('places the note title and exactly three primary view controls in the editor toolbar', () => {
     render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} assets={fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 })} />)
 
@@ -62,6 +79,9 @@ describe('EditorPane', () => {
       const button = within(toolbar).getByRole('button', { name: label })
       expect(button).toHaveAttribute('title', label)
     })
+    expect(within(toolbar).getByTestId('icon-source')).toBeVisible()
+    expect(within(toolbar).getByTestId('icon-split')).toBeVisible()
+    expect(within(toolbar).getByTestId('icon-preview')).toBeVisible()
     expect(within(toolbar).getByRole('button', { name: labels[0] })).toHaveAttribute(
       'aria-pressed',
       'true',
