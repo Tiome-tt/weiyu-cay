@@ -12,6 +12,7 @@ describe('GlobalToolbar', () => {
     render(
       <GlobalToolbar
         search={fakeSearchPort()}
+        searchDismissSignal={0}
         saveState="saved"
         updateAttention="none"
         onSelectResult={vi.fn()}
@@ -37,6 +38,7 @@ describe('GlobalToolbar', () => {
     const rendered = render(
       <GlobalToolbar
         search={fakeSearchPort()}
+        searchDismissSignal={0}
         saveState="hidden"
         updateAttention="none"
         onSelectResult={vi.fn()}
@@ -55,6 +57,7 @@ describe('GlobalToolbar', () => {
     rendered.rerender(
       <GlobalToolbar
         search={fakeSearchPort()}
+        searchDismissSignal={0}
         saveState="hidden"
         updateAttention="restart-required"
         onSelectResult={vi.fn()}
@@ -66,7 +69,7 @@ describe('GlobalToolbar', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
   })
 
-  it('dismisses search results before opening create or settings surfaces', async () => {
+  it('dismisses search results when the overlay owner advances the signal', async () => {
     vi.useFakeTimers()
     const search = fakeSearchPort({
       search: vi.fn().mockResolvedValue([{
@@ -78,9 +81,10 @@ describe('GlobalToolbar', () => {
         score: 1,
       }]),
     })
-    render(
+    const rendered = render(
       <GlobalToolbar
         search={search}
+        searchDismissSignal={0}
         saveState="hidden"
         updateAttention="none"
         onSelectResult={vi.fn()}
@@ -93,13 +97,33 @@ describe('GlobalToolbar', () => {
     fireEvent.change(field, { target: { value: '搜索' } })
     await act(async () => { await vi.advanceTimersByTimeAsync(180) })
     expect(screen.getByRole('list', { name: '搜索结果' })).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '新建笔记' }))
+    rendered.rerender(
+      <GlobalToolbar
+        search={search}
+        searchDismissSignal={1}
+        saveState="hidden"
+        updateAttention="none"
+        onSelectResult={vi.fn()}
+        onCreateNote={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
     expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
 
     fireEvent.change(field, { target: { value: '搜索设置' } })
     await act(async () => { await vi.advanceTimersByTimeAsync(180) })
     expect(screen.getByRole('list', { name: '搜索结果' })).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '打开设置' }))
+    rendered.rerender(
+      <GlobalToolbar
+        search={search}
+        searchDismissSignal={2}
+        saveState="hidden"
+        updateAttention="none"
+        onSelectResult={vi.fn()}
+        onCreateNote={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
     expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 })

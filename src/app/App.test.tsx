@@ -89,6 +89,40 @@ describe('App', () => {
     expect(trigger).toHaveFocus()
   })
 
+  it('dismisses search before keyboard activation opens create from the empty state', async () => {
+    const resultId = '019c0000-0000-7000-8000-000000000061' as NoteId
+    const search = fakeSearchPort({
+      search: vi.fn().mockResolvedValue([{
+        noteId: resultId,
+        title: '搜索中的笔记',
+        folderBreadcrumb: [],
+        tags: [],
+        excerpt: '',
+        score: 1,
+      }]),
+    })
+    const user = userEvent.setup()
+    render(<App services={{
+      notes: fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) }),
+      folders: fakeFolderPort(),
+      system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+      search,
+      links: fakeLinkPort(),
+    }} />)
+
+    await user.type(screen.getByRole('searchbox', { name: '搜索笔记' }), '搜索')
+    expect(await screen.findByRole('list', { name: '搜索结果' })).toBeVisible()
+    const emptyState = screen.getByRole('heading', { name: '每个念头，都是一座小岛。' }).closest<HTMLElement>('.main-window-empty-state')
+    if (emptyState === null) throw new Error('empty state not found')
+    const create = within(emptyState).getByRole('button', { name: '新建笔记' })
+    create.focus()
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('dialog', { name: '新建笔记' })).toBeVisible()
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+  })
+
   it('mounts main-window chrome while retaining the native safe-close listener', async () => {
     const windowChrome = fakeWindowChromePort()
     const lifecycle = {

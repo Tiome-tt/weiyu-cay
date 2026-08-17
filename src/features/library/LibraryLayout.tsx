@@ -29,6 +29,7 @@ interface LibraryLayoutProps {
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
   onSaveStateChange?(status: Exclude<SaveState['status'], 'idle'> | 'hidden'): void
+  onCreatePopoverOpen?(): void
 }
 
 export interface LibraryLayoutHandle {
@@ -39,7 +40,7 @@ export interface LibraryLayoutHandle {
   createNote(trigger: HTMLButtonElement): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs, onSaveStateChange }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
@@ -223,6 +224,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }
 
   const openCreatePopover = (trigger: HTMLButtonElement | null) => {
+    onCreatePopoverOpen?.()
     createTriggerRef.current = trigger
     if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
       updateCreateOperation((current) => ({ ...current, folderId: library.activeFolderId }))

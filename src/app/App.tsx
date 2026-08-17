@@ -46,7 +46,11 @@ function MainApplication({ services }: { services: AppServices }) {
   const [updateState, setUpdateState] = useState<UpdateViewState>({ status: 'idle' })
   const [closeNotice, setCloseNotice] = useState<StatusNoticeState>({ status: 'idle' })
   const [saveState, setSaveState] = useState<ToolbarSaveState>('hidden')
+  const [searchDismissSignal, setSearchDismissSignal] = useState(0)
   const closeBusy = useRef(false)
+  const dismissSearch = useCallback(() => {
+    setSearchDismissSignal((current) => current + 1)
+  }, [])
   const checkForUpdates = useCallback(async () => {
     if (services.updater === undefined || updateState.status === 'checking' || updateState.status === 'installing') return
     setUpdateState({ status: 'checking' })
@@ -229,13 +233,19 @@ function MainApplication({ services }: { services: AppServices }) {
       <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
         <GlobalToolbar
           search={services.search}
+          searchDismissSignal={searchDismissSignal}
           saveState={saveState}
           updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
           onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
           onCreateNote={(trigger) => libraryRef.current?.createNote(trigger)}
-          onOpenSettings={() => { if (services.settings !== undefined) setSettingsOpen(true) }}
+          onOpenSettings={() => {
+            if (services.settings !== undefined) {
+              dismissSearch()
+              setSettingsOpen(true)
+            }
+          }}
         />
-        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} />
+        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} updateController={services.updater === undefined ? undefined : { state: updateState, check: checkForUpdates, install: installUpdate, restart: restartAfterUpdate } satisfies UpdateController} />}
     </>
