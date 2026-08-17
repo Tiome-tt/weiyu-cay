@@ -1,15 +1,16 @@
 import '@testing-library/jest-dom/vitest'
 import { EditorView } from '@codemirror/view'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { SystemPort, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
-import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
+import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
 import { LibraryLayout } from './LibraryLayout'
 import { createRef } from 'react'
 import type { LibraryLayoutHandle } from './LibraryLayout'
+import { MainWindowEmptyState } from './MainWindowEmptyState'
 
 const folderA = '019c0000-0000-7000-8000-000000000021' as FolderId
 const folderB = '019c0000-0000-7000-8000-000000000022' as FolderId
@@ -35,10 +36,12 @@ function summary(id: NoteId, title: string, folderId: FolderId | null = null): N
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 beforeEach(() => {
@@ -58,6 +61,76 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('offers one clear new-note action only when no document is selected', async () => {
+    const onCreateNote = vi.fn()
+    const user = userEvent.setup()
+    render(<MainWindowEmptyState onCreateNote={onCreateNote} />)
+
+    expect(screen.getByRole('button', { name: '新建笔记' })).toBeVisible()
+    expect(screen.getByTestId('empty-island')).toHaveAttribute('aria-hidden', 'true')
+    const trigger = screen.getByRole('button', { name: '新建笔记' })
+    await user.click(trigger)
+    expect(onCreateNote).toHaveBeenCalledWith(trigger)
+  })
+
+  it('returns focus to the empty-state create trigger when its popover closes', async () => {
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) })}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+      />,
+    )
+
+    const trigger = await screen.findByRole('button', { name: '新建笔记' })
+    await user.click(trigger)
+    expect(screen.getByRole('dialog', { name: '新建笔记' })).toBeVisible()
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('removes the main-window empty state after opening a document', async () => {
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('body'), id: noteA, title: 'Note A' }),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+
+    expect(await screen.findByTestId('empty-island')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /^Note A/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Note A' })).toBeVisible()
+    expect(screen.queryByTestId('empty-island')).not.toBeInTheDocument()
+  })
+
+  it('forwards the selected editor save state to the main window', async () => {
+    const onSaveStateChange = vi.fn()
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Note A')]),
+      loadNote: vi.fn().mockResolvedValue({ ...note('body'), id: noteA, title: 'Note A' }),
+    })
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={notes}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+        onSaveStateChange={onSaveStateChange}
+      />,
+    )
+    await user.click(await screen.findByRole('button', { name: /^Note A/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'changed' } }))
+
+    await waitFor(() => expect(onSaveStateChange).toHaveBeenCalledWith('dirty'))
+  })
+
   it('creates a note in the active folder and opens the authoritative document', async () => {
     const created = { ...note(''), id: noteC, title: '发布检查', folderId: folderA }
     const notes = fakeNotePort({
@@ -65,14 +138,21 @@ describe('LibraryLayout', () => {
       listNotes: vi.fn().mockResolvedValue([]),
     })
     const user = userEvent.setup()
-    render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />)
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    render(<>
+      <button type="button" aria-label="从工具栏新建笔记" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
+      <LibraryLayout ref={layoutRef} notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />
+    </>)
 
     await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
-    await user.click(screen.getByRole('button', { name: '新建笔记' }))
-    await user.type(screen.getByRole('textbox', { name: '新笔记标题' }), '发布检查{Enter}')
+    await user.click(screen.getByRole('button', { name: '从工具栏新建笔记' }))
+    const createDialog = screen.getByRole('dialog', { name: '新建笔记' })
+    expect(within(createDialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderA)
+    await user.type(within(createDialog).getByRole('textbox', { name: '笔记标题' }), '发布检查{Enter}')
 
     expect(notes.createNote).toHaveBeenCalledWith({ folderId: folderA, title: '发布检查' })
     expect(await screen.findByRole('heading', { name: '发布检查' })).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
   })
 
   it('linearizes new-note creation behind the active editor flush barrier', async () => {
@@ -85,14 +165,18 @@ describe('LibraryLayout', () => {
       saveNote: vi.fn(() => pendingSave.promise),
     })
     const user = userEvent.setup()
-    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    render(<>
+      <button type="button" aria-label="从工具栏新建笔记" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
+      <LibraryLayout ref={layoutRef} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />
+    </>)
     await user.click(await screen.findByRole('button', { name: /^Note A/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'pending draft' } }))
 
-    await user.click(screen.getByRole('button', { name: '新建笔记' }))
-    await user.type(screen.getByRole('textbox', { name: '新笔记标题' }), 'Draft title{Enter}')
+    await user.click(screen.getByRole('button', { name: '从工具栏新建笔记' }))
+    await user.type(within(screen.getByRole('dialog', { name: '新建笔记' })).getByRole('textbox', { name: '笔记标题' }), 'Draft title{Enter}')
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(notes.createNote).not.toHaveBeenCalled()
@@ -103,6 +187,92 @@ describe('LibraryLayout', () => {
     await act(async () => pendingSave.resolve({ ...note('pending draft'), id: noteA, title: 'Note A', revision: 2 }))
     await waitFor(() => expect(notes.createNote).toHaveBeenCalledOnce())
     expect(await screen.findByRole('heading', { name: 'Draft title' })).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+  })
+
+  it('closes a pending create while retaining one operation and its late failure for retry', async () => {
+    const pendingCreate = deferred<NoteDocument>()
+    const created = { ...note(''), id: noteC, title: '晚到失败', folderId: folderB }
+    const createNote = vi.fn()
+      .mockImplementationOnce(() => pendingCreate.promise)
+      .mockResolvedValueOnce(created)
+    const notes = fakeNotePort({ createNote, listNotes: vi.fn().mockResolvedValue([]) })
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<>
+      <button type="button" aria-label="从工具栏新建笔记" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
+      <LibraryLayout
+        ref={layoutRef}
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+      />
+    </>)
+
+    await user.click(screen.getByRole('button', { name: '从工具栏新建笔记' }))
+    const dialog = screen.getByRole('dialog', { name: '新建笔记' })
+    const title = within(dialog).getByRole('textbox', { name: '笔记标题' })
+    await user.type(title, '晚到失败')
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: '保存到目录' }), folderB)
+    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '从工具栏新建笔记' })).toHaveFocus()
+    expect(screen.getByText('正在创建“晚到失败”…')).toHaveAttribute('role', 'status')
+
+    await user.click(screen.getByRole('button', { name: '从工具栏新建笔记' }))
+    const pendingDialog = screen.getByRole('dialog', { name: '新建笔记' })
+    expect(within(pendingDialog).getByRole('textbox', { name: '笔记标题' })).toHaveValue('晚到失败')
+    expect(within(pendingDialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderB)
+    expect(within(pendingDialog).getByRole('button', { name: '正在创建笔记' })).toBeDisabled()
+    fireEvent.submit(within(pendingDialog).getByRole('form', { name: '新建笔记' }))
+    expect(createNote).toHaveBeenCalledOnce()
+    await user.keyboard('{Escape}')
+
+    await act(async () => pendingCreate.reject(new Error('late disk failure')))
+    expect(screen.getByText('无法新建“晚到失败”。请重新打开“新建笔记”重试。')).toHaveAttribute('role', 'alert')
+
+    await user.click(screen.getByRole('button', { name: '从工具栏新建笔记' }))
+    const retryDialog = screen.getByRole('dialog', { name: '新建笔记' })
+    expect(within(retryDialog).getByRole('alert')).toHaveTextContent('无法新建笔记')
+    expect(within(retryDialog).getByRole('textbox', { name: '笔记标题' })).toHaveValue('晚到失败')
+    expect(within(retryDialog).getByRole('combobox', { name: '保存到目录' })).toHaveValue(folderB)
+    await user.click(within(retryDialog).getByRole('button', { name: '创建笔记' }))
+    expect(createNote).toHaveBeenCalledTimes(2)
+    expect(createNote).toHaveBeenLastCalledWith({ folderId: folderB, title: '晚到失败' })
+    expect(await screen.findByRole('heading', { name: '晚到失败' })).toBeVisible()
+  })
+
+  it('converges a late successful create after the popover closes without creating twice', async () => {
+    const pendingCreate = deferred<NoteDocument>()
+    const created = { ...note(''), id: noteC, title: '离岸成功', folderId: folderA }
+    const createNote = vi.fn(() => pendingCreate.promise)
+    const notes = fakeNotePort({ createNote, listNotes: vi.fn().mockResolvedValue([]) })
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<>
+      <button type="button" aria-label="从工具栏新建笔记" onClick={(event) => layoutRef.current?.createNote(event.currentTarget)}>新建笔记</button>
+      <LibraryLayout
+        ref={layoutRef}
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+      />
+    </>)
+
+    await user.click(screen.getByRole('button', { name: '从工具栏新建笔记' }))
+    const dialog = screen.getByRole('dialog', { name: '新建笔记' })
+    await user.type(within(dialog).getByRole('textbox', { name: '笔记标题' }), '离岸成功')
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: '保存到目录' }), folderA)
+    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+
+    await act(async () => pendingCreate.resolve(created))
+    expect(await screen.findByRole('heading', { name: '离岸成功' })).toBeVisible()
+    expect(createNote).toHaveBeenCalledOnce()
+    expect(screen.queryByText('正在创建“离岸成功”…')).not.toBeInTheDocument()
+    expect(screen.queryByText(/无法新建“离岸成功”/)).not.toBeInTheDocument()
   })
 
   it('renames and moves a formal note through the authoritative production port', async () => {
@@ -132,6 +302,7 @@ describe('LibraryLayout', () => {
 
     expect(notes.renameNote).toHaveBeenCalledWith(noteA, 'Renamed note')
     expect(await screen.findByRole('heading', { name: 'Renamed note' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '笔记更多操作' }))
     await user.selectOptions(screen.getByRole('combobox', { name: '笔记文件夹' }), folderB)
     expect(notes.moveNote).toHaveBeenCalledWith(noteA, folderB)
     expect(await screen.findByText('笔记已移动。', { selector: '[role="status"]' })).toBeVisible()
@@ -189,7 +360,7 @@ describe('LibraryLayout', () => {
     release?.()
   })
 
-  it('restores and persists keyboard-accessible collapsed columns without losing proportions', async () => {
+  it('restores a manual collapse as a functional rail and persists only explicit expansion', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': { folder: 0.25, noteList: 0.3 },
       'library-collapsed': { folder: true, noteList: false },
@@ -199,13 +370,141 @@ describe('LibraryLayout', () => {
     })
     const user = userEvent.setup()
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
-    expect(await screen.findByRole('button', { name: '展开文件夹栏' })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByRole('button', { name: '展开资料库' })).toBeVisible()
     expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '0px' })
-    await user.click(screen.getByRole('button', { name: '展开文件夹栏' }))
+    await user.click(screen.getByRole('button', { name: '展开资料库' }))
     expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
     expect(screen.getByTestId('folder-pane')).not.toHaveStyle({ width: '0px' })
-    expect(screen.getByRole('button', { name: '折叠文件夹栏' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '折叠资料库' })).toBeVisible()
   })
+
+  it('uses the folder rail entry to visibly expand the library from the unfiled destination', async () => {
+    const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-columns': undefined,
+      'library-collapsed': { folder: true, noteList: false },
+    })[key]) as unknown as SystemPort['getWindowPreference']
+    const system = fakeSystemPort({ getWindowPreference })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await user.click(await screen.findByRole('button', { name: '文件夹' }))
+    expect(screen.queryByRole('navigation', { name: '折叠的资料库' })).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
+  })
+
+  it('keeps the current unfiled note selected when its active rail entry is clicked again', async () => {
+    const selected = { ...note('selected body'), id: noteA, title: 'Selected note' }
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, selected.title)]),
+      loadNote: vi.fn().mockResolvedValue(selected),
+    })
+    const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-columns': undefined,
+      'library-collapsed': { folder: true, noteList: false },
+    })[key]) as unknown as SystemPort['getWindowPreference']
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)
+
+    await user.click(await screen.findByRole('button', { name: /^Selected note/ }))
+    expect(await screen.findByRole('heading', { name: 'Selected note' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '未归档笔记' }))
+
+    expect(screen.getByRole('heading', { name: 'Selected note' })).toBeVisible()
+    expect(notes.loadNote).toHaveBeenCalledTimes(1)
+  })
+
+  it('automatically collapses at the planned threshold without overwriting manual preferences', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 820,
+      top: 0,
+      width: 820,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const system = fakeSystemPort()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    expect(await screen.findByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '展开目录，0 篇笔记' })).toHaveTextContent('目录 · 0')
+    expect(screen.getByTestId('folder-pane')).toHaveAttribute('inert')
+    expect(screen.getByTestId('note-list-pane')).toHaveAttribute('inert')
+    expect(system.setWindowPreference).not.toHaveBeenCalledWith('library-collapsed', expect.anything())
+  })
+
+  it('records an explicit rail expansion as a cleared manual preference while responsive collapse remains effective', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const system = fakeSystemPort()
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await user.click(await screen.findByRole('button', { name: '展开资料库' }))
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
+    expect(screen.getByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
+    expect(screen.getByTestId('folder-pane')).toHaveAttribute('inert')
+  })
+
+  it('manually collapses and restores the note directory independently from the library', async () => {
+    const system = fakeSystemPort()
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
+
+    await user.click(await screen.findByRole('button', { name: '折叠目录' }))
+    expect(screen.getByRole('button', { name: '展开目录，0 篇笔记' })).toHaveTextContent('目录 · 0')
+    expect(screen.getByTestId('folder-pane')).not.toHaveAttribute('inert')
+    expect(screen.getByTestId('note-list-pane')).toHaveAttribute('inert')
+    expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: true })
+
+    await user.click(screen.getByRole('button', { name: '展开目录，0 篇笔记' }))
+    expect(screen.getByTestId('note-list-pane')).not.toHaveAttribute('inert')
+    expect(system.setWindowPreference).toHaveBeenLastCalledWith('library-collapsed', { folder: false, noteList: false })
+  })
+
+  it('does not show the formal-note count on collapsed temporary or trash directory rails', async () => {
+    const trash: TrashPort = {
+      trash: vi.fn().mockResolvedValue({ operationId: 'unused', trashed: [], failed: [] }),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Formal note')]) })}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+        temporary={fakeTemporaryPort(twoCaptures())}
+        trash={trash}
+      />,
+    )
+
+    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
+    await screen.findByRole('region', { name: '临时收集箱' })
+    await user.click(screen.getByRole('button', { name: '折叠目录' }))
+    expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent('目录')
+
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    await user.click(screen.getByRole('treeitem', { name: '回收站' }))
+    await screen.findByRole('region', { name: '回收站' })
+    await user.click(screen.getByRole('button', { name: '折叠目录' }))
+    expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent('目录')
+  })
+
   it('holds the active editor behind a barrier while flushing for a storage move', async () => {
     const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))
     const notes = fakeNotePort({
@@ -254,7 +553,9 @@ describe('LibraryLayout', () => {
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'saved body' } }))
-    screen.getByRole('button', { name: '删除 Note A' }).click()
+    const deleteButton = screen.getByRole('button', { name: '删除 Note A' })
+    expect(within(deleteButton).getByTestId('icon-close')).toBeVisible()
+    deleteButton.click()
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(trash.trash).not.toHaveBeenCalled()
@@ -519,28 +820,27 @@ describe('LibraryLayout', () => {
     expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '300px' })
   })
 
-  it('returns to the library when a search result is selected from the temporary inbox', async () => {
+  it('flushes the active temporary editor before a toolbar search result returns to the library', async () => {
+    const pendingSave = deferred<NoteDocument>()
     const notes = fakeNotePort({
       listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Search target')]),
       loadNote: vi.fn().mockResolvedValue({ ...note('body'), id: noteA, title: 'Search target' }),
     })
-    const search = fakeSearchPort({
-      search: vi.fn().mockResolvedValue([{
-        noteId: noteA,
-        title: 'Search target',
-        folderBreadcrumb: [],
-        tags: [],
-        excerpt: 'body',
-        score: 1,
-      }]),
-    })
+    const temporary = fakeTemporaryPort(twoCaptures())
+    temporary.save = vi.fn(() => pendingSave.promise)
+    const ref = createRef<LibraryLayoutHandle>()
     const user = userEvent.setup()
-    render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={fakeTemporaryPort(twoCaptures())} search={search} />)
+    render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={temporary} autosaveDelayMs={2000} />)
     await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
-    await user.type(screen.getByRole('searchbox', { name: '搜索笔记' }), 'target')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    await user.click(await screen.findByRole('button', { name: /Search target/ }))
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '尚未保存的临时内容' } }))
+    act(() => ref.current?.selectSearchResult(noteA))
 
+    await waitFor(() => expect(temporary.save).toHaveBeenCalledOnce())
+    expect(notes.loadNote).not.toHaveBeenCalled()
+    await act(async () => pendingSave.resolve({ ...twoCaptures()[0], markdown: '尚未保存的临时内容', revision: 2 }))
     expect(await screen.findByRole('heading', { name: 'Search target' })).toBeVisible()
   })
 
@@ -1031,7 +1331,7 @@ describe('LibraryLayout', () => {
 
     await waitFor(() => {
       const labels = screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())
-      expect(labels).toEqual(['⌂ 未归档笔记', '▱ 项目 C', '▱ 项目 B', '▱ 项目 A'])
+      expect(labels).toEqual(['未归档笔记', '项目 C', '项目 B', '项目 A'])
     })
   })
 
@@ -1053,12 +1353,13 @@ describe('LibraryLayout', () => {
     render(<LibraryLayout notes={fakeNotePort()} folders={folders} system={fakeSystemPort()} />)
     await user.click(await screen.findByRole('treeitem', { name: '项目 B' }))
 
-    await user.click(screen.getByRole('button', { name: '删除空文件夹' }))
+    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.click(screen.getByRole('menuitem', { name: '删除空文件夹' }))
 
     await waitFor(() => {
       const items = screen.getAllByRole('treeitem')
       const labels = items.map((item) => item.textContent?.trim())
-      expect(labels).toEqual(['⌂ 未归档笔记', '▱ 项目 C', '▱ 项目 A'])
+      expect(labels).toEqual(['未归档笔记', '项目 C', '项目 A'])
       expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
     })
   })
@@ -1129,7 +1430,8 @@ describe('LibraryLayout', () => {
     expect(folders.createFolder).toHaveBeenCalledWith({ parentId: null, name: '新文件夹' })
 
     await user.click(screen.getByRole('treeitem', { name: '项目 A' }))
-    await user.click(screen.getByRole('button', { name: '重命名文件夹' }))
+    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.click(screen.getByRole('menuitem', { name: '重命名文件夹' }))
     const rename = screen.getByRole('textbox', { name: '重命名文件夹' })
     await user.clear(rename)
     await user.type(rename, '已重命名{Enter}')
@@ -1142,7 +1444,8 @@ describe('LibraryLayout', () => {
     await waitFor(() => expect(folders.moveFolder).toHaveBeenCalledWith(folderA, folderB))
 
     await user.click(screen.getByRole('treeitem', { name: '已重命名' }))
-    await user.click(screen.getByRole('button', { name: '删除空文件夹' }))
+    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.click(screen.getByRole('menuitem', { name: '删除空文件夹' }))
     expect(folders.deleteEmptyFolder).toHaveBeenCalledWith(folderA)
   })
 })

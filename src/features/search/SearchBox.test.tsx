@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteId } from '../../domain/model'
@@ -24,20 +24,22 @@ function deferred<T>() {
 }
 
 describe('SearchBox', () => {
-  it('dispatches text and #tag queries through the same field with a 100 result cap', async () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('searches after input settles without a submit button and closes on Escape', async () => {
+    vi.useFakeTimers()
     const search = fakeSearchPort()
-    const user = userEvent.setup()
     render(<SearchBox search={search} onSelect={vi.fn()} />)
     const field = screen.getByRole('searchbox', { name: '搜索笔记' })
 
-    await user.type(field, '登录流程')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    expect(search.search).toHaveBeenLastCalledWith({ kind: 'text', value: '登录流程' }, 100)
-
-    await user.clear(field)
-    await user.type(field, '#后端')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    expect(search.search).toHaveBeenLastCalledWith({ kind: 'tag', value: '后端' }, 100)
+    fireEvent.change(field, { target: { value: '#设计' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(179) })
+    expect(search.search).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(search.search).toHaveBeenCalledWith({ kind: 'tag', value: '设计' }, 100)
+    expect(screen.queryByRole('button', { name: '搜索' })).not.toBeInTheDocument()
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 
   it('clears stale results while loading or errored and ignores late generations', async () => {
@@ -46,16 +48,15 @@ describe('SearchBox', () => {
     const search = fakeSearchPort({
       search: vi.fn(({ value }) => value === 'old' ? oldRequest.promise : newRequest.promise),
     })
-    const user = userEvent.setup()
+    vi.useFakeTimers()
     render(<SearchBox search={search} onSelect={vi.fn()} />)
     const field = screen.getByRole('searchbox', { name: '搜索笔记' })
 
-    await user.type(field, 'old')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
+    fireEvent.change(field, { target: { value: 'old' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
     expect(screen.getByRole('status')).toHaveTextContent('正在搜索')
-    await user.clear(field)
-    await user.type(field, 'new')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
+    fireEvent.change(field, { target: { value: 'new' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
     await act(async () => oldRequest.resolve([result(firstId, '旧结果')]))
     expect(screen.queryByText('旧结果')).not.toBeInTheDocument()
     await act(async () => newRequest.reject(new Error('offline')))
@@ -66,33 +67,133 @@ describe('SearchBox', () => {
   it('renders bounded result context and selects by immutable note ID', async () => {
     const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(secondId, '令牌恢复')]) })
     const onSelect = vi.fn()
-    const user = userEvent.setup()
+    vi.useFakeTimers()
     render(<SearchBox search={search} onSelect={onSelect} />)
 
-    await user.type(screen.getByRole('searchbox', { name: '搜索笔记' }), '令牌')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    const item = await screen.findByRole('button', { name: /令牌恢复/ })
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索笔记' }), { target: { value: '令牌' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    const item = screen.getByRole('button', { name: /令牌恢复/ })
     expect(item).toHaveTextContent('工作 / 项目 B')
     expect(item).toHaveTextContent('#后端')
     expect(item).toHaveTextContent('令牌失败后的恢复步骤')
-    await user.click(item)
+    fireEvent.click(item)
     expect(onSelect).toHaveBeenCalledWith(secondId)
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 
-  it('shows clear guidance for empty, bare-tag, empty-result, and invalid queries', async () => {
+  it('keeps guidance inside the dropdown for invalid, empty-result, and error states', async () => {
+    vi.useFakeTimers()
     const search = fakeSearchPort()
-    const user = userEvent.setup()
     render(<SearchBox search={search} onSelect={vi.fn()} />)
     const field = screen.getByRole('searchbox', { name: '搜索笔记' })
 
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    expect(screen.getByRole('status')).toHaveTextContent('输入文字搜索标题和正文')
-    await user.type(field, '#')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.change(field, { target: { value: '#' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
     expect(screen.getByRole('status')).toHaveTextContent('# 后输入标签')
-    await user.clear(field)
-    await user.type(field, 'missing')
-    await user.click(screen.getByRole('button', { name: '搜索' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('没有匹配的笔记')
+    fireEvent.change(field, { target: { value: 'missing' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    expect(screen.getByRole('status')).toHaveTextContent('没有匹配的笔记')
+  })
+
+  it('moves through results with the keyboard and selects the active immutable ID', async () => {
+    vi.useFakeTimers()
+    const onSelect = vi.fn()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '第一篇'), result(secondId, '第二篇')]) })
+    render(<SearchBox search={search} onSelect={onSelect} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    fireEvent.change(field, { target: { value: '篇' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    screen.getByRole('list', { name: '搜索结果' })
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    expect(onSelect).toHaveBeenCalledWith(secondId)
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+  })
+
+  it('lets native Enter activate the focused result once after arrow and Tab navigation', async () => {
+    vi.useFakeTimers()
+    const onSelect = vi.fn()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '第一篇'), result(secondId, '第二篇')]) })
+    render(<SearchBox search={search} onSelect={onSelect} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    fireEvent.change(field, { target: { value: '篇' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    vi.useRealTimers()
+    const user = userEvent.setup()
+    const first = screen.getByRole('button', { name: /第一篇/ })
+    const second = screen.getByRole('button', { name: /第二篇/ })
+    field.focus()
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    expect(first).toHaveAttribute('data-active')
+
+    await user.tab()
+    await user.tab()
+    expect(second).toHaveFocus()
+    expect(second).toHaveAttribute('data-active')
+    await user.keyboard('{Enter}')
+
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(onSelect).toHaveBeenCalledWith(secondId)
+  })
+
+  it('closes the result popup with Escape after a result receives focus', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '焦点结果')]) })
+    render(<SearchBox search={search} onSelect={vi.fn()} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    fireEvent.change(field, { target: { value: '焦点' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    const item = screen.getByRole('button', { name: /焦点结果/ })
+    item.focus()
+    fireEvent.keyDown(item, { key: 'Escape' })
+
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+    expect(field).toHaveFocus()
+  })
+
+  it('retries a failed search without changing its query', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({
+      search: vi.fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce([result(secondId, '重试结果')]),
+    })
+    render(<SearchBox search={search} onSelect={vi.fn()} />)
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索笔记' }), { target: { value: '重试' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    expect(screen.getByRole('alert')).toHaveTextContent('搜索失败')
+    fireEvent.click(screen.getByRole('button', { name: '重新搜索' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+
+    expect(search.search).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: /重试结果/ })).toBeVisible()
+  })
+
+  it('dismisses results on an outside pointer interaction but keeps inside interactions open', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '保留结果')]) })
+    render(
+      <>
+        <SearchBox search={search} onSelect={vi.fn()} />
+        <button type="button">外部操作</button>
+      </>,
+    )
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索笔记' }), { target: { value: '保留' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    const resultButton = screen.getByRole('button', { name: /保留结果/ })
+    fireEvent.pointerDown(resultButton)
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeVisible()
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: '外部操作' }))
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 })

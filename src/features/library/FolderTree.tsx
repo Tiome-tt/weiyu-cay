@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
-import { APP_NAME } from '../../shared/brand'
+import { Icon } from '../../shared/Icon'
+import { FolderActionMenu } from './FolderActionMenu'
 
 interface FolderTreeProps {
   folders: Folder[]
@@ -11,6 +12,7 @@ interface FolderTreeProps {
   onSelect: (id: FolderId | null) => void
   onTemporaryInbox?: () => void
   onTrash?: () => void
+  onCollapse?: () => void
   onCreate: (parentId: FolderId | null, name: string) => Promise<void>
   onRename: (id: FolderId, name: string) => Promise<void>
   onMove: (id: FolderId, parentId: FolderId | null) => Promise<void>
@@ -57,6 +59,7 @@ export function FolderTree(props: FolderTreeProps) {
     try {
       await props.onDelete(props.activeId)
       setError(false)
+      focusItem('root')
     } catch {
       setError(true)
     }
@@ -194,7 +197,8 @@ export function FolderTree(props: FolderTreeProps) {
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => void dropFolder(event, folder.id)}
               >
-                <span aria-hidden="true">▱</span> {folder.name}
+                <Icon name="folder" size={16} />
+                <span>{folder.name}</span>
               </button>
             )}
             {hasChildren && <ul role="group">{renderBranch(folder.id)}</ul>}
@@ -208,42 +212,34 @@ export function FolderTree(props: FolderTreeProps) {
     <nav aria-label="文件夹" className="folder-tree">
       <header className="library-pane__header">
         <div>
-          <span className="library-pane__eyebrow">资料库</span>
-          <h1>{APP_NAME}</h1>
+          <span className="library-pane__eyebrow">本地笔记</span>
+          <h1>资料库</h1>
         </div>
-        <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
-          +
-        </button>
+        <div className="library-pane__header-actions">
+          {props.onCollapse && (
+            <button className="icon-button" type="button" aria-label="折叠资料库" onClick={props.onCollapse}>
+              <Icon name="collapse" size={18} />
+            </button>
+          )}
+          <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={18} />
+          </button>
+          <FolderActionMenu
+            enabled={selected !== undefined}
+            onRename={() => {
+              if (!selected) return
+              setRenaming(selected.id)
+              setName(selected.name)
+            }}
+            onMove={() => {
+              if (!selected) return
+              setMoving(selected.id)
+              setMoveTarget(selected.parentId)
+            }}
+            onDelete={() => void runDelete()}
+          />
+        </div>
       </header>
-      <div className="folder-actions" aria-label="文件夹操作">
-        <button
-          type="button"
-          aria-label="重命名文件夹"
-          disabled={!selected}
-          onClick={() => {
-            if (!selected) return
-            setRenaming(selected.id)
-            setName(selected.name)
-          }}
-        >
-          重命名
-        </button>
-        <button
-          type="button"
-          aria-label="移动文件夹"
-          disabled={!selected}
-          onClick={() => {
-            if (!selected) return
-            setMoving(selected.id)
-            setMoveTarget(selected.parentId)
-          }}
-        >
-          移动
-        </button>
-        <button type="button" aria-label="删除空文件夹" disabled={!selected} onClick={() => void runDelete()}>
-          删除
-        </button>
-      </div>
       {creating && (
         <form className="folder-form" onSubmit={(event) => void finishCreate(event)}>
           <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} />
@@ -287,7 +283,8 @@ export function FolderTree(props: FolderTreeProps) {
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => void dropFolder(event, null)}
           >
-            <span aria-hidden="true">⌂</span> 未归档笔记
+            <Icon name="folder" size={16} />
+            <span>未归档笔记</span>
           </button>
         </li>
         {props.onTemporaryInbox && (
@@ -303,7 +300,8 @@ export function FolderTree(props: FolderTreeProps) {
               onKeyDown={(event) => handleTreeKey(event, 'temporary-inbox')}
               onClick={props.onTemporaryInbox}
             >
-              <span aria-hidden="true">✦</span> 临时收集箱
+              <Icon name="inbox" size={16} />
+              <span>临时收集箱</span>
             </button>
           </li>
         )}
@@ -320,7 +318,8 @@ export function FolderTree(props: FolderTreeProps) {
               onKeyDown={(event) => handleTreeKey(event, 'trash')}
               onClick={props.onTrash}
             >
-              <span aria-hidden="true">♲</span> 回收站
+              <Icon name="trash" size={16} />
+              <span>回收站</span>
             </button>
           </li>
         )}

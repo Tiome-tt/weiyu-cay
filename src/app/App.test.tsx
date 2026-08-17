@@ -1,13 +1,23 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { App } from './App'
+import { App as ProductionApp } from './App'
 import userEvent from '@testing-library/user-event'
-import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort } from '../test/fakes'
+import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeWindowChromePort } from '../test/fakes'
 import type { AppSettings, ExportReport, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
 import type { FolderId, NoteDocument, NoteId } from '../domain/model'
+import type { AppServices } from './services'
+
+type TestAppServices = Omit<AppServices, 'windowChrome'> & Partial<Pick<AppServices, 'windowChrome'>>
+
+function App({ services }: { services: TestAppServices }) {
+  return <ProductionApp services={{
+    ...services,
+    windowChrome: services.windowChrome ?? fakeWindowChromePort(),
+  }} />
+}
 
 describe('App', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
@@ -25,8 +35,113 @@ describe('App', () => {
       />,
     )
     expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
+    expect(screen.getByTestId('window-titlebar')).toBeVisible()
     expect(screen.getByRole('navigation', { name: '文件夹' })).toBeVisible()
+    expect(screen.getAllByText('微屿')).toHaveLength(1)
     expect(screen.queryByText(/sign in|登录/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the active editor autosave state in the global toolbar', async () => {
+    const activeId = '019c0000-0000-7000-8000-000000000053' as NoteId
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([{ ...fakeNotePortDocument(activeId, 'Toolbar note'), excerpt: '' }]),
+      loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Toolbar note', 'old body')),
+    })
+    const user = userEvent.setup()
+    render(<App services={{
+      notes,
+      folders: fakeFolderPort(),
+      system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+      search: fakeSearchPort(),
+      links: fakeLinkPort(),
+    }} />)
+    await user.click(await screen.findByRole('button', { name: /^Toolbar note/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'changed body' } }))
+
+    expect(await screen.findByLabelText('保存状态')).toHaveTextContent('待保存')
+  })
+
+  it('restores the actual toolbar create trigger when pointer activation did not focus it', async () => {
+    render(
+      <App
+        services={{
+          notes: fakeNotePort(),
+          folders: fakeFolderPort(),
+          system: fakeSystemPort(),
+          assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+          search: fakeSearchPort(),
+          links: fakeLinkPort(),
+        }}
+      />,
+    )
+    const trigger = within(screen.getByRole('toolbar', { name: '全局应用栏' })).getByRole('button', { name: '新建笔记' })
+    screen.getByRole('button', { name: '打开设置' }).focus()
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('textbox', { name: '笔记标题' })).toHaveFocus()
+    await userEvent.setup().keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('dismisses search before keyboard activation opens create from the empty state', async () => {
+    const resultId = '019c0000-0000-7000-8000-000000000061' as NoteId
+    const search = fakeSearchPort({
+      search: vi.fn().mockResolvedValue([{
+        noteId: resultId,
+        title: '搜索中的笔记',
+        folderBreadcrumb: [],
+        tags: [],
+        excerpt: '',
+        score: 1,
+      }]),
+    })
+    const user = userEvent.setup()
+    render(<App services={{
+      notes: fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) }),
+      folders: fakeFolderPort(),
+      system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }),
+      search,
+      links: fakeLinkPort(),
+    }} />)
+
+    await user.type(screen.getByRole('searchbox', { name: '搜索笔记' }), '搜索')
+    expect(await screen.findByRole('list', { name: '搜索结果' })).toBeVisible()
+    const emptyState = screen.getByRole('heading', { name: '每个念头，都是一座小岛。' }).closest<HTMLElement>('.main-window-empty-state')
+    if (emptyState === null) throw new Error('empty state not found')
+    const create = within(emptyState).getByRole('button', { name: '新建笔记' })
+    create.focus()
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('dialog', { name: '新建笔记' })).toBeVisible()
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+  })
+
+  it('mounts main-window chrome while retaining the native safe-close listener', async () => {
+    const windowChrome = fakeWindowChromePort()
+    const lifecycle = {
+      beginCloseListenerRegistration: vi.fn().mockResolvedValue(81),
+      onCloseRequested: vi.fn().mockResolvedValue(() => undefined),
+      setListenerReady: vi.fn().mockResolvedValue(undefined),
+      completeClose: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle, windowChrome,
+    }} />)
+
+    await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
+    await userEvent.setup().click(screen.getByRole('button', { name: '关闭窗口' }))
+
+    expect(windowChrome.requestClose).toHaveBeenCalledOnce()
+    expect(lifecycle.completeClose).not.toHaveBeenCalled()
   })
 
   it('acknowledges a native close only after the dirty editor flushes behind a barrier', async () => {
@@ -152,24 +267,32 @@ describe('App', () => {
   it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
     const user = userEvent.setup()
     const check = vi.fn().mockResolvedValue({ version: '0.1.1', notes: 'Security fixes' })
-    const install = vi.fn().mockRejectedValue(new Error('signature verification failed'))
+    const install = vi.fn()
+      .mockRejectedValueOnce(new Error('signature verification failed'))
+      .mockResolvedValueOnce(undefined)
     const restart = vi.fn()
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
       updater: { check, install, restart },
     }
     render(<App services={services} />)
 
     expect(check).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
+    expect(screen.queryByRole('button', { name: '检查更新' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
     expect(check).toHaveBeenCalledOnce()
-    expect(await screen.findByText('Version 0.1.1 is ready to install.')).toBeVisible()
+    expect(await screen.findByText('版本 0.1.1 可以安装。')).toBeVisible()
     expect(install).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: 'Download and install version 0.1.1' }))
+    await user.click(screen.getByRole('button', { name: '下载并安装 0.1.1' }))
     expect(install).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('Update installation failed. Your notes are unchanged.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新安装失败')
+    await user.click(screen.getByRole('button', { name: '重新安装 0.1.1' }))
+    expect(install).toHaveBeenCalledTimes(2)
+    expect(await screen.findByRole('button', { name: '重启以完成更新' })).toBeVisible()
   })
 
   it('keeps an installed update recoverable when explicit restart fails', async () => {
@@ -178,16 +301,58 @@ describe('App', () => {
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
       updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
     }
     render(<App services={services} />)
 
-    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
-    await user.click(await screen.findByRole('button', { name: 'Download and install version 0.1.1' }))
-    await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(await screen.findByRole('button', { name: '下载并安装 0.1.1' }))
+    await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     expect(restart).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败。请手动重新启动微屿。')
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
+    await user.click(screen.getByRole('button', { name: '重新尝试重启' }))
+    expect(restart).toHaveBeenCalledTimes(2)
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
+  })
+
+  it('selects the keyboard-focused search result through the App safe navigation bridge', async () => {
+    const firstId = '019c0000-0000-7000-8000-000000000061' as NoteId
+    const secondId = '019c0000-0000-7000-8000-000000000062' as NoteId
+    const loadNote = vi.fn(async (noteId: NoteId) => fakeNotePortDocument(noteId, noteId === firstId ? '第一篇' : '第二篇'))
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([
+        { ...fakeNotePortDocument(firstId, '第一篇'), excerpt: '' },
+        { ...fakeNotePortDocument(secondId, '第二篇'), excerpt: '' },
+      ]),
+      loadNote,
+    })
+    const search = fakeSearchPort({
+      search: vi.fn().mockResolvedValue([
+        { noteId: firstId, title: '第一篇', folderBreadcrumb: [], tags: [], excerpt: '', score: 2 },
+        { noteId: secondId, title: '第二篇', folderBreadcrumb: [], tags: [], excerpt: '', score: 1 },
+      ]),
+    })
+    const user = userEvent.setup()
+    render(<App services={{
+      notes, folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search, links: fakeLinkPort(),
+    }} />)
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    await user.type(field, '篇')
+    const results = await screen.findByRole('list', { name: '搜索结果' })
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    await user.tab()
+    await user.tab()
+    expect(within(results).getByRole('button', { name: /第二篇/ })).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(loadNote).toHaveBeenCalledWith(secondId))
+    expect(loadNote).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('heading', { name: '第二篇' })).toBeVisible()
   })
 
   it('flushes and locks a dirty editor before restarting into an installed update', async () => {
@@ -202,6 +367,7 @@ describe('App', () => {
     const services = {
       notes, folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(),
       updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
     }
     const user = userEvent.setup()
@@ -210,9 +376,10 @@ describe('App', () => {
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty update draft' } }))
-    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
-    await user.click(await screen.findByRole('button', { name: 'Download and install version 0.1.1' }))
-    await user.click(await screen.findByRole('button', { name: 'Restart to finish update' }))
+    await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(await screen.findByRole('button', { name: '下载并安装 0.1.1' }))
+    await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(restart).not.toHaveBeenCalled()
@@ -473,7 +640,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '移动数据' }))
     expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
     expect(screen.queryByRole('navigation', { name: '文件夹' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(within(screen.getByRole('alertdialog')).getAllByRole('button')).toHaveLength(1)
   })
 
   it('releases the editor barrier and permits native close when relocation restart is rejected', async () => {
@@ -668,7 +835,7 @@ describe('App', () => {
       settings: fakeSettingsPort({ load: vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, theme: 'system' }) }),
     }} />)
     const app = screen.getByRole('application', { name: '微屿' })
-    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#202729'))
+    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#101B18'))
     act(() => listener({ matches: false } as MediaQueryListEvent))
     await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#edf0f2'))
     rendered.unmount()

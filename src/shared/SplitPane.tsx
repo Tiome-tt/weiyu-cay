@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react'
 
-const DIVIDER_WIDTH = 8
+const DIVIDER_WIDTH = 7
 const KEYBOARD_STEP = 16
 
 export type SplitPaneSizes = readonly [first: number, second: number]
@@ -70,10 +70,10 @@ export function SplitPane({
       proportions[0] * containerWidth,
       proportions[1] * containerWidth,
     ]
-    const next = fitIntoContainer(restored, minimumSizes, containerWidth)
+    const next = fitIntoContainer(restored, minimumSizes, containerWidth, collapsed)
     sizesRef.current = next
     setSizes(next)
-  }, [containerWidth, minimumSizes, proportions])
+  }, [collapsed[0], collapsed[1], containerWidth, minimumSizes, proportions])
 
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -83,7 +83,7 @@ export function SplitPane({
       setContainerWidth(width)
       if (width <= 0) return
       setSizes((current) => {
-        const next = fitIntoContainer(current, minimumSizes, width)
+        const next = fitIntoContainer(current, minimumSizes, width, collapsed)
         sizesRef.current = next
         return next[0] === current[0] && next[1] === current[1] ? current : next
       })
@@ -93,7 +93,7 @@ export function SplitPane({
     const observer = new ResizeObserver(measure)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [])
+  }, [collapsed[0], collapsed[1], minimumSizes])
 
   const measuredWidth = () => containerRef.current?.getBoundingClientRect().width ?? 0
 
@@ -102,16 +102,16 @@ export function SplitPane({
     let first = Math.max(minimumSizes[0], candidate[0])
     let second = Math.max(minimumSizes[1], candidate[1])
     if (width > 0) {
-      const available = Math.max(0, width - DIVIDER_WIDTH * 2)
+      const available = Math.max(0, width - visibleDividerWidth(0, collapsed) - visibleDividerWidth(1, collapsed))
       if (divider === 0) {
         first = Math.min(
           first,
-          Math.max(minimumSizes[0], available - second - minimumSizes[2]),
+          Math.max(minimumSizes[0], available - (collapsed[1] ? 0 : second) - minimumSizes[2]),
         )
       } else {
         second = Math.min(
           second,
-          Math.max(minimumSizes[1], available - first - minimumSizes[2]),
+          Math.max(minimumSizes[1], available - (collapsed[0] ? 0 : first) - minimumSizes[2]),
         )
       }
     }
@@ -138,8 +138,9 @@ export function SplitPane({
     if (drag.divider === 0) {
       updateSizes([event.clientX - left, sizesRef.current[1]], drag.divider)
     } else {
+      const firstTrack = (collapsed[0] ? 0 : sizesRef.current[0]) + visibleDividerWidth(0, collapsed)
       updateSizes(
-        [sizesRef.current[0], event.clientX - left - sizesRef.current[0] - DIVIDER_WIDTH],
+        [sizesRef.current[0], event.clientX - left - firstTrack],
         drag.divider,
       )
     }
@@ -182,11 +183,16 @@ export function SplitPane({
   const width = containerWidth
   const visibleFirst = collapsed[0] ? 0 : sizes[0]
   const visibleSecond = collapsed[1] ? 0 : sizes[1]
-  const thirdWidth = width > 0 ? Math.max(minimumSizes[2], width - DIVIDER_WIDTH * 2 - visibleFirst - visibleSecond) : undefined
+  const dividerWidth = visibleDividerWidth(0, collapsed) + visibleDividerWidth(1, collapsed)
+  const thirdWidth = width > 0 ? Math.max(minimumSizes[2], width - dividerWidth - visibleFirst - visibleSecond) : undefined
   const paneWidths = [visibleFirst, visibleSecond, thirdWidth] as const
 
   return (
-    <div ref={containerRef} className="split-pane">
+    <div
+      ref={containerRef}
+      className="split-pane"
+      style={{ '--split-pane-divider-width': `${DIVIDER_WIDTH}px` } as CSSProperties}
+    >
       {panes.map((pane, index) => {
         const element = pane as PaneElement
         const paneStyle: CSSProperties = {
@@ -205,13 +211,17 @@ export function SplitPane({
         if (index === 2) return rendered
         const divider = index as 0 | 1
         const maximum = width > 0
-          ? width - DIVIDER_WIDTH * 2 - minimumSizes[2] - sizes[divider === 0 ? 1 : 0]
+          ? width - dividerWidth - minimumSizes[2] - (collapsed[divider === 0 ? 1 : 0] ? 0 : sizes[divider === 0 ? 1 : 0])
           : 10000
+        const dividerStyle: CSSProperties | undefined = collapsed[divider]
+          ? { flex: '0 0 0px', width: '0px', pointerEvents: 'none' }
+          : undefined
         return (
           <span className="split-pane__segment" key={divider}>
             {rendered}
             <div
               className="split-pane__divider"
+              style={dividerStyle}
               role="separator"
               aria-label={dividerLabels[divider]}
               aria-orientation="vertical"
@@ -239,17 +249,23 @@ function fitIntoContainer(
   candidate: SplitPaneSizes,
   minimumSizes: readonly [first: number, second: number, third: number],
   width: number,
+  collapsed: readonly [first: boolean, second: boolean],
 ): SplitPaneSizes {
   let first = Math.max(minimumSizes[0], candidate[0])
   let second = Math.max(minimumSizes[1], candidate[1])
-  let overflow = first + second + minimumSizes[2] + DIVIDER_WIDTH * 2 - width
-  if (overflow > 0) {
+  let overflow = (collapsed[0] ? 0 : first) + (collapsed[1] ? 0 : second) + minimumSizes[2]
+    + visibleDividerWidth(0, collapsed) + visibleDividerWidth(1, collapsed) - width
+  if (overflow > 0 && !collapsed[1]) {
     const secondReduction = Math.min(overflow, second - minimumSizes[1])
     second -= secondReduction
     overflow -= secondReduction
   }
-  if (overflow > 0) {
+  if (overflow > 0 && !collapsed[0]) {
     first -= Math.min(overflow, first - minimumSizes[0])
   }
   return [first, second]
+}
+
+function visibleDividerWidth(divider: 0 | 1, collapsed: readonly [first: boolean, second: boolean]) {
+  return collapsed[divider] ? 0 : DIVIDER_WIDTH
 }

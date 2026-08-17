@@ -22,7 +22,10 @@ describe('TagsEditor', () => {
     expect(onChange).toHaveBeenCalledWith(['TypeScript', '后端'])
 
     rerender(<TagsEditor tags={['TypeScript', '后端']} onChange={onChange} />)
-    await user.click(within(screen.getByText('TypeScript').closest('span')!).getByRole('button'))
+    const remove = within(screen.getByText('TypeScript').closest('span')!).getByRole('button')
+    expect(within(remove).getByTestId('icon-close')).toBeVisible()
+    expect(within(screen.getByRole('button', { name: '添加标签' })).getByTestId('icon-plus')).toBeVisible()
+    await user.click(remove)
     expect(onChange).toHaveBeenLastCalledWith(['后端'])
   })
 

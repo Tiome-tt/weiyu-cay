@@ -1,15 +1,20 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import type { EditorMode, NoteId } from '../../domain/model'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import type { EditorMode, FolderId, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
-import { SearchBox } from '../search/SearchBox'
+import type { SaveState } from '../editor/useAutosave'
 import { FolderTree } from './FolderTree'
 import { NoteList } from './NoteList'
 import { useLibrary, type LibraryNotePort } from './useLibrary'
 import { TemporaryInbox, type TemporaryInboxHandle } from '../temporary/TemporaryInbox'
 import { TrashView } from './TrashView'
-import { APP_TAGLINE } from '../../shared/brand'
+import { DirectoryRail } from './DirectoryRail'
+import { LibraryRail, type LibraryRailEntry } from './LibraryRail'
+import { useResponsiveColumns } from './useResponsiveColumns'
+import { Icon } from '../../shared/Icon'
+import { CreateNotePopover, type CreateNoteDraft, type CreateNoteStatus } from './CreateNotePopover'
+import { MainWindowEmptyState } from './MainWindowEmptyState'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
@@ -23,20 +28,28 @@ interface LibraryLayoutProps {
   trash?: TrashPort
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
+  onSaveStateChange?(status: Exclude<SaveState['status'], 'idle'> | 'hidden'): void
+  onCreatePopoverOpen?(): void
 }
 
 export interface LibraryLayoutHandle {
   prepareStorageMove(): Promise<(() => void) | null>
   prepareExit(): Promise<(() => void) | null>
   refreshAfterRecovery(): Promise<void>
+  selectSearchResult(noteId: NoteId): void
+  createNote(trigger: HTMLButtonElement): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
   const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
-  const [createBusy, setCreateBusy] = useState(false)
-  const [createError, setCreateError] = useState(false)
+  const [createPopoverOpen, setCreatePopoverOpen] = useState(false)
+  const [createOperation, setCreateOperation] = useState<CreateNoteDraft & { status: CreateNoteStatus }>({
+    title: '',
+    folderId: null,
+    status: 'idle',
+  })
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
   const [linkRepairRetry, setLinkRepairRetry] = useState<{ noteId: NoteId; title: string } | null>(null)
   const [linkRepairBusy, setLinkRepairBusy] = useState(false)
@@ -45,10 +58,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
   const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
-  const [collapsed, setCollapsed] = useState<LibraryCollapsedPreference>({ folder: false, noteList: false })
+  const manualCollapsedRef = useRef<LibraryCollapsedPreference>({ folder: false, noteList: false })
+  const [manualCollapsed, setManualCollapsed] = useState<LibraryCollapsedPreference>(manualCollapsedRef.current)
   const preferenceRequest = useRef(0)
   const collapsedPreferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
+  const createTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const createPopoverOpenRef = useRef(false)
+  const createOperationRef = useRef(createOperation)
+  const createInFlightRef = useRef<Promise<void> | null>(null)
+  const createOperationRequest = useRef(0)
   const temporaryInboxRef = useRef<TemporaryInboxHandle>(null)
   const navigationRequest = useRef(0)
   const trashBusyRef = useRef<'delete' | 'undo' | null>(null)
@@ -56,10 +75,26 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const storageMoveLockedRef = useRef(false)
   const linkRepairBusyRef = useRef(false)
   const mountedRef = useRef(false)
+  const columnsRef = useRef<HTMLDivElement>(null)
+  const responsiveCollapsed = useResponsiveColumns(columnsRef)
+  const collapsed: LibraryCollapsedPreference = {
+    folder: manualCollapsed.folder || responsiveCollapsed.folder,
+    noteList: manualCollapsed.noteList || responsiveCollapsed.noteList,
+  }
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
     [library.notes],
   )
+  const reportEditorSaveState = useCallback(
+    (status: SaveState['status']) => onSaveStateChange?.(status === 'idle' ? 'hidden' : status),
+    [onSaveStateChange],
+  )
+
+  useEffect(() => {
+    if (activeView !== 'library' || library.documentState !== 'ready' || library.document === null) {
+      onSaveStateChange?.('hidden')
+    }
+  }, [activeView, library.document, library.documentState, onSaveStateChange])
 
   useEffect(() => {
     mountedRef.current = true
@@ -67,6 +102,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       mountedRef.current = false
       navigationRequest.current += 1
       trashMutationRef.current += 1
+      createOperationRequest.current += 1
     }
   }, [])
 
@@ -98,7 +134,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       .getWindowPreference('library-collapsed')
       .then((value) => {
         if (current && collapsedPreferenceRequest.current === request && isCollapsedPreference(value)) {
-          setCollapsed(value)
+          manualCollapsedRef.current = value
+          setManualCollapsed(value)
         }
       })
       .catch(() => undefined)
@@ -118,13 +155,31 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     void system.setWindowPreference('library-columns', value).catch(() => undefined)
   }
 
-  const toggleColumn = (column: keyof LibraryCollapsedPreference) => {
+  const setColumnCollapsed = (column: keyof LibraryCollapsedPreference, value: boolean) => {
     collapsedPreferenceRequest.current += 1
-    setCollapsed((current) => {
-      const next = { ...current, [column]: !current[column] }
-      void system.setWindowPreference('library-collapsed', next).catch(() => undefined)
-      return next
-    })
+    const next = { ...manualCollapsedRef.current, [column]: value }
+    manualCollapsedRef.current = next
+    setManualCollapsed(next)
+    void system.setWindowPreference('library-collapsed', next).catch(() => undefined)
+  }
+
+  const activeRailEntry: LibraryRailEntry = activeView === 'temporary'
+    ? 'temporary'
+    : activeView === 'trash'
+      ? 'trash'
+      : library.activeFolderId === null ? 'unfiled' : 'folders'
+
+  const updateCreateOperation = (
+    update: (current: CreateNoteDraft & { status: CreateNoteStatus }) => CreateNoteDraft & { status: CreateNoteStatus },
+  ) => {
+    const next = update(createOperationRef.current)
+    createOperationRef.current = next
+    setCreateOperation(next)
+  }
+
+  const closeCreatePopover = () => {
+    createPopoverOpenRef.current = false
+    setCreatePopoverOpen(false)
   }
 
   const navigateAfterSave = async <Result,>(navigate: () => Result | Promise<Result>): Promise<Result | null> => {
@@ -168,6 +223,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
+  const openCreatePopover = (trigger: HTMLButtonElement | null) => {
+    onCreatePopoverOpen?.()
+    createTriggerRef.current = trigger
+    if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
+      updateCreateOperation((current) => ({ ...current, folderId: library.activeFolderId }))
+    }
+    createPopoverOpenRef.current = true
+    setCreatePopoverOpen(true)
+  }
+
   useImperativeHandle(ref, () => ({
     refreshAfterRecovery: async () => {
       await Promise.all([
@@ -177,7 +242,14 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     },
     prepareStorageMove: prepareEditorFlush,
     prepareExit: prepareEditorFlush,
-  }), [library.refreshLibrary])
+    selectSearchResult: (noteId) => {
+      void navigateAfterSave(() => {
+        setActiveView('library')
+        library.selectNote(noteId)
+      })
+    },
+    createNote: (trigger) => openCreatePopover(trigger),
+  }))
 
   async function prepareEditorFlush(): Promise<(() => void) | null> {
       if (storageMoveLockedRef.current) return null
@@ -268,17 +340,29 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const createFormalNote = async (title: string) => {
-    if (createBusy) return
-    setCreateBusy(true)
-    setCreateError(false)
-    try {
-      await navigateAfterSave(() => library.createNote(title))
-    } catch {
-      setCreateError(true)
-    } finally {
-      setCreateBusy(false)
-    }
+  const createFormalNote = (title: string, folderId: FolderId | null) => {
+    if (createInFlightRef.current !== null) return
+    const request = ++createOperationRequest.current
+    updateCreateOperation((current) => ({ ...current, status: 'pending' }))
+    const operation = (async () => {
+      try {
+        const result = await navigateAfterSave(() => library.createNote(title, folderId))
+        if (result === null) throw new Error('create was blocked by an unsaved editor')
+        if (!mountedRef.current || createOperationRequest.current !== request) return
+        updateCreateOperation(() => ({ title: '', folderId, status: 'idle' }))
+        if (createPopoverOpenRef.current) {
+          closeCreatePopover()
+          createTriggerRef.current?.focus()
+        }
+      } catch {
+        if (mountedRef.current && createOperationRequest.current === request) {
+          updateCreateOperation((current) => ({ ...current, status: 'error' }))
+        }
+      } finally {
+        if (createOperationRequest.current === request) createInFlightRef.current = null
+      }
+    })()
+    createInFlightRef.current = operation
   }
 
   const undoFormalDelete = async () => {
@@ -309,28 +393,54 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
-      {search && <SearchBox search={search} onSelect={(noteId) => void navigateAfterSave(() => {
-        setActiveView('library')
-        library.selectNote(noteId)
-      })} />}
-      <div className="library-collapse-controls" role="toolbar" aria-label="侧栏显示">
-        <button
-          type="button"
-          aria-label={collapsed.folder ? '展开文件夹栏' : '折叠文件夹栏'}
-          aria-pressed={collapsed.folder}
-          onClick={() => toggleColumn('folder')}
-        >
-          <span aria-hidden="true">{collapsed.folder ? '▸' : '◂'}</span>
-        </button>
-        <button
-          type="button"
-          aria-label={collapsed.noteList ? '展开笔记列表栏' : '折叠笔记列表栏'}
-          aria-pressed={collapsed.noteList}
-          onClick={() => toggleColumn('noteList')}
-        >
-          <span aria-hidden="true">{collapsed.noteList ? '▸' : '◂'}</span>
-        </button>
-      </div>
+      {!createPopoverOpen && createOperation.status === 'pending' && (
+        <p className="sr-only" role="status">正在创建“{createOperation.title.trim()}”…</p>
+      )}
+      {!createPopoverOpen && createOperation.status === 'error' && (
+        <p className="sr-only" role="alert">
+          无法新建“{createOperation.title.trim()}”。请重新打开“新建笔记”重试。
+        </p>
+      )}
+      {createPopoverOpen && (
+        <CreateNotePopover
+          folders={library.folders}
+          draft={{ title: createOperation.title, folderId: createOperation.folderId }}
+          status={createOperation.status}
+          triggerRef={createTriggerRef}
+          onDraftChange={(draft) => updateCreateOperation((current) => (
+            current.status === 'pending' ? current : { ...draft, status: 'idle' }
+          ))}
+          onCreate={createFormalNote}
+          onClose={closeCreatePopover}
+        />
+      )}
+      <div ref={columnsRef} className="library-columns">
+      {collapsed.folder && (
+        <LibraryRail
+          activeEntry={activeRailEntry}
+          onUnfiled={() => {
+            if (activeRailEntry === 'unfiled') return
+            void navigateAfterSave(() => {
+              setActiveView('library')
+              library.selectFolder(null)
+            })
+          }}
+          onFolders={() => {
+            if (activeView === 'library') {
+              setColumnCollapsed('folder', false)
+              return
+            }
+            void navigateAfterSave(() => {
+              setActiveView('library')
+              setColumnCollapsed('folder', false)
+            })
+          }}
+          onTemporary={temporary === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('temporary'))}
+          onTrash={trash === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('trash'))}
+          onExpand={() => setColumnCollapsed('folder', false)}
+        />
+      )}
+      {collapsed.noteList && <DirectoryRail count={activeView === 'library' ? library.notes.length : null} onExpand={() => setColumnCollapsed('noteList', false)} />}
       <SplitPane
         defaultSizes={[240, 300]}
         minimumSizes={[180, 220, 420]}
@@ -346,6 +456,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           temporaryInboxActive={activeView === 'temporary'}
           trashActive={activeView === 'trash'}
           state={library.folderState}
+          onCollapse={() => setColumnCollapsed('folder', true)}
           onSelect={(folderId) => void navigateAfterSave(() => {
             setActiveView('library')
             library.selectFolder(folderId)
@@ -363,6 +474,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           <section className="note-list" aria-label="临时收集箱导航">
             <header className="library-pane__header library-pane__header--compact">
               <div><span className="library-pane__eyebrow">临时捕捉</span><h2>收集箱</h2></div>
+              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
             <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>
           </section>
@@ -370,6 +482,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           <section className="note-list" aria-label="回收站导航">
             <header className="library-pane__header library-pane__header--compact">
               <div><span className="library-pane__eyebrow">安全恢复</span><h2>回收站</h2></div>
+              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
             <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
           </section>
@@ -379,9 +492,6 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             activeId={library.activeNoteId}
             state={library.noteListState}
             onSelect={(noteId) => void navigateAfterSave(() => library.selectNote(noteId))}
-            onCreate={(title) => void createFormalNote(title)}
-            creating={createBusy}
-            createError={createError}
             onDelete={trash === undefined ? undefined : (noteId, title) => void deleteFormalNote(noteId, title)}
             deletingId={deletingNoteId}
             deleteError={trashError}
@@ -389,6 +499,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             undoAvailable={recentTrashOperationId !== null}
             undoBusy={trashBusy === 'undo'}
             onUndoDelete={() => void undoFormalDelete()}
+            onCollapse={() => setColumnCollapsed('noteList', true)}
           />
         )}
       </aside>
@@ -408,11 +519,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
         {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
-          <div className="content-placeholder">
-            <span aria-hidden="true" className="content-placeholder__leaf">⌁</span>
-            <p>{APP_TAGLINE}</p>
-            <p>选择一篇笔记开始阅读。</p>
-          </div>
+          <MainWindowEmptyState onCreateNote={openCreatePopover} />
         )}
         {activeView === 'library' && library.document && (
           <EditorPane
@@ -447,6 +554,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onDocumentAdopt={library.adoptDocument}
             initialMode={defaultEditorMode}
             autosaveDelayMs={autosaveDelayMs}
+            onSaveStateChange={reportEditorSaveState}
           />
         )}
         {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
@@ -457,6 +565,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         )}
       </section>
       </SplitPane>
+      </div>
     </div>
   )
 })

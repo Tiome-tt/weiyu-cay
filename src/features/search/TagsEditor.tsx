@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Icon } from '../../shared/Icon'
 import { mergeTags, normalizeTag, TagValidationError } from './query'
 
 interface TagsEditorProps {
@@ -56,13 +57,15 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
         {tags.map((tag) => (
           <span className="tag-chip" key={normalizeTag(tag).normalized}>
             {tag}
-            <button type="button" aria-label={`移除标签 ${tag}`} disabled={busy} onClick={() => void persist(tags.filter((item) => item !== tag))}>×</button>
+            <button type="button" aria-label={`移除标签 ${tag}`} disabled={busy} onClick={() => void persist(tags.filter((item) => item !== tag))}>
+              <Icon name="close" size={12} />
+            </button>
           </span>
         ))}
       </div>
       <form className="tags-editor__form" onSubmit={add}>
         <input aria-label="添加标签" value={input} disabled={busy} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} />
-        <button type="submit" aria-label="添加标签" disabled={busy}>+</button>
+        <button type="submit" aria-label="添加标签" disabled={busy}><Icon name="plus" size={13} /></button>
       </form>
       {message && <span className="tags-editor__message" role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</span>}
     </div>

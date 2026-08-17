@@ -102,6 +102,15 @@ export interface AppLifecyclePort {
   completeClose(generation: number, saved: boolean): Promise<void>
 }
 
+/** Narrow renderer boundary for the frameless main window. */
+export interface WindowChromePort {
+  platform: 'windows' | 'macos'
+  startDragging(): Promise<void>
+  minimize(): Promise<void>
+  toggleMaximize(): Promise<void>
+  requestClose(): Promise<void>
+}
+
 export interface SearchResult {
   noteId: NoteId
   title: string
@@ -239,7 +248,7 @@ export interface TrashPort {
 }
 
 export interface AppSettings {
-  theme: 'forest' | 'sand' | 'system'
+  theme: 'forest' | 'sand' | 'night' | 'system'
   stickyColorMode: 'follow-theme'
   bodyFont: string
   codeFont: string

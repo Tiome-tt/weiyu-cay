@@ -11,10 +11,12 @@ import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } 
 import type { AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, SearchPort, SystemPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
 import { Backlinks } from './Backlinks'
+import { EditorActionsMenu } from './EditorActionsMenu'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
 import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
+import { Icon, type IconName } from '../../shared/Icon'
 
 interface EditorPaneProps {
   document: NoteDocument
@@ -32,6 +34,7 @@ interface EditorPaneProps {
   onRenameNote?(title: string): Promise<RenameNoteResult>
   onMoveNote?(folderId: FolderId | null): Promise<NoteDocument>
   external?: Pick<SystemPort, 'openExternal'>
+  onSaveStateChange?(status: SaveState['status']): void
 }
 
 export interface EditorPaneHandle {
@@ -40,10 +43,10 @@ export interface EditorPaneHandle {
   endEditBarrier: () => void
 }
 
-const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: string }> = [
-  { mode: 'source', label: '源码视图', icon: '<>' },
-  { mode: 'split', label: '分栏视图', icon: '◫' },
-  { mode: 'preview', label: '预览视图', icon: '◉' },
+const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
+  { mode: 'source', label: '源码视图', icon: 'source' },
+  { mode: 'split', label: '分栏视图', icon: 'split' },
+  { mode: 'preview', label: '预览视图', icon: 'preview' },
 ]
 
 const minimumSplitPercent = 25
@@ -65,6 +68,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     onMoveNote,
     external,
     onDocumentAdopt,
+    onSaveStateChange,
     autosaveDelayMs,
     initialMode = 'source',
   },
@@ -87,8 +91,10 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const splitPointerRef = useRef<number | null>(null)
   const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
   const tagRequestRef = useRef(0)
+  const hasSecondaryActions = links !== undefined || (folders !== undefined && onMoveNote !== undefined) || search !== undefined
 
   useEffect(() => setImageError(null), [document.id])
+  useEffect(() => onSaveStateChange?.(autosave.state.status), [autosave.state.status, onSaveStateChange])
   useEffect(() => setTitleDraft(document.title), [document.id, document.title])
   useEffect(() => {
     let current = true
@@ -239,59 +245,83 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           )}
         </div>
         <div className="editor-toolbar__actions">
-          {links && (
-            <div className="editor-link-actions" role="group" aria-label="内部链接">
-              <label>
-                <span className="sr-only">内部链接目标</span>
-                <select
-                  aria-label="内部链接目标"
-                  value={selectedLinkTarget}
-                  disabled={linkTargets.length === 0}
-                  onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
-                >
-                  {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
-                  {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
-                </select>
-              </label>
-              <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('insert')}>插入内部链接</button>
-              <button type="button" disabled={selectedLinkTarget === ''} onClick={() => applyLinkAction('retarget')}>重定向内部链接</button>
-            </div>
-          )}
-          {folders && onMoveNote && (
-            <label>
-              <span className="sr-only">笔记文件夹</span>
-              <select
-                aria-label="笔记文件夹"
-                value={document.folderId ?? ''}
-                disabled={metadataBusy}
-                onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
+          <div className="editor-toolbar__primary">
+            {hasSecondaryActions && (
+              <EditorActionsMenu>
+                {(close) => (
+                  <>
+                    {links && (
+                      <div className="editor-actions-menu__section editor-link-actions" role="group" aria-label="内部链接">
+                        <span className="editor-actions-menu__heading">内部链接</span>
+                        <label>
+                          <span className="sr-only">内部链接目标</span>
+                          <select
+                            aria-label="内部链接目标"
+                            value={selectedLinkTarget}
+                            disabled={linkTargets.length === 0}
+                            onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
+                          >
+                            {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
+                            {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+                          </select>
+                        </label>
+                        <div className="editor-actions-menu__buttons">
+                          <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('insert'); close() }}>插入内部链接</button>
+                          <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('retarget'); close() }}>重定向内部链接</button>
+                        </div>
+                      </div>
+                    )}
+                    {folders && onMoveNote && (
+                      <div className="editor-actions-menu__section" role="group" aria-label="目录">
+                        <span className="editor-actions-menu__heading">目录</span>
+                        <label>
+                          <span className="sr-only">笔记文件夹</span>
+                          <select
+                            aria-label="笔记文件夹"
+                            value={document.folderId ?? ''}
+                            disabled={metadataBusy}
+                            onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
+                          >
+                            <option value="">未归档笔记</option>
+                            {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                    {search && (
+                      <div className="editor-actions-menu__section" role="group" aria-label="标签">
+                        <span className="editor-actions-menu__heading">标签</span>
+                        <TagsEditor tags={document.tags} onChange={updateTags} />
+                      </div>
+                    )}
+                  </>
+                )}
+              </EditorActionsMenu>
+            )}
+            <CompactSaveStatus state={autosave.state} />
+            {modes.map((item) => (
+              <button
+                key={item.mode}
+                type="button"
+                className="editor-mode-button"
+                aria-label={item.label}
+                aria-pressed={mode === item.mode}
+                title={item.label}
+                onClick={() => setMode(item.mode)}
               >
-                <option value="">未归档笔记</option>
-                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-              </select>
-            </label>
-          )}
-          {search && <TagsEditor tags={document.tags} onChange={updateTags} />}
-          <SaveStatus state={autosave.state} />
-          {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
-          {modes.map((item) => (
-            <button
-              key={item.mode}
-              type="button"
-              className="editor-mode-button"
-              aria-label={item.label}
-              aria-pressed={mode === item.mode}
-              title={item.label}
-              onClick={() => setMode(item.mode)}
-            >
-              <span aria-hidden="true">{item.icon}</span>
-            </button>
-          ))}
+                <Icon name={item.icon} size={17} />
+              </button>
+            ))}
+          </div>
         </div>
       </header>
-      {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
-      {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
-      {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
+      <div className="editor-notices">
+        {autosave.state.status === 'error' && <SaveStatus state={autosave.state} />}
+        {imageError && <p className="editor-metadata-status editor-save--error" role="alert">{imageError}</p>}
+        {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
+        {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
+        {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
+      </div>
       <div
         className={`editor-document editor-document--${mode}`}
         style={
@@ -371,7 +401,24 @@ function SaveStatus({ state }: { state: SaveState }) {
           status: state.status === 'saved' ? 'success' : 'status',
           message: { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status],
         }
-  return <StatusNotice state={notice} className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`} />
+  return <StatusNotice state={notice} className="editor-metadata-status editor-save-notice editor-save--error" />
+}
+
+function CompactSaveStatus({ state }: { state: SaveState }) {
+  if (state.status === 'idle') return null
+  const message = state.status === 'error'
+    ? '保存失败'
+    : { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status]
+  return (
+    <span
+      className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`}
+      role="status"
+      aria-label={state.status === 'error' ? '保存失败' : '保存状态'}
+      aria-live="polite"
+    >
+      {message}
+    </span>
+  )
 }
 
 function syncScrollPosition(source: HTMLElement, target: HTMLElement, sourceTop: number) {

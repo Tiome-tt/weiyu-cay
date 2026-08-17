@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SplitPane } from './SplitPane'
 
@@ -67,7 +67,7 @@ describe('SplitPane', () => {
     fireEvent.pointerMove(dividers[1], { clientX: 620, pointerId: 8 })
     fireEvent.pointerCancel(dividers[1], { pointerId: 8 })
 
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '372px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '373px' })
     expect(onCommit).toHaveBeenCalledTimes(1)
   })
 
@@ -95,8 +95,8 @@ describe('SplitPane', () => {
     })
     const { dividers } = renderPane()
 
-    expect(dividers[0]).toHaveAttribute('aria-valuemax', '464')
-    expect(dividers[1]).toHaveAttribute('aria-valuemax', '524')
+    expect(dividers[0]).toHaveAttribute('aria-valuemax', '466')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '526')
   })
 
   it('fits defaults into a narrow container while preserving every minimum', () => {
@@ -114,8 +114,9 @@ describe('SplitPane', () => {
     renderPane()
 
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '224px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '226px' })
     expect(screen.getByTestId('third-pane')).toHaveStyle({ width: '420px' })
+    expect(screen.getAllByRole('separator')[0].closest('.split-pane')).toHaveStyle({ '--split-pane-divider-width': '7px' })
   })
 
   it('clamps folder, note-list, and editor panes to their minimum widths', () => {
@@ -169,9 +170,9 @@ describe('SplitPane', () => {
     fireEvent.pointerUp(dividers[1], { pointerId: 9 })
 
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '324px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '326px' })
     expect(dividers[0]).toHaveAttribute('aria-valuemax', '240')
-    expect(dividers[1]).toHaveAttribute('aria-valuemax', '324')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '326')
   })
 
   it('restores the applicable default on double click and has no visible instructions', () => {
@@ -203,5 +204,77 @@ describe('SplitPane', () => {
       <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
     </SplitPane>)
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '256px' })
+  })
+
+  it('removes a collapsed divider from layout and preserves its resized width through narrow measurements', () => {
+    let width = 1200
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }))
+    let notifyResize: ResizeObserverCallback | null = null
+    class ResizeObserverDouble implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { notifyResize = callback }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverDouble)
+    const children = [
+      <div data-testid="first-pane" key="first" />,
+      <div data-testid="second-pane" key="second" />,
+      <div data-testid="third-pane" key="third" />,
+    ]
+    const { rerender } = render(
+      <SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels}>{children}</SplitPane>,
+    )
+    fireEvent.keyDown(screen.getAllByRole('separator')[0], { key: 'ArrowRight' })
+    fireEvent.keyDown(screen.getAllByRole('separator')[0], { key: 'ArrowRight' })
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '272px' })
+
+    rerender(<SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[true, false]}>{children}</SplitPane>)
+    width = 700
+    act(() => notifyResize?.([], {} as ResizeObserver))
+
+    const collapsedDivider = screen.getAllByRole('separator', { hidden: true })[0]
+    expect(collapsedDivider).toHaveStyle({ width: '0px' })
+    expect(collapsedDivider).toHaveAttribute('tabindex', '-1')
+    width = 1200
+    rerender(<SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels}>{children}</SplitPane>)
+    act(() => notifyResize?.([], {} as ResizeObserver))
+    expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '272px' })
+  })
+
+  it('pointer-resizes the directory from its effective origin while the remembered folder track is collapsed', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    render(
+      <SplitPane defaultSizes={[240, 300]} minimumSizes={[180, 220, 420]} dividerLabels={labels} collapsed={[true, false]}>
+        <div data-testid="first-pane" /><div data-testid="second-pane" /><div data-testid="third-pane" />
+      </SplitPane>,
+    )
+    const directoryDivider = screen.getByRole('separator', { name: '调整笔记列表栏宽度' })
+
+    fireEvent.pointerDown(directoryDivider, { clientX: 300, pointerId: 12 })
+    fireEvent.pointerMove(directoryDivider, { clientX: 360, pointerId: 12 })
+    fireEvent.pointerUp(directoryDivider, { pointerId: 12 })
+
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '360px' })
   })
 })

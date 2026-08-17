@@ -1,15 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
-import { StatusNotice } from '../../shared/StatusNotice'
+import { Icon } from '../../shared/Icon'
 
 interface NoteListProps {
   notes: NoteSummary[]
   activeId: NoteId | null
   state: 'loading' | 'ready' | 'error'
   onSelect: (id: NoteId) => void
-  onCreate?: (title: string) => void
-  creating?: boolean
-  createError?: boolean
   onDelete?: (id: NoteId, title: string) => void
   deletingId?: NoteId | null
   deleteError?: string | null
@@ -17,26 +14,14 @@ interface NoteListProps {
   undoAvailable?: boolean
   undoBusy?: boolean
   onUndoDelete?: () => void
+  onCollapse?: () => void
 }
 
-export function NoteList({ notes, activeId, state, onSelect, onCreate, creating = false, createError = false, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete }: NoteListProps) {
+export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onCollapse }: NoteListProps) {
   const feedbackRef = useRef<HTMLParagraphElement>(null)
-  const [creatingForm, setCreatingForm] = useState(false)
-  const [newTitle, setNewTitle] = useState('')
-  const [lastSubmittedTitle, setLastSubmittedTitle] = useState('')
   useEffect(() => {
     if (deleteFeedback !== null) feedbackRef.current?.focus()
   }, [deleteFeedback])
-
-  const submitCreate = (event: FormEvent) => {
-    event.preventDefault()
-    const title = newTitle.trim()
-    if (onCreate === undefined || title.length === 0 || creating) return
-    setLastSubmittedTitle(title)
-    setCreatingForm(false)
-    setNewTitle('')
-    onCreate(title)
-  }
 
   return (
     <section aria-label="笔记列表" className="note-list">
@@ -45,39 +30,14 @@ export function NoteList({ notes, activeId, state, onSelect, onCreate, creating 
           <span className="library-pane__eyebrow">当前文件夹</span>
           <h2>笔记</h2>
         </div>
-        {onCreate && (
-          <button className="icon-button" type="button" aria-label="新建笔记" disabled={creating} onClick={() => setCreatingForm(true)}>
-            <span aria-hidden="true">+</span>
-          </button>
-        )}
+        <div className="library-pane__header-actions">
+          {onCollapse && (
+            <button className="icon-button" type="button" aria-label="折叠目录" onClick={onCollapse}>
+              <Icon name="collapse" size={18} />
+            </button>
+          )}
+        </div>
       </header>
-      {creatingForm && onCreate && (
-        <form className="note-list__create" onSubmit={submitCreate}>
-          <label>
-            <span>新笔记标题</span>
-            <input
-              aria-label="新笔记标题"
-              autoFocus
-              value={newTitle}
-              onChange={(event) => setNewTitle(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  setCreatingForm(false)
-                  setNewTitle('')
-                }
-              }}
-            />
-          </label>
-          <button type="submit" disabled={creating || newTitle.trim().length === 0}>创建</button>
-          <button type="button" onClick={() => { setCreatingForm(false); setNewTitle('') }}>取消</button>
-        </form>
-      )}
-      {createError && onCreate && (
-        <StatusNotice
-          className="library-status library-status--error"
-          state={{ status: 'error', message: '无法新建笔记。', retry: () => onCreate(lastSubmittedTitle), retryLabel: '重试新建笔记' }}
-        />
-      )}
       {deleteFeedback && (
         <div className="note-list__mutation-status">
           <p ref={feedbackRef} role="status" tabIndex={-1}>{deleteFeedback}</p>
@@ -110,7 +70,7 @@ export function NoteList({ notes, activeId, state, onSelect, onCreate, creating 
                   disabled={deletingId !== null || undoBusy}
                   onClick={() => onDelete(note.id, note.title)}
                 >
-                  {deletingId === note.id ? '…' : '×'}
+                  {deletingId === note.id ? '…' : <Icon name="close" size={14} />}
                 </button>
               )}
             </li>

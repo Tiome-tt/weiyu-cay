@@ -1,0 +1,31 @@
+interface AppIconProps {
+  size?: number
+  decorative?: boolean
+}
+
+/** The product mark uses a front-facing island so it remains distinct from generic wave icons. */
+export function AppIcon({ size = 24, decorative = true }: AppIconProps) {
+  const includeStar = size > 16
+
+  return (
+    <svg
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : '微屿'}
+      data-testid="weiyu-app-icon"
+      height={size}
+      role={decorative ? undefined : 'img'}
+      viewBox="0 0 64 64"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect data-layer="sea" fill="#2F7866" height="56" rx="17" width="56" x="4" y="4" />
+      {includeStar ? <path data-layer="star" d="m32 11.5 1.25 3.1 3.15 1.25-3.15 1.2L32 20.2l-1.2-3.15-3.15-1.2 3.15-1.25Z" fill="#D59A5E" /> : null}
+      <path data-layer="island" d="M13 41c1.9-8.85 8.3-14.4 19-14.4S49.1 32.15 51 41Z" fill="#4F8A66" />
+      <path data-layer="sand" d="M10.5 41.25c6.55-2.85 12.2-3.8 21.5-3.8s14.95.95 21.5 3.8v4.6c-6.3 2.1-13.65 3.15-21.5 3.15s-15.2-1.05-21.5-3.15Z" fill="#D59A5E" />
+      <g data-layer="waves" fill="none" stroke="#D5F0E9" strokeLinecap="round" strokeWidth="2.35">
+        <path d="M12 47.25c3.2 1.8 6.4 1.8 9.6 0 3.2-1.8 6.4-1.8 9.6 0 3.2 1.8 6.4 1.8 9.6 0 3.2-1.8 6.4-1.8 9.6 0" />
+        <path d="M15 52c2.85 1.55 5.7 1.55 8.55 0 2.85-1.55 5.7-1.55 8.55 0 2.85 1.55 5.7 1.55 8.55 0 2.85-1.55 5.7-1.55 8.55 0" opacity=".82" />
+      </g>
+    </svg>
+  )
+}

@@ -19,6 +19,11 @@ function view() {
   return editor
 }
 
+function openMoreActions() {
+  fireEvent.click(screen.getByRole('button', { name: '笔记更多操作' }))
+  return screen.getByRole('menu', { name: '笔记操作' })
+}
+
 describe('EditorPane', () => {
   it('inserts and retargets escaped stable links through keyboard-reachable controls', async () => {
     const first = {
@@ -37,13 +42,15 @@ describe('EditorPane', () => {
     const user = userEvent.setup()
     render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} linkCache={new Map()} />)
 
+    openMoreActions()
     const target = await screen.findByRole('combobox', { name: '内部链接目标' })
     await user.selectOptions(target, first.id)
-    await user.click(screen.getByRole('button', { name: '插入内部链接' }))
+    await user.click(screen.getByRole('menuitem', { name: '插入内部链接' }))
     expect(view().state.doc.toString()).toBe(`[[A\\|B\\[1\\]|${first.id}]]`)
 
-    await user.selectOptions(target, second.id)
-    await user.click(screen.getByRole('button', { name: '重定向内部链接' }))
+    openMoreActions()
+    await user.selectOptions(screen.getByRole('combobox', { name: '内部链接目标' }), second.id)
+    await user.click(screen.getByRole('menuitem', { name: '重定向内部链接' }))
     expect(view().state.doc.toString()).toBe(`[[Second|${second.id}]]`)
     expect(screen.getByRole('link', { name: '[[Second]]' })).toBeVisible()
   })
@@ -52,6 +59,23 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('# Preview')} notes={fakeNotePort()} initialMode="preview" autosaveDelayMs={10_000} />)
     expect(screen.getByRole('button', { name: '预览视图' })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('reports autosave state to the global toolbar while preserving detailed editor errors', async () => {
+    const onSaveStateChange = vi.fn()
+    render(
+      <EditorPane
+        document={note('')}
+        notes={fakeNotePort()}
+        onSaveStateChange={onSaveStateChange}
+        autosaveDelayMs={10_000}
+      />,
+    )
+
+    act(() => view().dispatch({ changes: { from: 0, insert: '新的正文' } }))
+
+    await waitFor(() => expect(onSaveStateChange).toHaveBeenCalledWith('dirty'))
+  })
+
   it('places the note title and exactly three primary view controls in the editor toolbar', () => {
     render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} assets={fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 })} />)
 
@@ -62,10 +86,77 @@ describe('EditorPane', () => {
       const button = within(toolbar).getByRole('button', { name: label })
       expect(button).toHaveAttribute('title', label)
     })
+    expect(within(toolbar).getByTestId('icon-source')).toBeVisible()
+    expect(within(toolbar).getByTestId('icon-split')).toBeVisible()
+    expect(within(toolbar).getByTestId('icon-preview')).toBeVisible()
     expect(within(toolbar).getByRole('button', { name: labels[0] })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
+  })
+
+  it('collects secondary metadata controls in a keyboard-discoverable more menu', async () => {
+    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([]) })
+    render(
+      <EditorPane
+        document={{ ...note('# Goal'), title: 'Goal' }}
+        notes={fakeNotePort()}
+        links={links}
+        folders={[]}
+        onMoveNote={vi.fn()}
+        search={fakeSearchPort()}
+      />,
+    )
+
+    const user = userEvent.setup()
+    const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
+    const primary = toolbar.querySelector('.editor-toolbar__primary') as HTMLElement
+    const trigger = within(primary).getByRole('button', { name: '笔记更多操作' })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(within(trigger).getByTestId('icon-more')).toBeVisible()
+    labels.forEach((label) => expect(within(primary).getByRole('button', { name: label })).toBeVisible())
+
+    await user.click(trigger)
+    const menu = screen.getByRole('menu', { name: '笔记操作' })
+    expect(toolbar).toContainElement(menu)
+    const linkTarget = within(menu).getByRole('combobox', { name: '内部链接目标' })
+    const folderTarget = within(menu).getByRole('combobox', { name: '笔记文件夹' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(folderTarget).toHaveFocus()
+    expect(linkTarget).toBeDisabled()
+    expect(within(menu).getByRole('menuitem', { name: '插入内部链接' })).toBeDisabled()
+    expect(within(menu).getByRole('menuitem', { name: '重定向内部链接' })).toBeDisabled()
+    expect(folderTarget).toBeEnabled()
+    expect(within(menu).getByRole('textbox', { name: '添加标签' })).toBeEnabled()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    const reopened = screen.getByRole('menu', { name: '笔记操作' })
+    const lastControl = within(reopened).getByRole('button', { name: '添加标签' })
+    lastControl.focus()
+    await user.tab()
+    expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
+    expect(within(primary).getByRole('button', { name: '源码视图' })).toHaveFocus()
+  })
+
+  it('assigns notices, document, and backlinks to stable editor grid regions', () => {
+    render(
+      <EditorPane
+        document={note('# Goal')}
+        notes={fakeNotePort()}
+        links={fakeLinkPort()}
+        onNavigateNote={vi.fn()}
+      />,
+    )
+
+    const pane = screen.getByRole('toolbar', { name: '编辑器视图' }).parentElement
+    expect(pane?.querySelector(':scope > .editor-notices')).not.toBeNull()
+    expect(pane?.querySelector(':scope > .editor-document')).not.toBeNull()
+    expect(pane?.querySelector(':scope > .backlinks')).not.toBeNull()
   })
 
   it('keeps one document while switching source, split, and preview modes', async () => {
@@ -187,7 +278,15 @@ describe('EditorPane', () => {
     })
 
     const alert = await screen.findByRole('alert')
+    const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
+    const compactStatus = within(toolbar).getByRole('status', { name: '保存失败' })
+    expect(compactStatus).toHaveTextContent('保存失败')
+    expect(compactStatus).not.toHaveTextContent('The note could not be saved')
+
+    expect(toolbar).not.toContainElement(alert)
+    expect(alert.closest('.editor-notices')).not.toBeNull()
     expect(alert).not.toHaveTextContent('private storage detail')
+    expect(alert).toHaveTextContent('The note could not be saved. Your changes are kept locally.')
     const retry = within(alert).getByRole('button', { name: '重试保存' })
     retry.focus()
     expect(retry).toHaveFocus()
@@ -232,6 +331,7 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
     act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'draft' } }))
 
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
     await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
@@ -249,6 +349,7 @@ describe('EditorPane', () => {
     const { rerender } = render(
       <EditorPane document={note('A')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} />,
     )
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
 
@@ -279,6 +380,7 @@ describe('EditorPane', () => {
     const user = userEvent.setup()
     render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
     act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'saved draft' } }))
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
 
@@ -295,6 +397,7 @@ describe('EditorPane', () => {
     const user = userEvent.setup()
     render(<EditorPane document={note('kept')} notes={fakeNotePort()} search={search} />)
 
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await screen.findByRole('alert')
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveAttribute('contenteditable', 'true'))
@@ -321,6 +424,7 @@ describe('EditorPane', () => {
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
 
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     expect(search.updateTags).not.toHaveBeenCalled()
     await act(async () => resolveImage({ relativePath: 'assets/before-lock.png', width: 1, height: 1 }))
@@ -339,6 +443,7 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('kept')} notes={fakeNotePort()} assets={assets} search={search} onDocumentAdopt={vi.fn()} />)
     fireEvent.paste(view().contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     expect(search.updateTags).not.toHaveBeenCalled()
 
@@ -372,6 +477,7 @@ describe('EditorPane', () => {
     source.dispatch({ selection: EditorSelection.range(7, 13) })
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
     await act(async () => resolveSecond({ relativePath: 'assets/second.png', width: 1, height: 1 }))
@@ -403,6 +509,7 @@ describe('EditorPane', () => {
     source.dispatch({ selection: EditorSelection.cursor(2) })
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
+    openMoreActions()
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
     await act(async () => resolveCursor({ relativePath: 'assets/cursor.png', width: 1, height: 1 }))

@@ -33,6 +33,7 @@ const MUTATION_LOCK: &str = ".index-mutation.lock";
 pub enum AppTheme {
     Forest,
     Sand,
+    Night,
     System,
 }
 
@@ -41,6 +42,7 @@ impl AppTheme {
         match self {
             Self::Forest => "forest",
             Self::Sand => "sand",
+            Self::Night => "night",
             Self::System => "system",
         }
     }

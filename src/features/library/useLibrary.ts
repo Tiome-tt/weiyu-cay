@@ -109,9 +109,9 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     [foldersPort, refreshFolders],
   )
 
-  const createNote = useCallback(async (title: string) => {
+  const createNote = useCallback(async (title: string, folderId: FolderId | null = activeFolderId) => {
     const request = ++noteRequest.current
-    const created = await notesPort.createNote({ folderId: activeFolderId, title })
+    const created = await notesPort.createNote({ folderId, title })
     if (!mountedRef.current || noteRequest.current !== request) return
     setActiveNoteId(created.id)
     setDocument(created)

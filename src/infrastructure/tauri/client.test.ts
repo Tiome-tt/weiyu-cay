@@ -1,16 +1,56 @@
 import { invoke } from '@tauri-apps/api/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TauriClient } from './client'
 import { createTauriPorts } from './ports'
 import type { NoteId } from '../../domain/model'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: vi.fn() }))
 
 const invokeMock = vi.mocked(invoke)
+const currentWindowMock = vi.mocked(getCurrentWebviewWindow)
+const nativeWindow = {
+  close: vi.fn().mockResolvedValue(undefined),
+  listen: vi.fn().mockResolvedValue(() => undefined),
+  minimize: vi.fn().mockResolvedValue(undefined),
+  startDragging: vi.fn().mockResolvedValue(undefined),
+  toggleMaximize: vi.fn().mockResolvedValue(undefined),
+}
 
 describe('TauriClient', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
   beforeEach(() => {
     invokeMock.mockReset()
+    currentWindowMock.mockReset()
+    currentWindowMock.mockReturnValue(nativeWindow as never)
+    for (const method of [nativeWindow.close, nativeWindow.listen, nativeWindow.minimize, nativeWindow.startDragging, nativeWindow.toggleMaximize]) {
+      method.mockClear()
+    }
+  })
+
+  it('routes main-window chrome through the current Tauri webview window', async () => {
+    const { windowChrome } = createTauriPorts()
+
+    await windowChrome.startDragging()
+    await windowChrome.minimize()
+    await windowChrome.toggleMaximize()
+    await windowChrome.requestClose()
+
+    expect(nativeWindow.startDragging).toHaveBeenCalledOnce()
+    expect(nativeWindow.minimize).toHaveBeenCalledOnce()
+    expect(nativeWindow.toggleMaximize).toHaveBeenCalledOnce()
+    expect(nativeWindow.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'windows'],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15', 'macos'],
+  ] as const)('normalizes the Tauri WebView user agent to %s window chrome', (userAgent, platform) => {
+    vi.stubGlobal('navigator', { userAgent })
+
+    expect(createTauriPorts().windowChrome.platform).toBe(platform)
   })
 
   it('forwards a typed command and its arguments through the sole invoke boundary', async () => {
