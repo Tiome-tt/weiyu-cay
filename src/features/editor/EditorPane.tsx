@@ -298,8 +298,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
                 )}
               </EditorActionsMenu>
             )}
-            <SaveStatus state={autosave.state} />
-            {imageError && <span className="editor-save editor-save--error" role="alert">{imageError}</span>}
+            <CompactSaveStatus state={autosave.state} />
             {modes.map((item) => (
               <button
                 key={item.mode}
@@ -317,6 +316,8 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         </div>
       </header>
       <div className="editor-notices">
+        {autosave.state.status === 'error' && <SaveStatus state={autosave.state} />}
+        {imageError && <p className="editor-metadata-status editor-save--error" role="alert">{imageError}</p>}
         {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
         {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
         {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
@@ -400,7 +401,24 @@ function SaveStatus({ state }: { state: SaveState }) {
           status: state.status === 'saved' ? 'success' : 'status',
           message: { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status],
         }
-  return <StatusNotice state={notice} className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`} />
+  return <StatusNotice state={notice} className="editor-metadata-status editor-save-notice editor-save--error" />
+}
+
+function CompactSaveStatus({ state }: { state: SaveState }) {
+  if (state.status === 'idle') return null
+  const message = state.status === 'error'
+    ? '保存失败'
+    : { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status]
+  return (
+    <span
+      className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`}
+      role="status"
+      aria-label={state.status === 'error' ? '保存失败' : '保存状态'}
+      aria-live="polite"
+    >
+      {message}
+    </span>
+  )
 }
 
 function syncScrollPosition(source: HTMLElement, target: HTMLElement, sourceTop: number) {

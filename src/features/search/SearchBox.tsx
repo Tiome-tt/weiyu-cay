@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import type { NoteId } from '../../domain/model'
 import type { SearchPort, SearchResult } from '../../domain/ports'
 import { parseSearchQuery } from './query'
@@ -7,13 +7,14 @@ import { SearchResults } from './SearchResults'
 interface SearchBoxProps {
   search: SearchPort
   onSelect: (noteId: NoteId) => void
+  dismissSignal?: number
 }
 
 type SearchState = 'idle' | 'loading' | 'empty' | 'invalid' | 'error'
 
 const SEARCH_DELAY_MS = 180
 
-export function SearchBox({ search, onSelect }: SearchBoxProps) {
+export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProps) {
   const [input, setInput] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [state, setState] = useState<SearchState>('idle')
@@ -22,10 +23,24 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
   const [activeIndex, setActiveIndex] = useState(-1)
   const [retryRequest, setRetryRequest] = useState(0)
   const generation = useRef(0)
+  const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const resultsId = useId()
 
+  const close = useCallback((restoreFocus = false) => {
+    generation.current += 1
+    setDismissed(true)
+    setResults([])
+    setState('idle')
+    setActiveIndex(-1)
+    if (restoreFocus) inputRef.current?.focus()
+  }, [])
+
   useEffect(() => () => { generation.current += 1 }, [])
+
+  useEffect(() => {
+    if (dismissSignal > 0) close()
+  }, [close, dismissSignal])
 
   useEffect(() => {
     const request = ++generation.current
@@ -62,15 +77,6 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
     return () => window.clearTimeout(timer)
   }, [input, retryRequest, search])
 
-  const close = (restoreFocus = false) => {
-    generation.current += 1
-    setDismissed(true)
-    setResults([])
-    setState('idle')
-    setActiveIndex(-1)
-    if (restoreFocus) inputRef.current?.focus()
-  }
-
   const select = (noteId: NoteId) => {
     close()
     onSelect(noteId)
@@ -106,8 +112,18 @@ export function SearchBox({ search, onSelect }: SearchBoxProps) {
 
   const open = !dismissed && (state !== 'idle' || results.length > 0)
 
+  useEffect(() => {
+    if (!open) return
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && !rootRef.current?.contains(target)) close()
+    }
+    document.addEventListener('pointerdown', dismissOutside)
+    return () => document.removeEventListener('pointerdown', dismissOutside)
+  }, [close, open])
+
   return (
-    <div className="library-search" onKeyDown={onKeyDown}>
+    <div ref={rootRef} className="library-search" onKeyDown={onKeyDown}>
       <input
         ref={inputRef}
         type="search"

@@ -1,12 +1,12 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fakeSearchPort } from '../../test/fakes'
 import { GlobalToolbar } from './GlobalToolbar'
 
 describe('GlobalToolbar', () => {
-  afterEach(cleanup)
+  afterEach(() => { cleanup(); vi.useRealTimers() })
 
   it('renders branding once and keeps search between balanced semantic side tracks', () => {
     render(
@@ -64,5 +64,42 @@ describe('GlobalToolbar', () => {
     )
     await user.click(screen.getByRole('button', { name: '更新已安装，需要重启，打开设置' }))
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('dismisses search results before opening create or settings surfaces', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({
+      search: vi.fn().mockResolvedValue([{
+        noteId: '019c0000-0000-7000-8000-000000000061',
+        title: '搜索结果',
+        folderBreadcrumb: [],
+        tags: [],
+        excerpt: '',
+        score: 1,
+      }]),
+    })
+    render(
+      <GlobalToolbar
+        search={search}
+        saveState="hidden"
+        updateAttention="none"
+        onSelectResult={vi.fn()}
+        onCreateNote={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+    const field = screen.getByRole('searchbox', { name: '搜索笔记' })
+
+    fireEvent.change(field, { target: { value: '搜索' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '新建笔记' }))
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+
+    fireEvent.change(field, { target: { value: '搜索设置' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '打开设置' }))
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 })

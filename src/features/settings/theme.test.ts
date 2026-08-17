@@ -61,14 +61,28 @@ describe('settings theme', () => {
   it('provides every main-window color token for each palette', () => {
     const requiredTokens = [
       '--color-canvas', '--color-surface', '--color-panel', '--color-panel-warm',
-      '--color-accent', '--color-accent-strong', '--color-accent-soft', '--color-accent-border',
+      '--color-accent', '--color-accent-strong', '--color-accent-strong-hover', '--color-on-accent',
+      '--color-accent-soft', '--color-accent-border',
       '--color-accent-haze', '--color-warm', '--color-text', '--color-heading', '--color-muted',
-      '--color-muted-light', '--color-error', '--color-focus', '--color-focus-soft', '--color-border',
+      '--color-muted-light', '--color-error', '--color-on-error', '--color-focus', '--color-focus-soft', '--color-border',
       '--color-border-soft', '--theme-note-accent',
     ]
     for (const theme of ['forest', 'sand', 'night', 'system'] as const) {
       const palette = themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme }, 'dark')
       for (const token of requiredTokens) expect(palette[token]).toBeTruthy()
+    }
+  })
+
+  it('keeps primary and destructive action text legible in night and system-dark themes', () => {
+    const darkPalettes = [
+      themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme: 'night' }),
+      themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme: 'system' }, 'dark'),
+    ]
+
+    for (const palette of darkPalettes) {
+      expect(contrastRatio(palette['--color-on-accent'], palette['--color-accent-strong'])).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(palette['--color-on-accent'], palette['--color-accent-strong-hover'])).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(palette['--color-on-error'], palette['--color-error'])).toBeGreaterThanOrEqual(4.5)
     }
   })
 
@@ -81,3 +95,14 @@ describe('settings theme', () => {
     })
   })
 })
+
+function contrastRatio(first: string, second: string) {
+  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+function relativeLuminance(hex: string) {
+  const channels = [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255)
+  const linear = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+}

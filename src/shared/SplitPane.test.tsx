@@ -67,7 +67,7 @@ describe('SplitPane', () => {
     fireEvent.pointerMove(dividers[1], { clientX: 620, pointerId: 8 })
     fireEvent.pointerCancel(dividers[1], { pointerId: 8 })
 
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '372px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '373px' })
     expect(onCommit).toHaveBeenCalledTimes(1)
   })
 
@@ -95,8 +95,8 @@ describe('SplitPane', () => {
     })
     const { dividers } = renderPane()
 
-    expect(dividers[0]).toHaveAttribute('aria-valuemax', '464')
-    expect(dividers[1]).toHaveAttribute('aria-valuemax', '524')
+    expect(dividers[0]).toHaveAttribute('aria-valuemax', '466')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '526')
   })
 
   it('fits defaults into a narrow container while preserving every minimum', () => {
@@ -114,8 +114,9 @@ describe('SplitPane', () => {
     renderPane()
 
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '224px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '226px' })
     expect(screen.getByTestId('third-pane')).toHaveStyle({ width: '420px' })
+    expect(screen.getAllByRole('separator')[0].closest('.split-pane')).toHaveStyle({ '--split-pane-divider-width': '7px' })
   })
 
   it('clamps folder, note-list, and editor panes to their minimum widths', () => {
@@ -169,9 +170,9 @@ describe('SplitPane', () => {
     fireEvent.pointerUp(dividers[1], { pointerId: 9 })
 
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '324px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '326px' })
     expect(dividers[0]).toHaveAttribute('aria-valuemax', '240')
-    expect(dividers[1]).toHaveAttribute('aria-valuemax', '324')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '326')
   })
 
   it('restores the applicable default on double click and has no visible instructions', () => {

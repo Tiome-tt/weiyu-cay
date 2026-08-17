@@ -438,7 +438,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           onExpand={() => setColumnCollapsed('folder', false)}
         />
       )}
-      {collapsed.noteList && <DirectoryRail count={library.notes.length} onExpand={() => setColumnCollapsed('noteList', false)} />}
+      {collapsed.noteList && <DirectoryRail count={activeView === 'library' ? library.notes.length : null} onExpand={() => setColumnCollapsed('noteList', false)} />}
       <SplitPane
         defaultSizes={[240, 300]}
         minimumSizes={[180, 220, 420]}

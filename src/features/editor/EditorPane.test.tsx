@@ -278,7 +278,15 @@ describe('EditorPane', () => {
     })
 
     const alert = await screen.findByRole('alert')
+    const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
+    const compactStatus = within(toolbar).getByRole('status', { name: '保存失败' })
+    expect(compactStatus).toHaveTextContent('保存失败')
+    expect(compactStatus).not.toHaveTextContent('The note could not be saved')
+
+    expect(toolbar).not.toContainElement(alert)
+    expect(alert.closest('.editor-notices')).not.toBeNull()
     expect(alert).not.toHaveTextContent('private storage detail')
+    expect(alert).toHaveTextContent('The note could not be saved. Your changes are kept locally.')
     const retry = within(alert).getByRole('button', { name: '重试保存' })
     retry.focus()
     expect(retry).toHaveFocus()

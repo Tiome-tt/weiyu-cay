@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react'
 
-const DIVIDER_WIDTH = 8
+const DIVIDER_WIDTH = 7
 const KEYBOARD_STEP = 16
 
 export type SplitPaneSizes = readonly [first: number, second: number]
@@ -188,7 +188,11 @@ export function SplitPane({
   const paneWidths = [visibleFirst, visibleSecond, thirdWidth] as const
 
   return (
-    <div ref={containerRef} className="split-pane">
+    <div
+      ref={containerRef}
+      className="split-pane"
+      style={{ '--split-pane-divider-width': `${DIVIDER_WIDTH}px` } as CSSProperties}
+    >
       {panes.map((pane, index) => {
         const element = pane as PaneElement
         const paneStyle: CSSProperties = {

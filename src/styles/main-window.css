@@ -54,7 +54,7 @@
 }
 
 .main-window .window-control--close:hover {
-  color: #fff;
+  color: var(--color-on-error);
   background: var(--color-error);
 }
 
@@ -185,14 +185,17 @@
   height: 32px;
   gap: 5px;
   padding: 0 11px;
-  color: #fff;
+  color: var(--color-on-accent);
   font-size: .82rem;
   font-weight: 680;
   background: var(--color-accent-strong);
   border-color: var(--color-accent-strong);
 }
 
-.main-window .global-toolbar__create:hover { filter: brightness(.95); }
+.main-window .global-toolbar__create:hover {
+  background: var(--color-accent-strong-hover);
+  border-color: var(--color-accent-strong-hover);
+}
 
 .main-window .global-toolbar__attention-mark {
   width: 8px;
@@ -318,7 +321,8 @@
 .main-window .create-note-popover__actions button,
 .main-window .folder-move button,
 .main-window .note-list__mutation-status button,
-.main-window .editor-save button {
+.main-window .editor-save button,
+.main-window .editor-save-notice button {
   min-height: 30px;
   padding: 5px 10px;
   color: var(--color-heading);
@@ -329,9 +333,14 @@
 }
 
 .main-window .create-note-popover__actions button[type="submit"] {
-  color: #fff;
+  color: var(--color-on-accent);
   background: var(--color-accent-strong);
   border-color: var(--color-accent-strong);
+}
+
+.main-window .create-note-popover__actions button[type="submit"]:hover {
+  background: var(--color-accent-strong-hover);
+  border-color: var(--color-accent-strong-hover);
 }
 
 .main-window .folder-action-menu { position: relative; }
@@ -445,8 +454,8 @@
 .main-window .editor-split-divider {
   position: relative;
   z-index: 2;
-  flex: 0 0 7px;
-  width: 7px;
+  flex: 0 0 var(--split-pane-divider-width, 7px);
+  width: var(--split-pane-divider-width, 7px);
   cursor: col-resize;
   touch-action: none;
   outline: 0;
@@ -717,12 +726,17 @@
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  color: #fff;
+  color: var(--color-on-accent);
   font-weight: 670;
   background: var(--color-accent-strong);
   border: 1px solid var(--color-accent-strong);
   border-radius: 9px;
   cursor: pointer;
+}
+
+.main-window .main-window-empty-state__action:hover {
+  background: var(--color-accent-strong-hover);
+  border-color: var(--color-accent-strong-hover);
 }
 
 .main-window .editor-pane {
@@ -887,7 +901,6 @@
 
 .main-window .editor-save { gap: 5px; color: var(--color-muted); font-size: .7rem; white-space: nowrap; }
 .main-window .editor-save--error { color: var(--color-error); }
-.main-window .editor-save--error > span { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .main-window .editor-metadata-status {
   margin: 0;
@@ -897,6 +910,20 @@
   background: var(--color-panel);
   border-bottom: 1px solid var(--color-border-soft);
 }
+
+.main-window .editor-save-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.main-window .editor-save-notice > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.main-window .editor-save-notice > button { flex: 0 0 auto; }
 
 .main-window .editor-notices { grid-area: notices; min-height: 0; }
 

@@ -176,4 +176,24 @@ describe('SearchBox', () => {
     expect(search.search).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('button', { name: /重试结果/ })).toBeVisible()
   })
+
+  it('dismisses results on an outside pointer interaction but keeps inside interactions open', async () => {
+    vi.useFakeTimers()
+    const search = fakeSearchPort({ search: vi.fn().mockResolvedValue([result(firstId, '保留结果')]) })
+    render(
+      <>
+        <SearchBox search={search} onSelect={vi.fn()} />
+        <button type="button">外部操作</button>
+      </>,
+    )
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索笔记' }), { target: { value: '保留' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(180) })
+    const resultButton = screen.getByRole('button', { name: /保留结果/ })
+    fireEvent.pointerDown(resultButton)
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeVisible()
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: '外部操作' }))
+    expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
+  })
 })

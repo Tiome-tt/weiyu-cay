@@ -473,6 +473,38 @@ describe('LibraryLayout', () => {
     expect(screen.getByTestId('note-list-pane')).not.toHaveAttribute('inert')
     expect(system.setWindowPreference).toHaveBeenLastCalledWith('library-collapsed', { folder: false, noteList: false })
   })
+
+  it('does not show the formal-note count on collapsed temporary or trash directory rails', async () => {
+    const trash: TrashPort = {
+      trash: vi.fn().mockResolvedValue({ operationId: 'unused', trashed: [], failed: [] }),
+      list: vi.fn().mockResolvedValue([]),
+      restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+      purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
+    }
+    const user = userEvent.setup()
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Formal note')]) })}
+        folders={fakeFolderPort()}
+        system={fakeSystemPort()}
+        temporary={fakeTemporaryPort(twoCaptures())}
+        trash={trash}
+      />,
+    )
+
+    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
+    await screen.findByRole('region', { name: '临时收集箱' })
+    await user.click(screen.getByRole('button', { name: '折叠目录' }))
+    expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent('目录')
+
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    await user.click(screen.getByRole('treeitem', { name: '回收站' }))
+    await screen.findByRole('region', { name: '回收站' })
+    await user.click(screen.getByRole('button', { name: '折叠目录' }))
+    expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent('目录')
+  })
+
   it('holds the active editor behind a barrier while flushing for a storage move', async () => {
     const saveNote = vi.fn(async (document: NoteDocument) => ({ ...document, revision: document.revision + 1 }))
     const notes = fakeNotePort({

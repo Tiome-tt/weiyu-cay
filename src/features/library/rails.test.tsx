@@ -20,6 +20,15 @@ describe('collapsed library rails', () => {
     expect(onExpand).toHaveBeenCalledTimes(1)
   })
 
+  it('hides a formal-note count when the active view has no note directory', () => {
+    render(<DirectoryRail count={null} onExpand={vi.fn()} />)
+
+    const rail = screen.getByRole('button', { name: '展开目录' })
+    expect(rail).toHaveTextContent('目录')
+    expect(rail).not.toHaveTextContent('·')
+    expect(rail).not.toHaveAccessibleName(/篇笔记/)
+  })
+
   it('keeps library destinations functional and marks the current entry independently', async () => {
     const onUnfiled = vi.fn()
     const onFolders = vi.fn()

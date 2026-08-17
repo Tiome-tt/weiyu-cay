@@ -4,6 +4,7 @@ import { APP_NAME } from '../../shared/brand'
 import { AppIcon } from '../../shared/AppIcon'
 import { Icon } from '../../shared/Icon'
 import { SearchBox } from '../search/SearchBox'
+import { useState } from 'react'
 
 export type ToolbarSaveState = 'hidden' | 'dirty' | 'saving' | 'saved' | 'error'
 
@@ -24,6 +25,8 @@ const SAVE_LABELS: Record<Exclude<ToolbarSaveState, 'hidden'>, string> = {
 }
 
 export function GlobalToolbar({ search, saveState, updateAttention, onSelectResult, onCreateNote, onOpenSettings }: GlobalToolbarProps) {
+  const [searchDismissSignal, setSearchDismissSignal] = useState(0)
+  const dismissSearch = () => setSearchDismissSignal((current) => current + 1)
   return (
     <header className="global-toolbar" role="toolbar" aria-label="全局应用栏">
       <div className="global-toolbar__brand" data-testid="global-toolbar-brand">
@@ -31,7 +34,7 @@ export function GlobalToolbar({ search, saveState, updateAttention, onSelectResu
         <strong>{APP_NAME}</strong>
       </div>
       <div className="global-toolbar__search" data-testid="global-toolbar-search">
-        <SearchBox search={search} onSelect={onSelectResult} />
+        <SearchBox search={search} onSelect={onSelectResult} dismissSignal={searchDismissSignal} />
       </div>
       <div className="global-toolbar__actions" data-testid="global-toolbar-actions">
         {saveState !== 'hidden' && (
@@ -45,19 +48,19 @@ export function GlobalToolbar({ search, saveState, updateAttention, onSelectResu
             className="global-toolbar__icon-button global-toolbar__update-attention"
             aria-label={updateAttention === 'available' ? '有可用更新，打开设置' : '更新已安装，需要重启，打开设置'}
             title={updateAttention === 'available' ? '有可用更新' : '需要重启以完成更新'}
-            onClick={onOpenSettings}
+            onClick={() => { dismissSearch(); onOpenSettings() }}
           >
             <span className="global-toolbar__attention-mark" aria-hidden="true" />
           </button>
         )}
-        <button type="button" className="global-toolbar__icon-button" aria-label="打开设置" title="设置" onClick={onOpenSettings}>
+        <button type="button" className="global-toolbar__icon-button" aria-label="打开设置" title="设置" onClick={() => { dismissSearch(); onOpenSettings() }}>
           <Icon name="settings" size={18} />
         </button>
         <button
           type="button"
           className="global-toolbar__create"
           aria-label="新建笔记"
-          onClick={(event) => onCreateNote(event.currentTarget)}
+          onClick={(event) => { dismissSearch(); onCreateNote(event.currentTarget) }}
         >
           <Icon name="plus" size={17} />
           <span>新建笔记</span>
