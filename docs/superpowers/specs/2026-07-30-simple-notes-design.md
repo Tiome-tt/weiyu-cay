@@ -19,7 +19,7 @@ The application is local-first:
 
 1. **Fast capture:** a global shortcut creates a new temporary sticky note immediately.
 2. **Clear organization:** a real-folder-style hierarchy is the primary navigation model; tags supplement rather than replace folders.
-3. **Readable Markdown:** source, split, and preview views are first-class and share one document state.
+3. **Approachable documents:** a direct document-editing view is the default while source and preview remain available over one durable Markdown document.
 4. **Stable connections:** note links survive title, folder, and storage-path changes.
 5. **Data ownership:** Markdown and images are durable local artifacts and can be exported as a complete portable library.
 6. **Small scope:** features that do not strengthen capture, organization, reading, or recovery stay outside the MVP.
@@ -42,13 +42,13 @@ Tauri is preferred over Electron because this application values a small install
 
 ### 3.2 Editor model
 
-The MVP is not a WYSIWYG editor. It provides three representations of the same Markdown source:
+The editor provides three representations of one durable Markdown document:
 
-1. Markdown source.
-2. Markdown source and rendered preview in a resizable split.
-3. Rendered preview.
+1. Document mode for direct block-based editing.
+2. Markdown source mode.
+3. Read-only rendered preview.
 
-Switching views preserves the current note, selection where applicable, and scroll position. The split view synchronizes scrolling where a stable source-to-preview mapping exists and degrades gracefully when an exact mapping is unavailable.
+Document mode is the default. Supported blocks round-trip to deterministic Markdown; unsupported source is preserved exactly in raw Markdown blocks rather than silently rewritten. Switching modes preserves the current note, selection where applicable, and scroll position. The former persistent source/preview split is no longer a primary editor mode.
 
 ## 4. MVP scope
 
@@ -56,7 +56,7 @@ Switching views preserves the current note, selection where applicable, and scro
 
 - Create, rename, move, edit, and delete notes.
 - Organize notes in a nested, real-folder-style tree managed by the application.
-- Use source, split, and preview views.
+- Use document, source, and preview views.
 - Automatically save content and recover from interrupted writes.
 - Paste screenshots directly into a note; the application saves the image and inserts a Markdown reference.
 - Assign multiple custom tags to one note.
@@ -116,7 +116,7 @@ The boundaries between columns are directly draggable. There is no visible “dr
 
 The global application bar is reserved for application-level actions such as search, new note, future synchronization status, and settings.
 
-The editor has a slim title toolbar. It contains the note title on the left and source, split, preview, and more-actions controls on the right. View controls do not live in the global application bar because they affect only the current note.
+The editor has a slim title toolbar. It contains the note title on the left and document, source, preview, and more-actions controls on the right. View controls do not live in the global application bar because they affect only the current note.
 
 ### 5.2 Visual direction
 
@@ -295,7 +295,7 @@ A batch is allowed to report partial success; it must never silently lose failed
 
 - Unit tests for frontmatter, UUIDs, tag normalization, internal-link parsing and serialization, title derivation, filename safety, and search-query interpretation.
 - Integration tests for atomic replacement, interrupted saves, disk failures, image movement, trash restoration, batch conversion, schema migrations, and full index rebuild.
-- Editor tests for the three views, atomic two-step link deletion, rename refresh, selection/scroll preservation, and split scrolling.
+- Editor tests for document, source, and preview views; raw-source preservation; atomic two-step link deletion; rename refresh; and selection/scroll preservation.
 - UI tests for resizable columns, minimum widths, double-click reset, multi-selection, deletion undo, and restored window state.
 - Security tests for path traversal, unsafe HTML, malformed frontmatter, invalid image payloads, and unauthorized Tauri command access.
 
@@ -321,7 +321,7 @@ Use at least 10,000 generated notes with realistic Markdown, tags, links, and im
 - Project scaffold and original design tokens.
 - Storage root, migrations, UUID identity, folder model, and atomic save.
 - Main three-column layout and resizable boundaries.
-- Markdown source, split, and preview views.
+- Document, Markdown source, and preview views.
 - Image paste and assets.
 
 ### Phase 2: connections and retrieval
