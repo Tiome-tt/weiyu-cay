@@ -1,4 +1,4 @@
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::shortcuts::{PluginEventDispatcher, PluginShortcutEvent},
     error::CommandError,
     shortcuts::{
@@ -483,13 +483,13 @@ struct DurableCaptureBackend {
 }
 
 impl CaptureBackend for DurableCaptureBackend {
-    fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+    fn create(&self) -> Result<weiyu_cay_lib::domain::NoteId, CommandError> {
         TemporaryRepository::new(self.paths.clone())
             .create()
             .map(|note| note.id)
     }
 
-    fn show(&self, note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+    fn show(&self, note_id: weiyu_cay_lib::domain::NoteId) -> Result<(), CommandError> {
         TemporaryWindowService::new(self.paths.clone(), self.windows.clone())
             .show(note_id)
             .map(|_| ())
@@ -529,7 +529,7 @@ fn recovery_gated_capture_backend_never_touches_storage_until_the_same_gate_is_r
 
     let blocked = trigger.activate();
     assert!(
-        matches!(blocked, TriggerOutcome::CreateFailed { ref error } if error.code() == simple_notes_lib::error::CommandErrorCode::Database)
+        matches!(blocked, TriggerOutcome::CreateFailed { ref error } if error.code() == weiyu_cay_lib::error::CommandErrorCode::Database)
     );
     assert!(!paths.database().exists());
     assert_eq!(fs::read_dir(paths.temporary()).unwrap().count(), 0);
@@ -548,13 +548,13 @@ struct BlockingCaptureBackend {
 }
 
 impl CaptureBackend for BlockingCaptureBackend {
-    fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+    fn create(&self) -> Result<weiyu_cay_lib::domain::NoteId, CommandError> {
         self.entered.send(()).unwrap();
         self.release.lock().unwrap().recv().unwrap();
-        Ok(simple_notes_lib::domain::NoteId::now_v7())
+        Ok(weiyu_cay_lib::domain::NoteId::now_v7())
     }
 
-    fn show(&self, _note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+    fn show(&self, _note_id: weiyu_cay_lib::domain::NoteId) -> Result<(), CommandError> {
         Ok(())
     }
 }
@@ -769,15 +769,15 @@ fn shutdown_does_not_wait_for_a_capture_accepted_before_shutdown() {
     }
 
     impl CaptureBackend for BlockingAcceptedCapture {
-        fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+        fn create(&self) -> Result<weiyu_cay_lib::domain::NoteId, CommandError> {
             if let Some(entered) = self.entered.lock().unwrap().take() {
                 entered.send(()).unwrap();
             }
             self.release.lock().unwrap().recv().unwrap();
-            Ok(simple_notes_lib::domain::NoteId::now_v7())
+            Ok(weiyu_cay_lib::domain::NoteId::now_v7())
         }
 
-        fn show(&self, _note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+        fn show(&self, _note_id: weiyu_cay_lib::domain::NoteId) -> Result<(), CommandError> {
             Ok(())
         }
     }
@@ -868,28 +868,28 @@ struct PanickingCaptureBackend {
 }
 
 impl CaptureBackend for PanickingCaptureBackend {
-    fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+    fn create(&self) -> Result<weiyu_cay_lib::domain::NoteId, CommandError> {
         if self.panic_once.swap(false, Ordering::SeqCst) {
             panic!("injected handler panic");
         }
-        Ok(simple_notes_lib::domain::NoteId::now_v7())
+        Ok(weiyu_cay_lib::domain::NoteId::now_v7())
     }
 
-    fn show(&self, _note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+    fn show(&self, _note_id: weiyu_cay_lib::domain::NoteId) -> Result<(), CommandError> {
         Ok(())
     }
 }
 
 impl CaptureBackend for FailingCaptureBackend {
-    fn create(&self) -> Result<simple_notes_lib::domain::NoteId, CommandError> {
+    fn create(&self) -> Result<weiyu_cay_lib::domain::NoteId, CommandError> {
         *self.creates.lock().unwrap() += 1;
         if std::mem::take(&mut *self.fail_create_once.lock().unwrap()) {
             return Err(CommandError::io("injected create failure"));
         }
-        Ok(simple_notes_lib::domain::NoteId::now_v7())
+        Ok(weiyu_cay_lib::domain::NoteId::now_v7())
     }
 
-    fn show(&self, _note_id: simple_notes_lib::domain::NoteId) -> Result<(), CommandError> {
+    fn show(&self, _note_id: weiyu_cay_lib::domain::NoteId) -> Result<(), CommandError> {
         *self.shows.lock().unwrap() += 1;
         if std::mem::take(&mut *self.fail_show_once.lock().unwrap()) {
             return Err(CommandError::io("injected show failure"));

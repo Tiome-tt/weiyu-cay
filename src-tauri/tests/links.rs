@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::notes::{rename_note_in_storage, rename_note_in_storage_with_repair},
     domain::{NoteDocument, NoteId, NoteKind},
     error::{CommandError, CommandErrorCode},
@@ -668,7 +668,7 @@ fn repair_waits_for_the_cross_process_mutation_lock_instead_of_reentering_it() {
     let fixture = LinkFixture::linked_notes("Old");
     let paths = fixture.store.paths.clone();
     let target = fixture.target_id;
-    let guard = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let guard = weiyu_cay_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
     let (sent, received) = mpsc::channel();
     let worker = thread::spawn(move || {
         let result = LinkRepository::new(paths).rename_target_labels(target, "New");
@@ -689,7 +689,7 @@ fn public_load_waits_for_the_mutation_lock_before_reading_or_recovering() {
     let fixture = LinkFixture::linked_notes("Old");
     let paths = fixture.store.paths.clone();
     let source_id = fixture.source_id;
-    let guard = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let guard = weiyu_cay_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
     let (sent, received) = mpsc::channel();
     let worker = thread::spawn(move || {
         let result = NoteRepository::new(paths).load(source_id);
@@ -714,14 +714,14 @@ fn blob(value: &str) -> Vec<u8> {
 }
 
 fn fail_source_b(
-    paths: &simple_notes_lib::storage::paths::StoragePaths,
+    paths: &weiyu_cay_lib::storage::paths::StoragePaths,
     id: NoteId,
     kind: NoteKind,
     bytes: &[u8],
 ) -> PublishResult {
     if id == note_id(SOURCE_B) {
         return Err(PublishFailure::not_published(
-            simple_notes_lib::error::CommandError::io("injected source write failure"),
+            weiyu_cay_lib::error::CommandError::io("injected source write failure"),
         ));
     }
     let id_string = id.to_string();

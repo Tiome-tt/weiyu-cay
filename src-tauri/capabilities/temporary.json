@@ -12,6 +12,7 @@
     "allow-hide-temporary-window",
     "allow-set-temporary-always-on-top",
     "allow-save-image",
+    "allow-read-image-asset",
     "allow-load-sticky-settings"
   ]
 }

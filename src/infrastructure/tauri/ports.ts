@@ -1,8 +1,9 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashFolderEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -146,25 +147,11 @@ class TauriFolderPort implements FolderPort {
   }
 
   async deleteEmptyFolder(folderId: FolderId) {
-    return this.client.invoke<string>('delete_empty_folder', { folderId })
+    await this.client.invoke<void>('delete_empty_folder', { folderId })
   }
 
   async deleteFolder(folderId: FolderId) {
-    return this.client.invoke<string>('delete_folder', { folderId })
-  }
-}
-
-class TauriStartupGuidePort implements StartupGuidePort {
-  constructor(private readonly client: TauriClient) {}
-
-  loadTarget() {
-    return this.client.invoke<Awaited<ReturnType<StartupGuidePort['loadTarget']>>>(
-      'startup_guide_target',
-    )
-  }
-
-  completeTarget(target: Parameters<StartupGuidePort['completeTarget']>[0]) {
-    return this.client.invoke<void>('complete_startup_guide', { target })
+    await this.client.invoke<void>('delete_folder', { folderId })
   }
 }
 
@@ -282,7 +269,7 @@ class TauriTemporaryPort implements TemporaryPort {
   }
 
   convert(input: Parameters<TemporaryPort['convert']>[0]) {
-    return this.client.invoke<Awaited<ReturnType<TemporaryPort['convert']>>>('convert_temporary', input)
+    return this.client.invoke<Awaited<ReturnType<TemporaryPort['convert']>>>('convert_temporary', { input })
   }
 
   delete(ids: NoteId[]) {
@@ -317,7 +304,13 @@ class TauriTemporaryWindowPort implements TemporaryWindowPort {
   }
 
   onCloseRequested(handler: (noteId: unknown) => void) {
-    return getCurrentWebviewWindow().listen<unknown>('temporary-close-requested', (event) => {
+    return listen<unknown>('temporary-close-requested', (event) => {
+      handler(event.payload)
+    })
+  }
+
+  onShown(handler: (noteId: unknown) => void) {
+    return listen<unknown>('temporary-window-shown', (event) => {
       handler(event.payload)
     })
   }
@@ -334,9 +327,6 @@ class TauriTrashPort implements TrashPort {
     return this.client.invoke<TrashEntry[]>('list_trash')
   }
 
-  listFolders() {
-    return this.client.invoke<TrashFolderEntry[]>('list_trash_folders')
-  }
   restore(noteIds: NoteId[]) {
     return this.client.invoke<Awaited<ReturnType<TrashPort['restore']>>>('restore_trash', { noteIds })
   }
@@ -398,7 +388,7 @@ class TauriStickySettingsPort implements StickySettingsPort {
   }
 
   onChanged(handler: (settings: StickySettings) => void) {
-    return getCurrentWebviewWindow().listen<StickySettings>('sticky-settings-updated', (event) => handler(event.payload))
+    return listen<StickySettings>('sticky-settings-updated', (event) => handler(event.payload))
   }
 }
 
@@ -417,7 +407,6 @@ export function createTauriPorts(): {
   exporter: ExportPort
   exportDestinationPicker: ExportDestinationPicker
   recovery: RecoveryPort
-  startupGuide: StartupGuidePort
   updater: UpdatePort
   lifecycle: AppLifecyclePort
   windowChrome: WindowChromePort
@@ -438,7 +427,6 @@ export function createTauriPorts(): {
     exporter: new TauriExportPort(client),
     exportDestinationPicker: new TauriExportDestinationPicker(),
     recovery: new TauriRecoveryPort(client),
-    startupGuide: new TauriStartupGuidePort(client),
     updater: new TauriUpdatePort(client),
     lifecycle: new TauriAppLifecyclePort(client),
     windowChrome: new TauriWindowChromePort(),

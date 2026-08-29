@@ -1,7 +1,7 @@
 mod support;
 
 use serde_json::Value;
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::folders::FolderRepository,
     domain::{CreateFolderInput, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
@@ -81,7 +81,7 @@ fn export_materializes_readable_folders_markdown_and_assets() {
     );
     assert_eq!(
         report.renamed_paths,
-        vec![simple_notes_lib::storage::export::RenamedExportPath {
+        vec![weiyu_cay_lib::storage::export::RenamedExportPath {
             source: "Work/Project B/Login Flow-assets/Cafe\u{301}.png".into(),
             destination: "Work/Project B/Login Flow-assets/Caf\u{e9}.png".into(),
         }]
@@ -475,7 +475,7 @@ fn create_formal_note(
     store: &TestStore,
     id: NoteId,
     title: &str,
-    folder_id: Option<simple_notes_lib::domain::FolderId>,
+    folder_id: Option<weiyu_cay_lib::domain::FolderId>,
     markdown: &str,
 ) -> NoteDocument {
     NoteRepository::new(store.paths.clone())
@@ -493,7 +493,7 @@ fn create_formal_note(
         .unwrap()
 }
 
-fn successful_output(report: &simple_notes_lib::storage::export::ExportReport) -> PathBuf {
+fn successful_output(report: &weiyu_cay_lib::storage::export::ExportReport) -> PathBuf {
     assert!(report.completed, "{report:?}");
     PathBuf::from(report.output_root.as_ref().expect("successful output root"))
 }

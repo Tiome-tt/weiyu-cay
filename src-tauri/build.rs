@@ -18,6 +18,7 @@ fn main() {
             "backlinks",
             "rename_target_labels",
             "save_image",
+            "read_image_asset",
             "list_folders",
             "create_folder",
             "rename_folder",

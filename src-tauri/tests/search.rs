@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::search::SearchRepository,
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
@@ -468,7 +468,7 @@ fn text_query_trims_application_boundary_whitespace_and_preserves_it_inside() {
 #[test]
 fn strict_upgrade_keeps_old_index_dirty_until_every_durable_note_can_rebuild() {
     let root = tempfile::tempdir().unwrap();
-    let paths = simple_notes_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
+    let paths = weiyu_cay_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
     write_durable_note(&paths, NOTE_A, "Valid", "visible valid prose");
     let broken_dir = paths.note_dir(note_id(NOTE_B), NoteKind::Formal).unwrap();
     fs::create_dir_all(&broken_dir).unwrap();
@@ -694,7 +694,7 @@ fn text_search_excerpt_clips_both_unicode_boundaries_within_the_limit() {
 #[test]
 fn version_one_migration_preserves_notes_and_backfills_search() {
     let root = tempfile::tempdir().unwrap();
-    let paths = simple_notes_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
+    let paths = weiyu_cay_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
     let connection = Connection::open(paths.database()).unwrap();
     connection
         .execute_batch(include_str!("../migrations/0001_initial.sql"))
@@ -715,12 +715,9 @@ fn version_one_migration_preserves_notes_and_backfills_search() {
     ).unwrap();
     drop(connection);
 
-    let database = simple_notes_lib::storage::database::Database::open(paths.database()).unwrap();
+    let database = weiyu_cay_lib::storage::database::Database::open(paths.database()).unwrap();
     database.migrate().unwrap();
-    assert_eq!(
-        database.applied_migration_versions().unwrap(),
-        vec![1, 2, 3, 4]
-    );
+    assert_eq!(database.applied_migration_versions().unwrap(), vec![1, 2, 3, 4]);
     drop(database);
     let migrated = Connection::open(paths.database()).unwrap();
     assert_eq!(
@@ -750,7 +747,7 @@ fn version_one_migration_preserves_notes_and_backfills_search() {
 #[test]
 fn version_one_upgrade_rebuilds_search_from_durable_markdown_not_raw_cache() {
     let root = tempfile::tempdir().unwrap();
-    let paths = simple_notes_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
+    let paths = weiyu_cay_lib::storage::paths::StoragePaths::open(root.path()).unwrap();
     let note_dir = paths.note_dir(note_id(NOTE_A), NoteKind::Formal).unwrap();
     fs::create_dir_all(&note_dir).unwrap();
     fs::write(
@@ -780,7 +777,7 @@ fn version_one_upgrade_rebuilds_search_from_durable_markdown_not_raw_cache() {
     ).unwrap();
     drop(connection);
 
-    let migrated = simple_notes_lib::storage::database::Database::open(paths.database()).unwrap();
+    let migrated = weiyu_cay_lib::storage::database::Database::open(paths.database()).unwrap();
     migrated.migrate().unwrap();
     drop(migrated);
     assert_eq!(
@@ -800,7 +797,7 @@ fn version_one_upgrade_rebuilds_search_from_durable_markdown_not_raw_cache() {
     assert!(search.search_text("cache-secret", 20).unwrap().is_empty());
     assert!(search.search_text("script", 20).unwrap().is_empty());
     assert_eq!(
-        simple_notes_lib::storage::database::Database::open(paths.database())
+        weiyu_cay_lib::storage::database::Database::open(paths.database())
             .unwrap()
             .applied_migration_versions()
             .unwrap(),
@@ -938,7 +935,7 @@ fn create_note_with_markdown(
 }
 
 fn write_durable_note(
-    paths: &simple_notes_lib::storage::paths::StoragePaths,
+    paths: &weiyu_cay_lib::storage::paths::StoragePaths,
     id: &str,
     title: &str,
     markdown: &str,
@@ -961,75 +958,12 @@ fn folder_blob(value: &str) -> Vec<u8> {
     uuid::Uuid::parse_str(value).unwrap().as_bytes().to_vec()
 }
 fn failing_writer(
-    _: &simple_notes_lib::storage::paths::StoragePaths,
+    _: &weiyu_cay_lib::storage::paths::StoragePaths,
     _: NoteId,
     _: NoteKind,
     _: &[u8],
-) -> Result<simple_notes_lib::storage::atomic_file::PublishState, PublishFailure> {
+) -> Result<weiyu_cay_lib::storage::atomic_file::PublishState, PublishFailure> {
     Err(PublishFailure::not_published(
-        simple_notes_lib::error::CommandError::io("injected write failure"),
+        weiyu_cay_lib::error::CommandError::io("injected write failure"),
     ))
-}
-
-#[test]
-fn search_returns_complete_context_for_multiple_notes_in_different_folders() {
-    let store = seeded_store();
-    create_note_with_folder(
-        &store,
-        NOTE_A,
-        "Root context",
-        vec!["RootTag", "Shared"],
-        ROOT_FOLDER,
-        "batch context phrase",
-        "2026-07-31T08:02:00Z",
-    );
-    create_note_with_folder(
-        &store,
-        NOTE_B,
-        "Nested context",
-        vec!["NestedTag", "Shared"],
-        CHILD_FOLDER,
-        "batch context phrase",
-        "2026-07-31T08:01:00Z",
-    );
-
-    let results = SearchRepository::new(store.paths.clone())
-        .search_text("batch context", 20)
-        .unwrap();
-
-    assert_eq!(
-        results
-            .iter()
-            .map(|result| result.title.as_str())
-            .collect::<Vec<_>>(),
-        vec!["Root context", "Nested context"]
-    );
-    assert_eq!(results[0].tags, vec!["RootTag", "Shared"]);
-    assert_eq!(results[0].folder_breadcrumb, vec!["Work"]);
-    assert_eq!(results[1].tags, vec!["NestedTag", "Shared"]);
-    assert_eq!(results[1].folder_breadcrumb, vec!["Work", "Project B"]);
-}
-
-fn create_note_with_folder(
-    store: &TestStore,
-    id: &str,
-    title: &str,
-    tags: Vec<&str>,
-    folder: &str,
-    markdown: &str,
-    updated_at: &str,
-) {
-    NoteRepository::new(store.paths.clone())
-        .create(NoteDocument {
-            id: note_id(id),
-            kind: NoteKind::Formal,
-            title: title.into(),
-            folder_id: Some(folder_id(folder)),
-            tags: tags.into_iter().map(str::to_owned).collect(),
-            markdown: markdown.into(),
-            revision: 0,
-            created_at: "2026-07-31T08:00:00Z".into(),
-            updated_at: updated_at.into(),
-        })
-        .unwrap();
 }

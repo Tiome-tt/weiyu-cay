@@ -42,13 +42,15 @@ Tauri is preferred over Electron because this application values a small install
 
 ### 3.2 Editor model
 
-The MVP is not a WYSIWYG editor. It provides three representations of the same Markdown source:
+The MVP provides a live Markdown document editor, not a separate rich-text document model. CodeMirror 6 remains the only editor and Markdown remains the only durable note body. Supported syntax is rendered in place when inactive and reveals the smallest necessary source range when the selection enters it.
 
-1. Markdown source.
-2. Markdown source and rendered preview in a resizable split.
-3. Rendered preview.
+The three representations of the same Markdown source are:
 
-Switching views preserves the current note, selection where applicable, and scroll position. The split view synchronizes scrolling where a stable source-to-preview mapping exists and degrades gracefully when an exact mapping is unavailable.
+1. Live Markdown document editing, persisted as `source`.
+2. Complete Markdown source and rendered preview in a resizable split, persisted as `split`.
+3. Rendered preview, persisted as `preview`.
+
+Incomplete, malformed, unsupported, raw-HTML, or unsafe constructs remain visible source and are never silently rewritten. Switching views preserves the current note, selection where applicable, and scroll position. The split view synchronizes scrolling where a stable source-to-preview mapping exists and degrades gracefully when an exact mapping is unavailable. Detailed document-editor behavior is defined in `docs/superpowers/specs/2026-08-24-document-editor-redesign-design.md`.
 
 ## 4. MVP scope
 

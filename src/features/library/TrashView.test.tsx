@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
@@ -40,6 +40,7 @@ const entries: TrashEntry[] = [
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('TrashView', () => {
@@ -76,21 +77,40 @@ describe('TrashView', () => {
   })
 
   it('invalidates an older list request before restore and refreshes the surrounding library', async () => {
+    vi.useFakeTimers()
     const lateList = deferred<TrashEntry[]>()
     const list = vi.fn().mockResolvedValueOnce(entries).mockReturnValueOnce(lateList.promise)
     const restore = vi.fn().mockResolvedValue({ restored: [restoredDocument(formalId, project)], failed: [] })
     const onLibraryChanged = vi.fn().mockResolvedValue(undefined)
-    const user = userEvent.setup()
     render(<TrashView trash={fakeTrashPort({ list, restore })} folders={folders} onLibraryChanged={onLibraryChanged} />)
 
-    await user.click(await screen.findByRole('checkbox', { name: '选择 发布清单' }))
-    await user.click(screen.getByRole('button', { name: '刷新' }))
-    await user.click(screen.getByRole('button', { name: '恢复所选' }))
+    await act(async () => { await Promise.resolve() })
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 发布清单' }))
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '恢复所选' }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
 
-    expect(await screen.findByText('已恢复 1 项。')).toBeVisible()
+    expect(screen.getByText('已恢复 1 项。')).toBeVisible()
     expect(onLibraryChanged).toHaveBeenCalledOnce()
     await act(async () => lateList.resolve(entries))
     expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
+  })
+
+  it('refreshes automatically and does not expose a manual refresh button', async () => {
+    vi.useFakeTimers()
+    const list = vi.fn().mockResolvedValue(entries)
+    render(<TrashView trash={fakeTrashPort({ list })} folders={folders} />)
+
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByRole('checkbox', { name: '选择 发布清单' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument()
+
+    const initialCalls = list.mock.calls.length
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(list.mock.calls.length).toBeGreaterThan(initialCalls)
   })
 
   it('permanently deletes selected entries only after confirmation', async () => {

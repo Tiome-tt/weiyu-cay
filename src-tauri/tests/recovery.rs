@@ -1,6 +1,6 @@
 mod support;
 
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::{
         notes::prepare_startup_repository,
         storage::{StorageCommandState, StorageConsumer},
@@ -316,7 +316,7 @@ fn overlapping_retries_are_single_flight_and_never_run_a_second_finalizer() {
     assert!(first.is_ok());
     assert_eq!(
         second.unwrap_err().code(),
-        simple_notes_lib::error::CommandErrorCode::Conflict
+        weiyu_cay_lib::error::CommandErrorCode::Conflict
     );
     assert!(!second_finalizer_ran.load(Ordering::SeqCst));
     assert!(state.ensure_ready().is_ok());
@@ -359,7 +359,7 @@ fn failed_rebuild_never_creates_an_empty_live_database_while_reading_window_stat
     fs::remove_file(fixture.store.paths.database()).unwrap();
 
     let result = rebuild_index_with_hook(&fixture.store.paths, |_| {
-        Err(simple_notes_lib::error::CommandError::io(
+        Err(weiyu_cay_lib::error::CommandError::io(
             "injected publication failure",
         ))
     });

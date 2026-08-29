@@ -281,17 +281,22 @@ function StickyApplication({ services, route }: { services: AppServices; route: 
   useEffect(() => {
     let active = true
     let unlisten: (() => void) | undefined
-    if (services.stickySettings === undefined) {
+    const stickySettings = services.stickySettings
+    if (stickySettings === undefined) {
       void loadAppearance()
       return () => { active = false; requestRef.current += 1 }
     }
-    void services.stickySettings.onChanged((changed) => {
+    // Some native WebView builds expose the event bridge a tick after the
+    // document mounts. Normalize synchronous setup failures into the same
+    // promise path as async listener failures so a sticky window can still
+    // load its appearance and content instead of rendering a blank WebView.
+    void Promise.resolve().then(() => stickySettings.onChanged((changed) => {
       if (!active) return
       requestRef.current += 1
       setAppearance(normalizeStickySettings(changed))
       setReady(true)
       setError(false)
-    }).then((stop) => {
+    })).then((stop) => {
       if (!active) stop()
       else {
         unlisten = stop
@@ -348,7 +353,9 @@ function stickyRoute(): StickyRoute | null {
 function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: AppServices; route: StickyRoute; autosaveDelayMs: number }) {
   const [note, setNote] = useState<NoteDocument | null>(null)
   const [error, setError] = useState(false)
+  const loadRequestRef = useRef(0)
   useEffect(() => {
+    const request = ++loadRequestRef.current
     let active = true
     if (services.temporary === undefined) {
       setError(true)
@@ -357,15 +364,39 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
     void services.temporary
       .load(route.noteId)
       .then((found) => {
-        if (!active) return
+        if (!active || loadRequestRef.current !== request) return
         if (found.id !== route.noteId || found.kind !== 'temporary') setError(true)
         else setNote(found)
       })
-      .catch(() => active && setError(true))
+      .catch(() => active && loadRequestRef.current === request && setError(true))
     return () => {
       active = false
+      loadRequestRef.current += 1
     }
   }, [route.noteId, services.temporary])
+
+  useEffect(() => {
+    if (services.temporary === undefined || services.temporaryWindows?.onShown === undefined) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    const temporaryWindows = services.temporaryWindows
+    if (temporaryWindows === undefined) return
+    void Promise.resolve().then(() => temporaryWindows.onShown!((payload) => {
+      if (!active || payload !== route.noteId) return
+      const request = ++loadRequestRef.current
+      void services.temporary?.load(route.noteId).then((found) => {
+        if (!active || loadRequestRef.current !== request) return
+        if (found.id === route.noteId && found.kind === 'temporary') setNote(found)
+      }).catch(() => undefined)
+    })).then((stop) => {
+      if (active) unlisten = stop
+      else stop()
+    }).catch(() => undefined)
+    return () => {
+      active = false
+      unlisten?.()
+    }
+  }, [route.noteId, services.temporary, services.temporaryWindows])
   if (error || services.temporary === undefined || services.temporaryWindows === undefined) {
     return <main className="sticky-window"><p role="alert">无法打开这张临时便签。</p></main>
   }
@@ -376,6 +407,7 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
       temporary={services.temporary}
       windows={services.temporaryWindows}
       assets={services.assets}
+      assetReader={services.assets}
       initialWindowState={route.state}
       autosaveDelayMs={autosaveDelayMs}
     />

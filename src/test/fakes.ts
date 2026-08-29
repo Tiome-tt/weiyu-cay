@@ -38,8 +38,8 @@ export const fakeFolderPort = (overrides: Partial<FolderPort> = {}): FolderPort 
   renameFolder: vi.fn().mockResolvedValue(folders()[0]),
   moveFolder: vi.fn().mockResolvedValue(folders()[0]),
   reorderFolders: vi.fn().mockResolvedValue(undefined),
-  deleteEmptyFolder: vi.fn().mockResolvedValue('test-folder-trash'),
-  deleteFolder: vi.fn().mockResolvedValue('test-folder-trash'),
+  deleteEmptyFolder: vi.fn().mockResolvedValue(undefined),
+  deleteFolder: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 })
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Folder, NoteId } from '../../domain/model'
-import type { TrashEntry, TrashFolderEntry, TrashPort } from '../../domain/ports'
+import type { TrashEntry, TrashPort } from '../../domain/ports'
 
 interface TrashViewProps {
   trash: TrashPort
@@ -9,11 +9,10 @@ interface TrashViewProps {
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
-type BusyAction = 'restore' | 'restore-folder' | 'purge' | null
+type BusyAction = 'restore' | 'purge' | null
 
 export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) {
   const [entries, setEntries] = useState<TrashEntry[]>([])
-  const [folderEntries, setFolderEntries] = useState<TrashFolderEntry[]>([])
   const [selected, setSelected] = useState<ReadonlySet<NoteId>>(new Set())
   const [state, setState] = useState<LoadState>('loading')
   const [busy, setBusy] = useState<BusyAction>(null)
@@ -25,33 +24,33 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
   const feedbackRef = useRef<HTMLParagraphElement>(null)
   const mountedRef = useRef(false)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true
     if (!mountedRef.current) return
     const request = ++requestRef.current
-    setState('loading')
+    if (!silent) setState('loading')
     try {
-      const [listed, listedFolders] = await Promise.all([
-        trash.list(),
-        trash.listFolders?.() ?? Promise.resolve([]),
-      ])
+      const listed = await trash.list()
       if (request !== requestRef.current) return
       const sorted = [...listed].sort((left, right) => right.deletedAt.localeCompare(left.deletedAt) || left.noteId.localeCompare(right.noteId))
-      const sortedFolders = [...listedFolders].sort((left, right) => right.deletedAt.localeCompare(left.deletedAt) || left.folderId.localeCompare(right.folderId))
       setEntries(sorted)
-      setFolderEntries(sortedFolders)
       setSelected((current) => new Set([...current].filter((id) => sorted.some((entry) => entry.noteId === id))))
       setState('ready')
     } catch {
-      if (request === requestRef.current) setState('error')
+      if (request === requestRef.current && !silent) setState('error')
     }
   }, [trash])
 
   useEffect(() => {
     mountedRef.current = true
     void refresh()
+    const interval = window.setInterval(() => {
+      if (busyRef.current === null) void refresh({ silent: true })
+    }, 1000)
     return () => {
       mountedRef.current = false
       requestRef.current += 1
+      window.clearInterval(interval)
     }
   }, [refresh])
 
@@ -119,37 +118,6 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
     }
   }
 
-  const restoreFolder = async (entry: TrashFolderEntry) => {
-    if (busyRef.current !== null) return
-    requestRef.current += 1
-    busyRef.current = 'restore-folder'
-    setBusy('restore-folder')
-    setError(null)
-    setFeedback(null)
-    try {
-      await trash.undo(entry.operationId)
-      let surroundingRefreshFailed = false
-      try {
-        await onLibraryChanged?.()
-      } catch {
-        surroundingRefreshFailed = true
-      }
-      if (!mountedRef.current) return
-      setFolderEntries((current) => current.filter((item) => item.operationId !== entry.operationId))
-      if (surroundingRefreshFailed) setError('文件夹已恢复，但资料库刷新失败，请手动刷新。')
-      else setFeedback(`已恢复文件夹“${entry.title}”。`)
-      setState('ready')
-    } catch {
-      if (mountedRef.current) {
-        setError('无法恢复该文件夹，请重试。')
-        setState('ready')
-      }
-    } finally {
-      busyRef.current = null
-      if (mountedRef.current) setBusy(null)
-    }
-  }
-
   const purgePermanently = async () => {
     if (busyRef.current !== null || purgeTarget === null || trash.purge === undefined) return
     const ids = [...purgeTarget]
@@ -186,54 +154,61 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
           <span className="library-pane__eyebrow">安全恢复</span>
           <h2>回收站</h2>
         </div>
-        <button type="button" disabled={busy !== null} onClick={() => void refresh()}>刷新</button>
       </header>
       <div className="trash-view__actions" aria-label="回收站操作">
-        <button type="button" disabled={busy !== null || entries.length === 0} onClick={() => setSelected(new Set(entries.map((entry) => entry.noteId)))}>全选</button>
+        <button
+          type="button"
+          disabled={busy !== null || entries.length === 0}
+          onClick={() => setSelected(new Set(entries.map((entry) => entry.noteId)))}
+        >
+          全选
+        </button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
-        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void restoreSelected()}>{busy === 'restore' ? '正在恢复…' : '恢复所选'}</button>
-        <button type="button" className="trash-view__danger-action" disabled={busy !== null || selectedIds.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(selectedIds)}>永久删除</button>
-        <button type="button" className="trash-view__danger-action" disabled={busy !== null || entries.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(entries.map((entry) => entry.noteId))}>清空回收站</button>
+        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void restoreSelected()}>
+          {busy === 'restore' ? '正在恢复…' : '恢复所选'}
+        </button>
+        <button type="button" className="trash-view__danger-action" disabled={busy !== null || selectedIds.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(selectedIds)}>
+          永久删除
+        </button>
+        <button type="button" className="trash-view__danger-action" disabled={busy !== null || entries.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(entries.map((entry) => entry.noteId))}>
+          清空回收站
+        </button>
       </div>
       {feedback !== null && <p ref={feedbackRef} tabIndex={-1} role="status" className="library-status">{feedback}</p>}
       {error !== null && <p role="alert" className="library-status library-status--error">{error}</p>}
       {state === 'loading' && <p role="status" className="library-status">正在加载回收站…</p>}
       {state === 'error' && <p role="alert" className="library-status library-status--error">无法加载回收站。</p>}
-      {state === 'ready' && entries.length === 0 && folderEntries.length === 0 && <p className="library-status">回收站为空。</p>}
-      {state === 'ready' && (entries.length > 0 || folderEntries.length > 0) && (
+      {state === 'ready' && entries.length === 0 && <p className="library-status">回收站为空。</p>}
+      {state === 'ready' && entries.length > 0 && (
         <div className="trash-view__sections" aria-label="已删除项目">
-          {folderEntries.length > 0 && (
-            <section className="trash-view__section" aria-labelledby="trash-folders-heading">
-              <header className="trash-view__section-header"><h3 id="trash-folders-heading">文件夹</h3><span>{folderEntries.length} 条</span></header>
-              <ul className="trash-view__list">
-                {folderEntries.map((entry) => (
-                  <li key={entry.operationId}>
-                    <span className="trash-view__item">
-                      <strong>{entry.title}</strong>
-                      <span>{entry.folderCount > 1 ? `包含 ${entry.folderCount} 个文件夹` : '空文件夹'}</span>
-                      <time dateTime={entry.deletedAt}>删除于 {formatDate(entry.deletedAt)}</time>
-                    </span>
-                    <button type="button" disabled={busy !== null} onClick={() => void restoreFolder(entry)}>{busy === 'restore-folder' ? '正在恢复…' : '恢复文件夹'}</button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
           {(['temporary', 'formal'] as const).map((kind) => {
             const sectionEntries = entries.filter((entry) => entry.kind === kind)
             if (sectionEntries.length === 0) return null
             const label = kind === 'temporary' ? '临时便签' : '笔记'
             return (
               <section key={kind} className="trash-view__section" aria-labelledby={`trash-${kind}-heading`}>
-                <header className="trash-view__section-header"><h3 id={`trash-${kind}-heading`}>{label}</h3><span>{sectionEntries.length} 条</span></header>
+                <header className="trash-view__section-header">
+                  <h3 id={`trash-${kind}-heading`}>{label}</h3>
+                  <span>{sectionEntries.length} 条</span>
+                </header>
                 <ul className="trash-view__list">
                   {sectionEntries.map((entry) => {
                     const missingFolder = isMissingFolder(entry, folders)
                     return (
                       <li key={entry.noteId}>
                         <label>
-                          <input type="checkbox" aria-label={`选择 ${entry.title}`} checked={selected.has(entry.noteId)} disabled={busy !== null} onChange={() => toggleSelected(entry.noteId)} />
-                          <span className="trash-view__item"><strong>{entry.title}</strong><span>{missingFolder ? missingFolderMessage(entry) : `原位置：${folderName(entry, folders)}`}</span><time dateTime={entry.deletedAt}>删除于 {formatDate(entry.deletedAt)}</time></span>
+                          <input
+                            type="checkbox"
+                            aria-label={`选择 ${entry.title}`}
+                            checked={selected.has(entry.noteId)}
+                            disabled={busy !== null}
+                            onChange={() => toggleSelected(entry.noteId)}
+                          />
+                          <span className="trash-view__item">
+                            <strong>{entry.title}</strong>
+                            <span>{missingFolder ? missingFolderMessage(entry) : `原位置：${folderName(entry, folders)}`}</span>
+                            <time dateTime={entry.deletedAt}>删除于 {formatDate(entry.deletedAt)}</time>
+                          </span>
                         </label>
                       </li>
                     )
@@ -247,8 +222,13 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
       {purgeTarget !== null && (
         <div className="trash-view__dialog-backdrop" role="presentation">
           <section className="trash-view__dialog" role="alertdialog" aria-modal="true" aria-labelledby="trash-purge-heading">
-            <span className="library-pane__eyebrow">不可撤销</span><h3 id="trash-purge-heading">确定永久删除这些笔记吗？</h3><p>删除后将清除笔记及其附件，之后无法恢复。</p>
-            <footer><button type="button" onClick={() => setPurgeTarget(null)}>先不删除</button><button type="button" className="trash-view__danger-action" onClick={() => void purgePermanently()}>永久删除</button></footer>
+            <span className="library-pane__eyebrow">不可撤销</span>
+            <h3 id="trash-purge-heading">确定永久删除这些笔记吗？</h3>
+            <p>删除后将清除笔记及其附件，之后无法恢复。</p>
+            <footer>
+              <button type="button" onClick={() => setPurgeTarget(null)}>先不删除</button>
+              <button type="button" className="trash-view__danger-action" onClick={() => void purgePermanently()}>永久删除</button>
+            </footer>
           </section>
         </div>
       )}
@@ -268,11 +248,19 @@ function folderName(entry: TrashEntry, folders: Folder[]) {
 
 function missingFolderMessage(entry: TrashEntry) {
   if (entry.kind === 'temporary') return '原文件夹不可用，将恢复到“已恢复”'
-  return entry.previousFolderName ? `原文件夹“${entry.previousFolderName}”已被删除，恢复时将重新创建该文件夹` : '原文件夹已被删除，恢复时将放入“已恢复”'
+  return entry.previousFolderName
+    ? `原文件夹“${entry.previousFolderName}”已被删除，恢复时将重新创建该文件夹`
+    : '原文件夹已被删除，恢复时将放入“已恢复”'
 }
 
 function formatDate(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '未知时间'
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
 }

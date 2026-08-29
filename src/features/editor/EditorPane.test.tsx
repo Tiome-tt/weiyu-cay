@@ -2,15 +2,17 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { Profiler } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteId } from '../../domain/model'
-import { fakeAssetPort, fakeLinkPort, fakeNotePort, fakeSearchPort, note, pngBytes } from '../../test/fakes'
+import { fakeAssetPort, fakeLinkPort, fakeNotePort, fakeSearchPort, folders, note, pngBytes } from '../../test/fakes'
 import { EditorPane } from './EditorPane'
+import * as markdownPipeline from './markdownPipeline'
 
 afterEach(cleanup)
 
-const labels = ['源码视图', '分栏视图', '预览视图']
+const labels = ['文档编辑', '分栏校对', '阅读视图']
 
 function view() {
   const textbox = screen.getByRole('textbox', { name: 'Markdown source' })
@@ -43,13 +45,12 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} linkCache={new Map()} />)
 
     openMoreActions()
-    const target = await screen.findByRole('combobox', { name: '内部链接目标' })
-    await user.selectOptions(target, first.id)
+    await user.click(await screen.findByRole('treeitem', { name: '选择链接：A|B[1]' }))
     await user.click(screen.getByRole('menuitem', { name: '插入内部链接' }))
     expect(view().state.doc.toString()).toBe(`[[A\\|B\\[1\\]|${first.id}]]`)
 
     openMoreActions()
-    await user.selectOptions(screen.getByRole('combobox', { name: '内部链接目标' }), second.id)
+    await user.click(screen.getByRole('treeitem', { name: '选择链接：Second' }))
     await user.click(screen.getByRole('menuitem', { name: '重定向内部链接' }))
     expect(view().state.doc.toString()).toBe(`[[Second|${second.id}]]`)
     expect(screen.getByRole('link', { name: '[[Second]]' })).toBeVisible()
@@ -57,7 +58,27 @@ describe('EditorPane', () => {
 
   it('starts in the configured default editor view', () => {
     render(<EditorPane document={note('# Preview')} notes={fakeNotePort()} initialMode="preview" autosaveDelayMs={10_000} />)
-    expect(screen.getByRole('button', { name: '预览视图' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: labels[2] })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('adopts a newly loaded default view instead of retaining the previous mode', () => {
+    const { rerender } = render(
+      <EditorPane document={note('# One')} notes={fakeNotePort()} initialMode="preview" autosaveDelayMs={10_000} />,
+    )
+    expect(screen.getByRole('button', { name: labels[2] })).toHaveAttribute('aria-pressed', 'true')
+
+    rerender(<EditorPane document={note('# One')} notes={fakeNotePort()} initialMode="source" autosaveDelayMs={10_000} />)
+
+    expect(screen.getByRole('button', { name: labels[0] })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('textbox', { name: 'Markdown source' })).toBeVisible()
+  })
+
+  it('shows complete Markdown source in split mode', () => {
+    const markdown = 'Start **bold** and [site](https://example.com)'
+    render(<EditorPane document={note(markdown)} notes={fakeNotePort()} initialMode="split" autosaveDelayMs={10_000} />)
+
+    expect(view().contentDOM).toHaveTextContent(markdown)
+    expect(view().state.doc.toString()).toBe(markdown)
   })
 
   it('reports autosave state to the global toolbar while preserving detailed editor errors', async () => {
@@ -76,11 +97,14 @@ describe('EditorPane', () => {
     await waitFor(() => expect(onSaveStateChange).toHaveBeenCalledWith('dirty'))
   })
 
-  it('places the note title and exactly three primary view controls in the editor toolbar', () => {
-    render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} assets={fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 })} />)
+  it('places breadcrumbs in the quiet toolbar and the large title in the document', () => {
+    render(<EditorPane document={{ ...note('# Goal'), title: 'Goal' }} notes={fakeNotePort()} folders={folders()} assets={fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 })} />)
 
     const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
-    expect(within(toolbar).getByRole('heading', { name: 'Goal' })).toBeVisible()
+    expect(within(toolbar).getByLabelText('当前位置')).toHaveTextContent('项目 B/Goal')
+    expect(within(toolbar).queryByRole('heading', { name: 'Goal' })).not.toBeInTheDocument()
+    const title = screen.getByRole('heading', { name: 'Goal', level: 1 })
+    expect(title.closest('.editor-document-heading')).not.toBeNull()
     expect(within(toolbar).getAllByRole('button')).toHaveLength(3)
     labels.forEach((label) => {
       const button = within(toolbar).getByRole('button', { name: label })
@@ -93,6 +117,44 @@ describe('EditorPane', () => {
       'aria-pressed',
       'true',
     )
+  })
+
+  it('separates the note title from the body with a localized last-edited timestamp', () => {
+    render(
+      <EditorPane
+        document={{ ...note('正文第一段'), title: '岛屿周末计划', updatedAt: '2026-08-24T08:10:00Z' }}
+        notes={fakeNotePort()}
+      />,
+    )
+
+    const heading = screen.getByRole('heading', { name: '岛屿周末计划', level: 1 })
+    const header = heading.closest('.editor-document-heading')
+    expect(header).not.toBeNull()
+    expect(header).toHaveTextContent('最后编辑于')
+    expect(header?.querySelector('time')).toHaveAttribute('dateTime', '2026-08-24T08:10:00Z')
+    expect(header?.nextElementSibling).toHaveClass('editor-document__body')
+  })
+
+  it('localizes the legacy temporary capture title in the document preview', () => {
+    const temporary = { ...note('临时内容'), kind: 'temporary' as const, title: 'Temporary capture', folderId: null }
+    render(<EditorPane document={temporary} notes={fakeNotePort()} initialMode="preview" />)
+
+    expect(screen.getByRole('heading', { name: '临时便签', level: 1 })).toBeVisible()
+    expect(screen.getByLabelText('当前位置')).toHaveTextContent('未归档/临时便签')
+    expect(screen.queryByText('Temporary capture')).not.toBeInTheDocument()
+  })
+
+  it('keeps an editable document title named cleanly as a heading', () => {
+    render(
+      <EditorPane
+        document={{ ...note('# Goal'), title: 'Goal' }}
+        notes={fakeNotePort()}
+        onRenameNote={vi.fn()}
+      />,
+    )
+
+    const heading = screen.getByRole('heading', { name: 'Goal', level: 1 })
+    expect(within(heading).getByRole('textbox', { name: '笔记标题' })).toHaveValue('Goal')
   })
 
   it('collects secondary metadata controls in a keyboard-discoverable more menu', async () => {
@@ -120,11 +182,9 @@ describe('EditorPane', () => {
     await user.click(trigger)
     const menu = screen.getByRole('menu', { name: '笔记操作' })
     expect(toolbar).toContainElement(menu)
-    const linkTarget = within(menu).getByRole('combobox', { name: '内部链接目标' })
     const folderTarget = within(menu).getByRole('combobox', { name: '笔记文件夹' })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(folderTarget).toHaveFocus()
-    expect(linkTarget).toBeDisabled()
     expect(within(menu).getByRole('menuitem', { name: '插入内部链接' })).toBeDisabled()
     expect(within(menu).getByRole('menuitem', { name: '重定向内部链接' })).toBeDisabled()
     expect(folderTarget).toBeEnabled()
@@ -140,7 +200,7 @@ describe('EditorPane', () => {
     lastControl.focus()
     await user.tab()
     expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
-    expect(within(primary).getByRole('button', { name: '源码视图' })).toHaveFocus()
+    expect(within(primary).getByRole('button', { name: labels[0] })).toHaveFocus()
   })
 
   it('assigns notices, document, and backlinks to stable editor grid regions', () => {
@@ -171,20 +231,154 @@ describe('EditorPane', () => {
     expect(screen.getByRole('button', { name: labels[1] })).toHaveAttribute('aria-pressed', 'true')
     await user.click(screen.getByRole('button', { name: labels[2] }))
     expect(screen.queryByRole('textbox', { name: 'Markdown source' })).not.toBeInTheDocument()
-    expect(screen.getByRole('article')).toHaveTextContent('Goal')
+    const preview = screen.getByRole('article')
+    expect(preview).toHaveTextContent('Goal')
+    expect(preview.querySelector(':scope > .markdown-preview__page')).not.toBeNull()
     expect(screen.getByRole('button', { name: labels[2] })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('updates split preview immediately from the single source state', async () => {
+  it('updates split preview after a coalesced refresh from the single source state', () => {
+    vi.useFakeTimers()
+    try {
+      render(<EditorPane document={note('# Old')} notes={fakeNotePort()} initialMode="split" autosaveDelayMs={10_000} />)
+      const editor = view()
+      act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '## New' } }))
+      act(() => vi.advanceTimersByTime(250))
+
+      expect(screen.getByRole('article')).toHaveTextContent('New')
+      expect(screen.getByRole('article')).not.toHaveTextContent('Old')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows internal-link targets in a folder tree while keeping folders non-selectable', async () => {
+    const root = folders()[0]
+    const child = {
+      id: '019c0000-0000-7000-8000-000000000091' as import('../../domain/model').FolderId,
+      parentId: root.id,
+      name: '子目录',
+      sortOrder: 0,
+    }
+    const target = {
+      ...note(''),
+      id: '019c0000-0000-7000-8000-000000000092' as NoteId,
+      title: '子目录笔记',
+      folderId: child.id,
+      excerpt: '',
+    }
+    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([target]) })
+    render(
+      <EditorPane
+        document={note('')}
+        notes={fakeNotePort()}
+        links={links}
+        folders={[root, child]}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: '笔记更多操作' }))
+    const tree = await screen.findByRole('tree', { name: '内部链接目标' })
+    expect(within(tree).getByText(root.name)).toBeVisible()
+    expect(within(tree).getByText(child.name)).toBeVisible()
+    expect(within(tree).getByRole('treeitem', { name: '选择链接：子目录笔记' })).toBeVisible()
+    expect(within(tree).queryByRole('button', { name: root.name })).not.toBeInTheDocument()
+    expect(within(tree).queryByRole('button', { name: child.name })).not.toBeInTheDocument()
+  })
+
+  it('coalesces split preview refreshes while typing', () => {
+    vi.useFakeTimers()
+    try {
+      render(<EditorPane document={note('# Old')} notes={fakeNotePort()} initialMode="split" autosaveDelayMs={10_000} />)
+      const editor = view()
+
+      act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '# New' } }))
+
+      expect(screen.getByRole('article')).toHaveTextContent('Old')
+      expect(screen.getByRole('article')).not.toHaveTextContent('New')
+
+      act(() => vi.advanceTimersByTime(250))
+
+      expect(screen.getByRole('article')).toHaveTextContent('New')
+      expect(screen.getByRole('article')).not.toHaveTextContent('Old')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the split preview quiet during steady character input', () => {
+    vi.useFakeTimers()
+    const renderPreview = vi.spyOn(markdownPipeline, 'renderPreviewMarkdown')
+    try {
+      render(<EditorPane document={note('# Old\n\nlong body')} notes={fakeNotePort()} initialMode="split" autosaveDelayMs={10_000} />)
+      const editor = view()
+      const initialRenderCount = renderPreview.mock.calls.length
+
+      for (const character of 'steady typing') {
+        act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: character } }))
+        act(() => vi.advanceTimersByTime(100))
+      }
+
+      expect(renderPreview.mock.calls.length).toBe(initialRenderCount)
+    } finally {
+      renderPreview.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces outline draft notifications while typing', () => {
+    vi.useFakeTimers()
+    try {
+      const onDraftChange = vi.fn()
+      render(<EditorPane document={note('# Old')} notes={fakeNotePort()} initialMode="split" autosaveDelayMs={10_000} onDraftChange={onDraftChange} />)
+      const editor = view()
+
+      for (const character of 'steady typing') {
+        act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: character } }))
+      }
+
+      expect(onDraftChange).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(250))
+      expect(onDraftChange).toHaveBeenCalledOnce()
+      expect(onDraftChange).toHaveBeenLastCalledWith('# Oldsteady typing')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not commit the editor pane once per split-view character', () => {
+    vi.useFakeTimers()
+    try {
+      const commits: number[] = []
+      render(
+        <Profiler id="editor" onRender={() => commits.push(1)}>
+          <EditorPane document={note('')} notes={fakeNotePort()} initialMode="split" autosaveDelayMs={10_000} />
+        </Profiler>,
+      )
+      const beforeTyping = commits.length
+      const editor = view()
+
+      for (const character of 'abcdef') {
+        act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: character } }))
+      }
+
+      expect(commits.length - beforeTyping).toBeLessThan(6)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('defers hidden preview rendering while typing and refreshes it when preview becomes visible', async () => {
     const user = userEvent.setup()
-    render(<EditorPane document={note('# Old')} notes={fakeNotePort()} autosaveDelayMs={10_000} />)
-    await user.click(screen.getByRole('button', { name: labels[1] }))
-
+    const { container } = render(<EditorPane document={note('# Old')} notes={fakeNotePort()} autosaveDelayMs={10_000} />)
     const editor = view()
-    act(() => {
-      editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '## New' } })
-    })
 
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '# New' } }))
+
+    expect(container.querySelector('.editor-document__preview')).toHaveTextContent('Old')
+    expect(container.querySelector('.editor-document__preview')).not.toHaveTextContent('New')
+
+    await user.click(screen.getByRole('button', { name: labels[1] }))
     expect(screen.getByRole('article')).toHaveTextContent('New')
     expect(screen.getByRole('article')).not.toHaveTextContent('Old')
   })

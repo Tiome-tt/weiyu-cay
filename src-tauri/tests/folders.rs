@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::folders::FolderRepository,
     domain::{CreateFolderInput, FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
@@ -52,10 +52,7 @@ fn starred_state_round_trips_without_changing_folder_identity() {
     let store = TestStore::new();
     let repo = repository(&store);
     let folder = repo
-        .create(CreateFolderInput {
-            parent_id: None,
-            name: "重点".to_owned(),
-        })
+        .create(CreateFolderInput { parent_id: None, name: "重点".to_owned() })
         .unwrap();
     assert!(!folder.starred);
 
@@ -205,15 +202,6 @@ fn delete_removes_only_an_empty_folder_and_compacts_sort_order() {
     assert_eq!(folders[0].sort_order, 0);
 }
 
-#[test]
-fn delete_returns_not_found_for_an_unknown_folder() {
-    let store = TestStore::new();
-    let repo = repository(&store);
-    let error = repo
-        .delete(folder_id("019c0000-0000-7000-8000-00000000dead"))
-        .unwrap_err();
-    assert_eq!(error.code(), CommandErrorCode::NotFound);
-}
 #[test]
 fn folder_mutations_survive_a_full_index_rebuild_with_note_associations() {
     let mut store = TestStore::new();

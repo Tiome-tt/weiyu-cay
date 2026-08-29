@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
     storage::{
@@ -50,7 +50,7 @@ fn failed_replace_preserves_the_previous_document_and_cleans_only_its_temp() {
 
     let error = atomic_replace_with_hook(&document, b"new", |_source, _destination| {
         Err(PublishFailure::not_published(
-            simple_notes_lib::error::CommandError::io("injected failure before replace"),
+            weiyu_cay_lib::error::CommandError::io("injected failure before replace"),
         ))
     })
     .unwrap_err();
@@ -81,7 +81,7 @@ fn failed_publish_does_not_delete_a_replaced_temp_path_it_no_longer_owns() {
         fs::write(source, b"unrelated replacement").unwrap();
         swapped = Some(source.to_path_buf());
         Err(PublishFailure::not_published(
-            simple_notes_lib::error::CommandError::io("injected failure after source swap"),
+            weiyu_cay_lib::error::CommandError::io("injected failure after source swap"),
         ))
     })
     .unwrap_err();
@@ -103,7 +103,7 @@ fn published_sync_failure_reports_published_content_and_does_not_delete_it() {
     let error = atomic_replace_with_hook(&document, b"new", |source, destination| {
         fs::rename(source, destination).unwrap();
         Err(PublishFailure::published_but_sync_failed(
-            simple_notes_lib::error::CommandError::io("injected parent sync failure"),
+            weiyu_cay_lib::error::CommandError::io("injected parent sync failure"),
         ))
     })
     .unwrap_err();
@@ -129,12 +129,12 @@ fn parent_directory_exchange_never_publishes_outside_the_root() {
         b"new",
         |parent| {
             if fs::rename(parent, &moved).is_err() {
-                return Err(simple_notes_lib::error::CommandError::io(
+                return Err(weiyu_cay_lib::error::CommandError::io(
                     "pinned parent rejected exchange",
                 ));
             }
             create_directory_symlink(outside.path(), parent).map_err(|source| {
-                simple_notes_lib::error::CommandError::io(format!(
+                weiyu_cay_lib::error::CommandError::io(format!(
                     "could not install exchange symlink: {source}"
                 ))
             })
@@ -305,7 +305,7 @@ fn create_and_move_reject_missing_folders_before_durable_changes() {
 }
 
 fn publish_then_fail_sync(
-    paths: &simple_notes_lib::storage::paths::StoragePaths,
+    paths: &weiyu_cay_lib::storage::paths::StoragePaths,
     id: NoteId,
     kind: NoteKind,
     bytes: &[u8],
@@ -314,7 +314,7 @@ fn publish_then_fail_sync(
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("note.md"), bytes).unwrap();
     Err(PublishFailure::published_but_sync_failed(
-        simple_notes_lib::error::CommandError::io("injected parent sync failure"),
+        weiyu_cay_lib::error::CommandError::io("injected parent sync failure"),
     ))
 }
 

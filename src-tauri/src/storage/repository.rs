@@ -298,52 +298,23 @@ impl NoteRepository {
         self.move_note_locked(id, folder_id, &guard)
     }
 
-    pub fn reorder_notes(
-        &self,
-        folder_id: Option<FolderId>,
-        ordered_ids: Vec<NoteId>,
-    ) -> Result<(), CommandError> {
+    pub fn reorder_notes(&self, folder_id: Option<FolderId>, ordered_ids: Vec<NoteId>) -> Result<(), CommandError> {
         let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         let database = self.database()?;
         self.validate_folder_exists(&database, folder_id)?;
         let folder = folder_id.map(folder_id_blob);
-        let transaction = database
-            .connection()
-            .unchecked_transaction()
-            .map_err(database_error("could not start note reorder"))?;
+        let transaction = database.connection().unchecked_transaction().map_err(database_error("could not start note reorder"))?;
         let mut statement = transaction.prepare("SELECT id FROM notes WHERE folder_id IS ?1 AND kind='formal' AND deleted_at IS NULL").map_err(database_error("could not prepare note reorder"))?;
-        let existing_bytes = statement
-            .query_map(params![folder], |row| row.get::<_, Vec<u8>>(0))
-            .map_err(database_error("could not query note reorder"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(database_error("could not read note reorder"))?;
+        let existing_bytes = statement.query_map(params![folder], |row| row.get::<_, Vec<u8>>(0)).map_err(database_error("could not query note reorder"))?.collect::<Result<Vec<_>, _>>().map_err(database_error("could not read note reorder"))?;
         drop(statement);
-        let existing = existing_bytes
-            .iter()
-            .map(|bytes| note_id_from_blob(bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        if existing.len() != ordered_ids.len()
-            || existing.iter().any(|id| !ordered_ids.contains(id))
-        {
-            return Err(CommandError::validation(
-                "note order does not match the selected folder",
-            ));
+        let existing = existing_bytes.iter().map(|bytes| note_id_from_blob(bytes)).collect::<Result<Vec<_>, _>>()?;
+        if existing.len() != ordered_ids.len() || existing.iter().any(|id| !ordered_ids.contains(id)) {
+            return Err(CommandError::validation("note order does not match the selected folder"));
         }
         for (index, id) in ordered_ids.iter().enumerate() {
-            transaction
-                .execute(
-                    "UPDATE notes SET sort_order=?1 WHERE id=?2",
-                    params![
-                        i64::try_from(index)
-                            .map_err(|_| CommandError::validation("note order is too large"))?,
-                        note_id_blob(*id)
-                    ],
-                )
-                .map_err(database_error("could not update note order"))?;
+            transaction.execute("UPDATE notes SET sort_order=?1 WHERE id=?2", params![i64::try_from(index).map_err(|_| CommandError::validation("note order is too large"))?, note_id_blob(*id)]).map_err(database_error("could not update note order"))?;
         }
-        transaction
-            .commit()
-            .map_err(database_error("could not commit note reorder"))
+        transaction.commit().map_err(database_error("could not commit note reorder"))
     }
 
     #[doc(hidden)]

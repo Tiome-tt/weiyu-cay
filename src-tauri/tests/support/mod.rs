@@ -1,5 +1,5 @@
-use simple_notes_lib::storage::{database::Database, paths::StoragePaths};
-use simple_notes_lib::{
+use weiyu_cay_lib::storage::{database::Database, paths::StoragePaths};
+use weiyu_cay_lib::{
     domain::{NoteDocument, NoteId, NoteKind},
     storage::repository::NoteRepository,
 };

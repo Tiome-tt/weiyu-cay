@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
+import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
 import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
@@ -15,18 +15,19 @@ import { useResponsiveColumns } from './useResponsiveColumns'
 import { Icon } from '../../shared/Icon'
 import { CreateNotePopover, type CreateNoteDraft, type CreateNoteStatus } from './CreateNotePopover'
 import { MainWindowEmptyState } from './MainWindowEmptyState'
+import { NoteOutline, parseNoteHeadings } from './NoteOutline'
 
 interface LibraryLayoutProps {
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
-  startupGuide?: StartupGuidePort
   assets?: AssetPort & ImageReadPort
   search?: SearchPort
   links?: LinkPort
   temporary?: TemporaryPort
   temporaryWindows?: Pick<TemporaryWindowPort, 'show'>
   trash?: TrashPort
+  startupGuide?: StartupGuidePort
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
   onSaveStateChange?(status: Exclude<SaveState['status'], 'idle'> | 'hidden'): void
@@ -41,8 +42,8 @@ export interface LibraryLayoutHandle {
   createNote(trigger: HTMLButtonElement): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, startupGuide, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
-  const library = useLibrary(notes, folders, startupGuide)
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
+  const library = useLibrary(notes, folders)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
   const [createPopoverOpen, setCreatePopoverOpen] = useState(false)
@@ -59,6 +60,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
   const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
+  const [outlineDraft, setOutlineDraft] = useState<{ noteId: NoteId; markdown: string } | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const manualCollapsedRef = useRef<LibraryCollapsedPreference>({ folder: false, noteList: false })
   const [manualCollapsed, setManualCollapsed] = useState<LibraryCollapsedPreference>(manualCollapsedRef.current)
@@ -78,6 +80,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const linkRepairBusyRef = useRef(false)
   const mountedRef = useRef(false)
   const columnsRef = useRef<HTMLDivElement>(null)
+  const outlineDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const outlineHeadingSignatureRef = useRef('')
   const responsiveCollapsed = useResponsiveColumns(columnsRef)
   const collapsed: LibraryCollapsedPreference = {
     folder: manualCollapsed.folder || responsiveCollapsed.folder,
@@ -91,6 +95,23 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     (status: SaveState['status']) => onSaveStateChange?.(status === 'idle' ? 'hidden' : status),
     [onSaveStateChange],
   )
+  const reportOutlineDraft = useCallback((noteId: NoteId, markdown: string) => {
+    if (outlineDraftTimerRef.current !== null) clearTimeout(outlineDraftTimerRef.current)
+    outlineDraftTimerRef.current = setTimeout(() => {
+      outlineDraftTimerRef.current = null
+      const nextSignature = outlineHeadingSignature(markdown)
+      if (outlineHeadingSignatureRef.current === nextSignature) return
+      outlineHeadingSignatureRef.current = nextSignature
+      startTransition(() => {
+        setOutlineDraft((current) => current?.noteId === noteId && current.markdown === markdown
+          ? current
+          : { noteId, markdown })
+      })
+    }, 100)
+  }, [])
+  const outlineMarkdown = outlineDraft !== null && outlineDraft.noteId === library.document?.id
+    ? outlineDraft.markdown
+    : library.document?.markdown ?? ''
 
   useEffect(() => {
     if (activeView !== 'library' || library.documentState !== 'ready' || library.document === null) {
@@ -105,6 +126,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       navigationRequest.current += 1
       trashMutationRef.current += 1
       createOperationRequest.current += 1
+      if (outlineDraftTimerRef.current !== null) clearTimeout(outlineDraftTimerRef.current)
     }
   }, [])
 
@@ -112,6 +134,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     setMetadataNotice(null)
     setLinkRepairRetry(null)
   }, [library.activeNoteId])
+
+  useEffect(() => {
+    outlineHeadingSignatureRef.current = outlineHeadingSignature(library.document?.markdown ?? '')
+  }, [library.document?.id])
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -371,7 +397,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     createInFlightRef.current = operation
   }
 
-  const createQuickNote = (folderId: FolderId) => {
+  const createQuickNote = (folderId: FolderId | null) => {
     if (createInFlightRef.current !== null) return
     const now = new Date()
     const pad = (value: number) => String(value).padStart(2, '0')
@@ -417,7 +443,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       onUndoDelete={() => void undoFormalDelete()}
       onDismissFeedback={() => setTrashFeedback(null)}
       folderId={folderId}
-      showEmptyState
+      showEmptyState={folderId !== null}
       onReorder={library.reorderNotes}
       onMoveToFolder={async (noteId, targetFolderId) => { await navigateAfterSave(() => library.moveNote(noteId, targetFolderId)) }}
     />
@@ -509,7 +535,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         <FolderTree
           folders={library.folders}
           activeId={activeView === 'library' ? library.activeFolderId : null}
-          showUnfiled={true}
+          showUnfiled={false}
           temporaryInboxActive={activeView === 'temporary'}
           trashActive={activeView === 'trash'}
           state={library.folderState}
@@ -524,19 +550,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           onRename={library.renameFolder}
           onMove={library.moveFolder}
           onReorder={library.reorderFolders}
-          onDelete={async (id) => {
-            const operationId = await navigateAfterSave(() => library.deleteFolder(id))
-            if (operationId !== null && trash !== undefined) {
-              setRecentTrashOperationId(operationId)
-              setTrashFeedback('文件夹已移入回收站。')
-            }
-          }}
+          onDelete={library.deleteFolder}
           onCreateNote={createQuickNote}
           onToggleStar={library.toggleFolderStar}
           onMoveNote={async (noteId, folderId) => {
             await navigateAfterSave(() => library.moveNote(noteId, folderId))
           }}
-          folderContents={undefined}
+          folderContents={activeView === 'library' ? renderFolderNotes : undefined}
         />
         </div>
       </aside>
@@ -558,17 +578,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
           </section>
         ) : (
-          <>
-            <header className="library-pane__header library-pane__header--compact">
-              <div><span className="library-pane__eyebrow">笔记目录</span><h2>笔记</h2></div>
-              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
-            </header>
-            {renderFolderNotes(library.activeFolderId)}
-          </>
+          <NoteOutline markdown={outlineMarkdown} onNavigate={(line, headingIndex) => editorRef.current?.navigateToHeading(line, headingIndex)} onCollapse={() => setColumnCollapsed('noteList', true)} />
         )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
-        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} assetReader={assets} windows={temporaryWindows} external={system} autosaveDelayMs={autosaveDelayMs} />}
+        {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} assetReader={assets} windows={temporaryWindows} external={system} autosaveDelayMs={autosaveDelayMs} onConversionComplete={async (noteId, folderId) => {
+          await library.refreshLibrary()
+          setActiveView('library')
+          library.selectFolder(folderId)
+          library.selectNote(noteId)
+        }} />}
         {activeView === 'trash' && trash && (
           <TrashView
             trash={trash}
@@ -615,6 +634,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             initialMode={defaultEditorMode}
             autosaveDelayMs={autosaveDelayMs}
             onSaveStateChange={reportEditorSaveState}
+            onDraftChange={(markdown) => reportOutlineDraft(library.document!.id, markdown)}
           />
         )}
         {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
@@ -632,6 +652,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
 function linkRepairNeedsRetry(report: LinkRepairReport) {
   return report.failure !== null || report.failedSourceIds.length > 0
+}
+
+export function outlineHeadingSignature(markdown: string) {
+  return parseNoteHeadings(markdown)
+    .map((heading) => `${heading.line}:${heading.level}:${heading.text}`)
+    .join('|')
 }
 
 function isColumnPreference(value: unknown): value is LibraryColumnPreference {

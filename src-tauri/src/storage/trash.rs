@@ -1,8 +1,8 @@
 use crate::{
-    commands::folders::{write_manifest as persist_folders_manifest, FolderRepository},
+    commands::folders::FolderRepository,
     domain::{
-        FolderId, NoteDocument, NoteId, NoteKind, PurgeTrashResult, RestoreTrashResult,
-        TrashBatchResult, TrashEntry, TrashFailure, TrashFolderEntry,
+        CreateFolderInput, FolderId, NoteDocument, NoteId, NoteKind, PurgeTrashResult, RestoreTrashResult,
+        TrashBatchResult, TrashEntry, TrashFailure,
     },
     error::CommandError,
     platform::{IndexMutationLock, SafeDirectory},
@@ -24,33 +24,8 @@ use uuid::Uuid;
 
 const MANIFEST_SUFFIX: &str = ".trash.json";
 const MANIFEST_NAME_BYTES: usize = 36 + MANIFEST_SUFFIX.len();
-const FOLDER_MANIFEST_SUFFIX: &str = ".folder.json";
-const FOLDER_MANIFEST_NAME_BYTES: usize = 36 + FOLDER_MANIFEST_SUFFIX.len();
 const RECOVERED_FOLDER_NAME: &str = "已恢复";
 const RECOVERED_FOLDER_ID: &str = "019c0000-0000-7000-8000-00000000fffe";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrashFolderSnapshot {
-    pub id: FolderId,
-    pub parent_id: Option<FolderId>,
-    pub name: String,
-    pub sort_order: i64,
-    pub starred: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FolderTrashManifest {
-    version: u8,
-    state: TrashItemState,
-    operation_id: String,
-    folder_id: FolderId,
-    folder_snapshot: Vec<TrashFolderSnapshot>,
-    deleted_at: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,10 +44,9 @@ pub struct TrashManifest {
     pub assets: Vec<String>,
     pub original: NoteDocument,
     #[serde(default)]
-    pub folder_snapshot: Vec<TrashFolderSnapshot>,
-    #[serde(default)]
     pub restore_document: Option<NoteDocument>,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TrashItemState {
@@ -118,44 +92,6 @@ impl TrashService {
         }
     }
 
-    pub fn prepare_folder_snapshot(
-        &self,
-        folder_snapshot: Vec<TrashFolderSnapshot>,
-        deleted_at: &str,
-    ) -> Result<String, CommandError> {
-        parse_timestamp(deleted_at)?;
-        validate_folder_snapshot(&folder_snapshot)?;
-        let folder_id = folder_snapshot
-            .first()
-            .map(|folder| folder.id)
-            .ok_or_else(|| CommandError::validation("folder trash snapshot is empty"))?;
-        let operation_id = Uuid::now_v7().hyphenated().to_string();
-        write_folder_manifest(
-            &self.paths,
-            &FolderTrashManifest {
-                version: 1,
-                state: TrashItemState::Prepared,
-                operation_id: operation_id.clone(),
-                folder_id,
-                folder_snapshot,
-                deleted_at: deleted_at.to_owned(),
-            },
-        )?;
-        Ok(operation_id)
-    }
-
-    pub fn mark_folder_deleted(
-        &self,
-        operation_id: &str,
-        folder_id: FolderId,
-    ) -> Result<(), CommandError> {
-        let mut manifest = read_folder_manifest(&self.paths, operation_id, folder_id)?;
-        if manifest.state != TrashItemState::Prepared {
-            return Err(CommandError::conflict("folder trash entry is not pending"));
-        }
-        manifest.state = TrashItemState::Deleted;
-        write_folder_manifest(&self.paths, &manifest)
-    }
     pub fn recover_pending(&self) -> Result<(), CommandError> {
         let guard = IndexMutationLock::acquire(self.paths.root())?;
         for mut manifest in self.read_all_manifests()? {
@@ -170,15 +106,6 @@ impl TrashService {
             // without preventing valid siblings or application startup.
             let _ = result;
         }
-        for mut manifest in self.read_all_folder_manifests()? {
-            let result = match manifest.state {
-                TrashItemState::Prepared => self.recover_prepared_folder(&mut manifest),
-                TrashItemState::Deleted => Ok(()),
-                TrashItemState::Restoring => self.recover_restoring_folder(&manifest),
-                TrashItemState::Purging => remove_folder_manifest(&self.paths, &manifest),
-            };
-            let _ = result;
-        }
         Ok(())
     }
 
@@ -187,21 +114,12 @@ impl TrashService {
         ids: Vec<NoteId>,
         deleted_at: &str,
     ) -> Result<TrashBatchResult, CommandError> {
-        self.trash_with_folder_snapshot(ids, deleted_at, Vec::new())
-    }
-
-    pub fn trash_with_folder_snapshot(
-        &self,
-        ids: Vec<NoteId>,
-        deleted_at: &str,
-        folder_snapshot: Vec<TrashFolderSnapshot>,
-    ) -> Result<TrashBatchResult, CommandError> {
         parse_timestamp(deleted_at)?;
         let operation_id = Uuid::now_v7().hyphenated().to_string();
         let mut trashed = Vec::new();
         let mut failed = Vec::new();
         for id in unique_ids(ids) {
-            match self.trash_one(&operation_id, id, deleted_at, &folder_snapshot) {
+            match self.trash_one(&operation_id, id, deleted_at) {
                 Ok(()) => trashed.push(id),
                 Err(error) => failed.push(TrashFailure {
                     note_id: id,
@@ -232,42 +150,13 @@ impl TrashService {
             .collect())
     }
 
-    pub fn list_folder_trash(&self) -> Result<Vec<TrashFolderEntry>, CommandError> {
-        let _guard = IndexMutationLock::acquire(self.paths.root())?;
-        let mut manifests = self
-            .read_all_folder_manifests()?
-            .into_iter()
-            .filter(|manifest| manifest.state == TrashItemState::Deleted)
-            .map(|manifest| TrashFolderEntry {
-                folder_id: manifest.folder_id,
-                title: manifest
-                    .folder_snapshot
-                    .first()
-                    .map(|folder| folder.name.clone())
-                    .unwrap_or_else(|| "未命名文件夹".to_owned()),
-                deleted_at: manifest.deleted_at,
-                operation_id: manifest.operation_id,
-                folder_count: manifest.folder_snapshot.len(),
-            })
-            .collect::<Vec<_>>();
-        manifests.sort_by(|left, right| {
-            right
-                .deleted_at
-                .cmp(&left.deleted_at)
-                .then_with(|| left.folder_id.to_string().cmp(&right.folder_id.to_string()))
-        });
-        Ok(manifests)
-    }
-
     pub fn restore(&self, ids: Vec<NoteId>) -> Result<RestoreTrashResult, CommandError> {
         self.restore_matching(unique_ids(ids), None)
     }
 
     pub fn undo(&self, operation_id: &str) -> Result<RestoreTrashResult, CommandError> {
         validate_operation_id(operation_id)?;
-        let result = self.restore_matching(Vec::new(), Some(operation_id))?;
-        self.restore_folder_matching(operation_id)?;
-        Ok(result)
+        self.restore_matching(Vec::new(), Some(operation_id))
     }
 
     pub fn purge(&self, ids: Vec<NoteId>) -> Result<PurgeTrashResult, CommandError> {
@@ -300,7 +189,6 @@ impl TrashService {
         let now = parse_timestamp(now)?;
         let _guard = IndexMutationLock::acquire(self.paths.root())?;
         let manifests = self.read_all_manifests()?;
-        let folder_manifests = self.read_all_folder_manifests()?;
         let mut purged = Vec::new();
         let mut failed = Vec::new();
         for manifest in manifests {
@@ -322,14 +210,6 @@ impl TrashService {
                 }),
             }
         }
-        for manifest in folder_manifests {
-            let deleted_at = parse_timestamp(&manifest.deleted_at)?;
-            if manifest.state == TrashItemState::Deleted
-                && now.signed_duration_since(deleted_at) > Duration::days(30)
-            {
-                let _ = self.purge_folder_manifest(&manifest);
-            }
-        }
         Ok(PurgeTrashResult { purged, failed })
     }
 
@@ -338,7 +218,6 @@ impl TrashService {
         operation_id: &str,
         id: NoteId,
         deleted_at: &str,
-        folder_snapshot: &[TrashFolderSnapshot],
     ) -> Result<(), CommandError> {
         let guard = IndexMutationLock::acquire(self.paths.root())?;
         let document = NoteRepository::new(self.paths.clone()).load_locked(id, &guard)?;
@@ -356,14 +235,11 @@ impl TrashService {
             kind: document.kind,
             title: document.title.clone(),
             previous_folder_id: document.folder_id,
-            previous_folder_name: document
-                .folder_id
-                .and_then(|folder_id| folder_name(&self.paths, folder_id).ok().flatten()),
+            previous_folder_name: document.folder_id.and_then(|folder_id| folder_name(&self.paths, folder_id).ok().flatten()),
             previous_relative_path: format!("{}/{}", collection(document.kind), id),
             deleted_at: deleted_at.to_owned(),
             assets,
             original: document.clone(),
-            folder_snapshot: folder_snapshot.to_vec(),
             restore_document: None,
         };
         write_manifest(&self.paths, &manifest)?;
@@ -449,17 +325,6 @@ impl TrashService {
         Ok(())
     }
 
-    fn restore_folder_matching(&self, operation_id: &str) -> Result<(), CommandError> {
-        let guard = IndexMutationLock::acquire(self.paths.root())?;
-        let manifests = self.read_all_folder_manifests()?;
-        for manifest in manifests
-            .into_iter()
-            .filter(|manifest| manifest.operation_id == operation_id)
-        {
-            self.restore_folder_manifest(&manifest, &guard)?;
-        }
-        Ok(())
-    }
     fn restore_matching(
         &self,
         ids: Vec<NoteId>,
@@ -507,7 +372,6 @@ impl TrashService {
         if manifest.state != TrashItemState::Deleted {
             return Err(CommandError::conflict("trash entry is not restorable"));
         }
-        restore_folder_snapshot(&self.paths, &manifest.folder_snapshot)?;
         let durable = read_trashed_document(&self.paths, manifest)?;
         let document = derive_restore_document(&self.paths, manifest, durable.clone(), guard)?;
         let mut restoring = manifest.clone();
@@ -628,62 +492,6 @@ impl TrashService {
         remove_catalog_manifest(&self.paths, &manifest.operation_id, manifest.note_id)
     }
 
-    fn purge_folder_manifest(&self, manifest: &FolderTrashManifest) -> Result<(), CommandError> {
-        validate_folder_manifest(manifest)?;
-        if manifest.state != TrashItemState::Deleted {
-            return Err(CommandError::conflict(
-                "folder trash entry is not purgeable",
-            ));
-        }
-        let mut purging = manifest.clone();
-        purging.state = TrashItemState::Purging;
-        write_folder_manifest(&self.paths, &purging)?;
-        remove_folder_manifest(&self.paths, &purging)
-    }
-    fn restore_folder_manifest(
-        &self,
-        manifest: &FolderTrashManifest,
-        _guard: &IndexMutationLock,
-    ) -> Result<(), CommandError> {
-        validate_folder_manifest(manifest)?;
-        if manifest.state != TrashItemState::Deleted {
-            return Err(CommandError::conflict(
-                "folder trash entry is not restorable",
-            ));
-        }
-        let mut restoring = manifest.clone();
-        restoring.state = TrashItemState::Restoring;
-        write_folder_manifest(&self.paths, &restoring)?;
-        if let Err(error) = restore_folder_snapshot(&self.paths, &manifest.folder_snapshot) {
-            let _ = write_folder_manifest(&self.paths, manifest);
-            return Err(error);
-        }
-        remove_folder_manifest(&self.paths, manifest)
-    }
-
-    fn recover_prepared_folder(
-        &self,
-        manifest: &mut FolderTrashManifest,
-    ) -> Result<(), CommandError> {
-        validate_folder_manifest(manifest)?;
-        if folder_exists(&self.paths, Some(manifest.folder_id))? {
-            remove_folder_manifest(&self.paths, manifest)
-        } else {
-            manifest.state = TrashItemState::Deleted;
-            write_folder_manifest(&self.paths, manifest)
-        }
-    }
-
-    fn recover_restoring_folder(&self, manifest: &FolderTrashManifest) -> Result<(), CommandError> {
-        validate_folder_manifest(manifest)?;
-        if folder_exists(&self.paths, Some(manifest.folder_id))? {
-            remove_folder_manifest(&self.paths, manifest)
-        } else {
-            let mut deleted = manifest.clone();
-            deleted.state = TrashItemState::Deleted;
-            write_folder_manifest(&self.paths, &deleted)
-        }
-    }
     fn recover_prepared(
         &self,
         manifest: &mut TrashManifest,
@@ -740,7 +548,6 @@ impl TrashService {
         manifest: &TrashManifest,
         guard: &IndexMutationLock,
     ) -> Result<(), CommandError> {
-        restore_folder_snapshot(&self.paths, &manifest.folder_snapshot)?;
         let active = contained_note_exists(&self.paths, manifest.kind, manifest.note_id)?;
         let trashed =
             contained_trash_exists(&self.paths, &manifest.operation_id, manifest.note_id)?;
@@ -860,57 +667,6 @@ impl TrashService {
         }
         Ok(manifests)
     }
-
-    fn read_all_folder_manifests(&self) -> Result<Vec<FolderTrashManifest>, CommandError> {
-        let trash = SafeDirectory::open(self.paths.root(), &["trash"], false)?;
-        let mut manifests = Vec::new();
-        for operation_id in trash.entry_names()? {
-            if validate_operation_id(&operation_id).is_err() {
-                continue;
-            }
-            let Ok(operation) =
-                SafeDirectory::open(self.paths.root(), &["trash", &operation_id], false)
-            else {
-                continue;
-            };
-            let Ok(names) = operation.entry_names() else {
-                continue;
-            };
-            for name in names {
-                if !name.ends_with(FOLDER_MANIFEST_SUFFIX) {
-                    continue;
-                }
-                if name.len() > FOLDER_MANIFEST_NAME_BYTES {
-                    let _ = quarantine_manifest(&operation, &name);
-                    continue;
-                }
-                if !matches!(operation.entry_is_regular_file(&name), Ok(true)) {
-                    continue;
-                }
-                let bytes = match operation.read(&name, 4 * 1024 * 1024) {
-                    Ok(bytes) => bytes,
-                    Err(_) => continue,
-                };
-                let parsed = serde_json::from_slice::<FolderTrashManifest>(&bytes)
-                    .map_err(|source| {
-                        CommandError::validation(format!(
-                            "folder trash manifest is invalid: {source}"
-                        ))
-                    })
-                    .and_then(|manifest| {
-                        validate_folder_manifest_path(&operation_id, &name, &manifest)?;
-                        Ok(manifest)
-                    });
-                match parsed {
-                    Ok(manifest) => manifests.push(manifest),
-                    Err(_) => {
-                        let _ = quarantine_manifest(&operation, &name);
-                    }
-                }
-            }
-        }
-        Ok(manifests)
-    }
 }
 
 pub fn run_startup_trash_maintenance(paths: StoragePaths, now: &str) -> Result<(), CommandError> {
@@ -938,136 +694,6 @@ fn manifest_name(id: NoteId) -> String {
     format!("{id}{MANIFEST_SUFFIX}")
 }
 
-fn folder_manifest_name(id: FolderId) -> String {
-    format!("{id}{FOLDER_MANIFEST_SUFFIX}")
-}
-
-fn write_folder_manifest(
-    paths: &StoragePaths,
-    manifest: &FolderTrashManifest,
-) -> Result<(), CommandError> {
-    validate_folder_manifest(manifest)?;
-    let bytes = serde_json::to_vec_pretty(manifest).map_err(|source| {
-        CommandError::io(format!(
-            "could not serialize folder trash manifest: {source}"
-        ))
-    })?;
-    match atomic_replace_contained(
-        paths.root(),
-        &["trash", &manifest.operation_id],
-        &folder_manifest_name(manifest.folder_id),
-        &bytes,
-    ) {
-        Ok(PublishState::Published) => Ok(()),
-        Ok(state) => Err(CommandError::io(format!(
-            "folder trash manifest returned invalid state: {state:?}"
-        ))),
-        Err(failure) if failure.state() != PublishState::NotPublished => {
-            recover_and_confirm_folder_manifest(paths, manifest, &bytes)
-                .map_err(|_| failure.into_error())
-        }
-        Err(failure) => Err(failure.into_error()),
-    }
-}
-
-fn recover_and_confirm_folder_manifest(
-    paths: &StoragePaths,
-    manifest: &FolderTrashManifest,
-    expected: &[u8],
-) -> Result<(), CommandError> {
-    let operation = SafeDirectory::open(paths.root(), &["trash", &manifest.operation_id], false)?;
-    let name = folder_manifest_name(manifest.folder_id);
-    operation.recover(&name)?;
-    if operation.read(&name, expected.len() as u64 + 1)? != expected {
-        return Err(CommandError::conflict(
-            "recovered folder trash state does not match the requested phase",
-        ));
-    }
-    operation.sync_file(&name)?;
-    operation.sync()
-}
-
-fn read_folder_manifest(
-    paths: &StoragePaths,
-    operation_id: &str,
-    folder_id: FolderId,
-) -> Result<FolderTrashManifest, CommandError> {
-    validate_operation_id(operation_id)?;
-    let operation = SafeDirectory::open(paths.root(), &["trash", operation_id], false)?;
-    let name = folder_manifest_name(folder_id);
-    let bytes = operation.read(&name, 4 * 1024 * 1024)?;
-    let manifest: FolderTrashManifest = serde_json::from_slice(&bytes).map_err(|source| {
-        CommandError::validation(format!("folder trash manifest is invalid: {source}"))
-    })?;
-    validate_folder_manifest_path(operation_id, &name, &manifest)?;
-    Ok(manifest)
-}
-
-fn remove_folder_manifest(
-    paths: &StoragePaths,
-    manifest: &FolderTrashManifest,
-) -> Result<(), CommandError> {
-    validate_folder_manifest(manifest)?;
-    let operation = SafeDirectory::open(paths.root(), &["trash", &manifest.operation_id], false)?;
-    operation.remove_checked(&folder_manifest_name(manifest.folder_id))?;
-    operation.sync()
-}
-
-fn validate_folder_manifest_path(
-    operation_id: &str,
-    name: &str,
-    manifest: &FolderTrashManifest,
-) -> Result<(), CommandError> {
-    if manifest.operation_id != operation_id || folder_manifest_name(manifest.folder_id) != name {
-        return Err(CommandError::validation(
-            "folder trash manifest identity does not match its path",
-        ));
-    }
-    validate_folder_manifest(manifest)
-}
-
-fn validate_folder_manifest(manifest: &FolderTrashManifest) -> Result<(), CommandError> {
-    validate_operation_id(&manifest.operation_id)?;
-    parse_timestamp(&manifest.deleted_at)?;
-    if manifest.version != 1
-        || manifest.folder_snapshot.is_empty()
-        || manifest.folder_snapshot[0].id != manifest.folder_id
-    {
-        return Err(CommandError::validation(
-            "folder trash manifest is inconsistent",
-        ));
-    }
-    validate_folder_snapshot(&manifest.folder_snapshot)
-}
-
-fn validate_folder_snapshot(snapshot: &[TrashFolderSnapshot]) -> Result<(), CommandError> {
-    if snapshot.is_empty() {
-        return Err(CommandError::validation("folder trash snapshot is empty"));
-    }
-    let mut ids = HashSet::new();
-    for (index, folder) in snapshot.iter().enumerate() {
-        if !ids.insert(folder.id) || folder.name.trim().is_empty() || folder.sort_order < 0 {
-            return Err(CommandError::validation(
-                "folder trash snapshot contains invalid metadata",
-            ));
-        }
-        parse_timestamp(&folder.created_at)?;
-        parse_timestamp(&folder.updated_at)?;
-        if let Some(parent_id) = folder.parent_id {
-            if let Some(parent_index) = snapshot
-                .iter()
-                .position(|candidate| candidate.id == parent_id)
-            {
-                if parent_index >= index {
-                    return Err(CommandError::validation(
-                        "folder trash snapshot is not ordered by hierarchy",
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
 fn write_manifest(paths: &StoragePaths, manifest: &TrashManifest) -> Result<(), CommandError> {
     validate_manifest(manifest)?;
     let bytes = serde_json::to_vec_pretty(manifest).map_err(|source| {
@@ -1138,7 +764,6 @@ pub(crate) fn catalog_moved_temporary(
             deleted_at: deleted_at.to_owned(),
             assets,
             original: document.clone(),
-            folder_snapshot: Vec::new(),
             restore_document: None,
         },
     )
@@ -1319,49 +944,6 @@ fn read_trashed_document(
     Ok(document)
 }
 
-fn restore_folder_snapshot(
-    paths: &StoragePaths,
-    snapshot: &[TrashFolderSnapshot],
-) -> Result<(), CommandError> {
-    if snapshot.is_empty() {
-        return Ok(());
-    }
-    let database = open_database(paths)?;
-    let transaction = database
-        .connection()
-        .unchecked_transaction()
-        .map_err(database_error("could not start folder snapshot restore"))?;
-    for folder in snapshot {
-        let existing = transaction
-            .query_row(
-                "SELECT 1 FROM folders WHERE id=?1",
-                [folder_id_blob(folder.id)],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(database_error("could not inspect folder snapshot"))?;
-        if existing.is_none() {
-            transaction
-                .execute(
-                    "INSERT INTO folders (id, parent_id, name, sort_order, starred, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![
-                        folder_id_blob(folder.id),
-                        folder.parent_id.map(folder_id_blob),
-                        folder.name,
-                        folder.sort_order,
-                        folder.starred,
-                        folder.created_at,
-                        folder.updated_at,
-                    ],
-                )
-                .map_err(database_error("could not restore folder snapshot"))?;
-        }
-    }
-    persist_folders_manifest(&transaction, paths)?;
-    transaction
-        .commit()
-        .map_err(database_error("could not commit folder snapshot restore"))
-}
 fn derive_restore_document(
     paths: &StoragePaths,
     manifest: &TrashManifest,
@@ -1376,15 +958,10 @@ fn derive_restore_document(
     let durable_folder_id = document.folder_id;
     let target = if folder_exists(paths, durable_folder_id)? {
         durable_folder_id
+    } else if let Some(name) = manifest.previous_folder_name.as_deref() {
+        Some(recreated_folder(paths, name, guard)?)
     } else {
-        Some(recovered_folder_with_name(
-            paths,
-            manifest
-                .previous_folder_name
-                .as_deref()
-                .unwrap_or(RECOVERED_FOLDER_NAME),
-            guard,
-        )?)
+        Some(recovered_folder(paths, guard)?)
     };
     if document.folder_id != target {
         document.folder_id = target;
@@ -1529,16 +1106,50 @@ fn folder_name(paths: &StoragePaths, folder_id: FolderId) -> Result<Option<Strin
         .map_err(database_error("could not read previous folder name"))
 }
 
-fn recovered_folder_with_name(
+fn recreated_folder(
     paths: &StoragePaths,
-    preferred_name: &str,
+    original_name: &str,
+    guard: &IndexMutationLock,
+) -> Result<FolderId, CommandError> {
+    let database = open_database(paths)?;
+    let name_exists = |name: &str| -> Result<Option<FolderId>, CommandError> {
+        database
+            .connection()
+            .query_row(
+                "SELECT id FROM folders WHERE parent_id IS NULL AND name=?1",
+                [name],
+                |row| {
+                    let bytes: Vec<u8> = row.get(0)?;
+                    let uuid = Uuid::from_slice(&bytes).map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    FolderId::parse_str(&uuid.hyphenated().to_string()).map_err(|_| rusqlite::Error::InvalidQuery)
+                },
+            )
+            .optional()
+            .map_err(database_error("could not inspect recreated folder name"))
+    };
+    if let Some(id) = name_exists(original_name)? {
+        return Ok(id);
+    }
+    FolderRepository::new(paths.clone())
+        .create_locked(
+            CreateFolderInput {
+                parent_id: None,
+                name: original_name.to_owned(),
+            },
+            guard,
+        )
+        .map(|folder| folder.id)
+}
+
+fn recovered_folder(
+    paths: &StoragePaths,
     guard: &IndexMutationLock,
 ) -> Result<FolderId, CommandError> {
     let id = FolderId::parse_str(RECOVERED_FOLDER_ID).map_err(|source| {
         CommandError::database(format!("recovered folder ID is invalid: {source}"))
     })?;
     FolderRepository::new(paths.clone())
-        .ensure_system_root_locked(id, preferred_name, guard)
+        .ensure_system_root_locked(id, RECOVERED_FOLDER_NAME, guard)
         .map(|folder| folder.id)
 }
 

@@ -1,7 +1,7 @@
 mod support;
 
 use image::{DynamicImage, ImageFormat};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::assets::{
         read_image_asset_from, save_image_to, save_image_to_with, save_image_to_with_publish_hook,
         validate_image,
@@ -98,6 +98,7 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
         "allow-save-temporary",
         "allow-hide-temporary-window",
         "allow-set-temporary-always-on-top",
+        "allow-read-image-asset",
     ] {
         assert!(sticky_permissions.contains(required));
     }
@@ -106,7 +107,6 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
         "allow-list-notes",
         "allow-rename-note",
         "allow-list-link-targets",
-        "allow-read-image-asset",
         "allow-open-external-link",
         "allow-complete-main-window-close",
         "allow-begin-main-window-close-listener-registration",
@@ -176,10 +176,10 @@ fn updater_commands_are_main_only_and_plugin_ipc_is_not_granted_to_any_renderer(
 
 #[test]
 fn update_command_authorization_accepts_only_the_main_window_label() {
-    assert!(simple_notes_lib::commands::updates::authorize_main_window_label("main").is_ok());
+    assert!(weiyu_cay_lib::commands::updates::authorize_main_window_label("main").is_ok());
     for unprivileged_label in ["temporary-ipc-test", "desktop", "main-clone"] {
         assert_eq!(
-            simple_notes_lib::commands::updates::authorize_main_window_label(unprivileged_label)
+            weiyu_cay_lib::commands::updates::authorize_main_window_label(unprivileged_label)
                 .unwrap_err()
                 .code(),
             CommandErrorCode::Validation,
@@ -414,12 +414,12 @@ fn image_save_holds_the_mutation_lock_through_asset_publication() {
             file.write_all(bytes)
                 .and_then(|()| file.sync_all())
                 .map_err(|source| {
-                    simple_notes_lib::error::CommandError::io(format!(
+                    weiyu_cay_lib::error::CommandError::io(format!(
                         "could not persist image asset: {source}"
                     ))
                 })
         };
-        let mut before_publish = |_directory: &simple_notes_lib::platform::SafeDirectory,
+        let mut before_publish = |_directory: &weiyu_cay_lib::platform::SafeDirectory,
                                   _staging: &str,
                                   _filename: &str| {
             entered_tx.send(()).unwrap();
@@ -430,7 +430,7 @@ fn image_save_holds_the_mutation_lock_through_asset_publication() {
             }
         };
         let mut sync =
-            |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+            |directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| directory.sync();
         save_image_to_with_publish_hook(
             &paths,
             input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),
@@ -443,7 +443,7 @@ fn image_save_holds_the_mutation_lock_through_asset_publication() {
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
     assert!(
-        simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+        weiyu_cay_lib::platform::IndexMutationLock::acquire_with_timeout(
             store.paths.root(),
             Duration::from_millis(25),
         )
@@ -484,12 +484,12 @@ fn write_failure_leaves_only_a_private_staging_orphan() {
     let mut names = || write_uuid;
     let mut fail_write = |file: &mut std::fs::File, _bytes: &[u8]| {
         file.write_all(b"partial").unwrap();
-        Err(simple_notes_lib::error::CommandError::io(
+        Err(weiyu_cay_lib::error::CommandError::io(
             "injected write failure",
         ))
     };
     let mut sync =
-        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+        |directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| directory.sync();
 
     save_image_to_with(
         &store.paths,
@@ -527,10 +527,10 @@ fn directory_sync_failure_keeps_the_published_asset_as_a_recoverable_orphan() {
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
-    let mut fail_sync = |_directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| {
-        Err(simple_notes_lib::error::CommandError::io(
+    let mut fail_sync = |_directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| {
+        Err(weiyu_cay_lib::error::CommandError::io(
             "injected sync failure",
         ))
     };
@@ -558,9 +558,9 @@ fn cleanup_never_deletes_a_replacement_that_arrives_before_sync_failure() {
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
-    let mut replace_then_fail = |directory: &simple_notes_lib::platform::SafeDirectory,
+    let mut replace_then_fail = |directory: &weiyu_cay_lib::platform::SafeDirectory,
                                  name: &str| {
         assert_eq!(name, filename);
         directory.remove_checked(name).unwrap();
@@ -569,7 +569,7 @@ fn cleanup_never_deletes_a_replacement_that_arrives_before_sync_failure() {
             .write_all(b"replacement-owned-elsewhere")
             .unwrap();
         replacement.sync_all().unwrap();
-        Err(simple_notes_lib::error::CommandError::io(
+        Err(weiyu_cay_lib::error::CommandError::io(
             "injected sync failure",
         ))
     };
@@ -603,9 +603,9 @@ fn replacement_during_directory_sync_is_not_returned_as_a_saved_asset() {
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
-    let mut replace_then_sync = |directory: &simple_notes_lib::platform::SafeDirectory,
+    let mut replace_then_sync = |directory: &weiyu_cay_lib::platform::SafeDirectory,
                                  name: &str| {
         directory.remove_checked(name).unwrap();
         let mut replacement = directory.create_new(name).unwrap();
@@ -632,7 +632,7 @@ fn deterministic_name_collision_preserves_existing_bytes_and_retries_a_new_name(
     let first = uuid("019c0000-0000-7000-8000-000000000084");
     let second = uuid("019c0000-0000-7000-8000-000000000085");
     let existing_name = format!("screenshot-{first}.png");
-    let directory = simple_notes_lib::platform::SafeDirectory::open(
+    let directory = weiyu_cay_lib::platform::SafeDirectory::open(
         store.paths.root(),
         &["notes", FORMAL_ID, "assets"],
         true,
@@ -647,10 +647,10 @@ fn deterministic_name_collision_preserves_existing_bytes_and_retries_a_new_name(
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
     let mut sync =
-        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+        |directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| directory.sync();
 
     let saved = save_image_to_with(
         &store.paths,
@@ -679,9 +679,9 @@ fn staging_replacement_between_write_and_publish_is_never_returned_as_an_asset()
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
-    let mut replace_staging = |directory: &simple_notes_lib::platform::SafeDirectory,
+    let mut replace_staging = |directory: &weiyu_cay_lib::platform::SafeDirectory,
                                staging: &str,
                                destination: &str| {
         assert_eq!(destination, filename);
@@ -691,7 +691,7 @@ fn staging_replacement_between_write_and_publish_is_never_returned_as_an_asset()
         file.sync_all().unwrap();
     };
     let mut sync =
-        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+        |directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| directory.sync();
 
     let error = save_image_to_with_publish_hook(
         &store.paths,
@@ -725,16 +725,16 @@ fn staging_symlink_replacement_is_never_returned_as_an_asset() {
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
-    let mut replace_staging = |directory: &simple_notes_lib::platform::SafeDirectory,
+    let mut replace_staging = |directory: &weiyu_cay_lib::platform::SafeDirectory,
                                staging: &str,
                                _destination: &str| {
         directory.remove_checked(staging).unwrap();
         symlink(outside.path(), directory.child_path(staging).unwrap()).unwrap();
     };
     let mut sync =
-        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+        |directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| directory.sync();
 
     let error = save_image_to_with_publish_hook(
         &store.paths,
@@ -765,16 +765,16 @@ fn staging_reparse_replacement_is_never_returned_as_an_asset() {
     let mut write = |file: &mut std::fs::File, bytes: &[u8]| {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|source| simple_notes_lib::error::CommandError::io(source.to_string()))
+            .map_err(|source| weiyu_cay_lib::error::CommandError::io(source.to_string()))
     };
-    let mut replace_staging = |directory: &simple_notes_lib::platform::SafeDirectory,
+    let mut replace_staging = |directory: &weiyu_cay_lib::platform::SafeDirectory,
                                staging: &str,
                                _destination: &str| {
         directory.remove_checked(staging).unwrap();
         symlink_file(outside.path(), directory.child_path(staging).unwrap()).unwrap();
     };
     let mut sync =
-        |directory: &simple_notes_lib::platform::SafeDirectory, _name: &str| directory.sync();
+        |directory: &weiyu_cay_lib::platform::SafeDirectory, _name: &str| directory.sync();
     let error = save_image_to_with_publish_hook(
         &store.paths,
         input(FORMAL_ID, "image/png", encoded(ImageFormat::Png, 2, 3)),

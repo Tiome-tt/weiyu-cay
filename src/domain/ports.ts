@@ -34,13 +34,8 @@ export interface FolderPort {
   moveFolder(id: FolderId, parentId: FolderId | null): Promise<Folder>
   reorderFolders?(parentId: FolderId | null, orderedIds: FolderId[]): Promise<void>
   setFolderStarred?(id: FolderId, starred: boolean): Promise<Folder>
-  deleteEmptyFolder(id: FolderId): Promise<string>
-  deleteFolder?(id: FolderId): Promise<string>
-}
-
-export interface StartupGuidePort {
-  loadTarget(): Promise<{ folderId: FolderId; noteId: NoteId } | null>
-  completeTarget(target: { folderId: FolderId; noteId: NoteId }): Promise<void>
+  deleteEmptyFolder(id: FolderId): Promise<void>
+  deleteFolder?(id: FolderId): Promise<void>
 }
 
 export interface AssetPort {
@@ -89,6 +84,11 @@ export interface StartupRecoveryReport {
 export interface RecoveryPort {
   load(): Promise<StartupRecoveryReport>
   retry(): Promise<StartupRecoveryReport>
+}
+
+export interface StartupGuidePort {
+  loadTarget(): Promise<{ folderId: FolderId; noteId: NoteId } | null>
+  completeTarget(target: { folderId: FolderId; noteId: NoteId }): Promise<void>
 }
 
 export interface AvailableUpdate {
@@ -172,6 +172,7 @@ export interface TemporaryWindowPort {
   setAlwaysOnTop(noteId: NoteId, alwaysOnTop: boolean): Promise<TemporaryWindowState>
   startDragging(): Promise<void>
   onCloseRequested?(handler: (noteId: unknown) => void): Promise<() => void>
+  onShown?(handler: (noteId: unknown) => void): Promise<() => void>
 }
 
 export interface LibraryColumnPreference {
@@ -194,7 +195,7 @@ export interface TemporaryPort {
   load(noteId: NoteId): Promise<NoteDocument>
   save(document: NoteDocument): Promise<NoteDocument>
   list(): Promise<NoteDocument[]>
-  convert(input: { ids: NoteId[]; folderId: FolderId }): Promise<BatchConversionResult>
+  convert(input: { ids: NoteId[]; folderId: FolderId; title?: string; tags?: string[] }): Promise<BatchConversionResult>
   delete(ids: NoteId[]): Promise<TemporaryDeleteResult>
   undoDelete(operationId: string): Promise<TemporaryUndoDeleteResult>
 }
