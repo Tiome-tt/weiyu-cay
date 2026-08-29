@@ -62,6 +62,17 @@ pub struct SaveTemporaryInput {
     expected_revision: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConvertTemporaryCommandInput {
+    ids: Vec<NoteId>,
+    folder_id: FolderId,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app
         .state::<StorageCommandState>()
@@ -142,13 +153,15 @@ pub fn list_temporary(
 pub fn convert_temporary(
     window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
-    ids: Vec<NoteId>,
-    folder_id: FolderId,
+    input: ConvertTemporaryCommandInput,
 ) -> Result<BatchConversionResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Convert, None)?;
     state.ensure_ready()?;
-    Ok(inbox_service(&state).convert(
-        crate::domain::ConvertTemporaryInput { ids, folder_id },
+    Ok(inbox_service(&state).convert_with_metadata(
+        input.ids,
+        input.folder_id,
+        input.title,
+        input.tags,
         &chrono::Utc::now().to_rfc3339(),
     ))
 }
@@ -176,14 +189,24 @@ pub fn undo_delete(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn show_temporary_window(
+pub async fn show_temporary_window(
     window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
     note_id: NoteId,
 ) -> Result<TemporaryWindowState, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Show, None)?;
     state.ensure_ready()?;
-    service(&state).show(note_id)
+    // Wry requires native window creation to happen off the event-loop thread.
+    // Running the synchronous storage/native workflow in the async runtime's
+    // blocking pool prevents a display request from freezing the main window
+    // while WebView2 creates its child window.
+    let paths = state.paths.clone();
+    let backend = state.backend.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        TemporaryWindowService::new(paths, backend).show(note_id)
+    })
+    .await
+    .map_err(|_| CommandError::io("temporary window task terminated unexpectedly"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]

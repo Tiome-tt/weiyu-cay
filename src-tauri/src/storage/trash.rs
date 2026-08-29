@@ -1,7 +1,7 @@
 use crate::{
     commands::folders::FolderRepository,
     domain::{
-        FolderId, NoteDocument, NoteId, NoteKind, PurgeTrashResult, RestoreTrashResult,
+        CreateFolderInput, FolderId, NoteDocument, NoteId, NoteKind, PurgeTrashResult, RestoreTrashResult,
         TrashBatchResult, TrashEntry, TrashFailure,
     },
     error::CommandError,
@@ -37,6 +37,8 @@ pub struct TrashManifest {
     pub kind: NoteKind,
     pub title: String,
     pub previous_folder_id: Option<FolderId>,
+    #[serde(default)]
+    pub previous_folder_name: Option<String>,
     pub previous_relative_path: String,
     pub deleted_at: String,
     pub assets: Vec<String>,
@@ -157,6 +159,32 @@ impl TrashService {
         self.restore_matching(Vec::new(), Some(operation_id))
     }
 
+    pub fn purge(&self, ids: Vec<NoteId>) -> Result<PurgeTrashResult, CommandError> {
+        let wanted: HashSet<NoteId> = unique_ids(ids).into_iter().collect();
+        let _guard = IndexMutationLock::acquire(self.paths.root())?;
+        let manifests = self.read_all_manifests()?;
+        let mut purged = Vec::new();
+        let mut failed = Vec::new();
+        for manifest in manifests.into_iter().filter(|manifest| {
+            manifest.state == TrashItemState::Deleted && wanted.contains(&manifest.note_id)
+        }) {
+            let id = manifest.note_id;
+            let result = if self.failure == Some(TrashFailurePoint::Purge(id)) {
+                Err(CommandError::io("injected purge failure"))
+            } else {
+                self.purge_one_locked(&manifest)
+            };
+            match result {
+                Ok(()) => purged.push(id),
+                Err(error) => failed.push(TrashFailure {
+                    note_id: id,
+                    message: error.message().to_owned(),
+                }),
+            }
+        }
+        Ok(PurgeTrashResult { purged, failed })
+    }
+
     pub fn purge_expired(&self, now: &str) -> Result<PurgeTrashResult, CommandError> {
         let now = parse_timestamp(now)?;
         let _guard = IndexMutationLock::acquire(self.paths.root())?;
@@ -207,6 +235,7 @@ impl TrashService {
             kind: document.kind,
             title: document.title.clone(),
             previous_folder_id: document.folder_id,
+            previous_folder_name: document.folder_id.and_then(|folder_id| folder_name(&self.paths, folder_id).ok().flatten()),
             previous_relative_path: format!("{}/{}", collection(document.kind), id),
             deleted_at: deleted_at.to_owned(),
             assets,
@@ -730,6 +759,7 @@ pub(crate) fn catalog_moved_temporary(
             kind: document.kind,
             title: document.title.clone(),
             previous_folder_id: document.folder_id,
+            previous_folder_name: None,
             previous_relative_path: format!("temporary/{}", document.id),
             deleted_at: deleted_at.to_owned(),
             assets,
@@ -916,7 +946,7 @@ fn read_trashed_document(
 
 fn derive_restore_document(
     paths: &StoragePaths,
-    _manifest: &TrashManifest,
+    manifest: &TrashManifest,
     mut document: NoteDocument,
     guard: &IndexMutationLock,
 ) -> Result<NoteDocument, CommandError> {
@@ -928,6 +958,8 @@ fn derive_restore_document(
     let durable_folder_id = document.folder_id;
     let target = if folder_exists(paths, durable_folder_id)? {
         durable_folder_id
+    } else if let Some(name) = manifest.previous_folder_name.as_deref() {
+        Some(recreated_folder(paths, name, guard)?)
     } else {
         Some(recovered_folder(paths, guard)?)
     };
@@ -1061,6 +1093,54 @@ fn folder_exists(paths: &StoragePaths, folder_id: Option<FolderId>) -> Result<bo
         .map_err(database_error("could not inspect previous note folder"))
 }
 
+fn folder_name(paths: &StoragePaths, folder_id: FolderId) -> Result<Option<String>, CommandError> {
+    let database = open_database(paths)?;
+    database
+        .connection()
+        .query_row(
+            "SELECT name FROM folders WHERE id=?1",
+            [folder_id_blob(folder_id)],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(database_error("could not read previous folder name"))
+}
+
+fn recreated_folder(
+    paths: &StoragePaths,
+    original_name: &str,
+    guard: &IndexMutationLock,
+) -> Result<FolderId, CommandError> {
+    let database = open_database(paths)?;
+    let name_exists = |name: &str| -> Result<Option<FolderId>, CommandError> {
+        database
+            .connection()
+            .query_row(
+                "SELECT id FROM folders WHERE parent_id IS NULL AND name=?1",
+                [name],
+                |row| {
+                    let bytes: Vec<u8> = row.get(0)?;
+                    let uuid = Uuid::from_slice(&bytes).map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    FolderId::parse_str(&uuid.hyphenated().to_string()).map_err(|_| rusqlite::Error::InvalidQuery)
+                },
+            )
+            .optional()
+            .map_err(database_error("could not inspect recreated folder name"))
+    };
+    if let Some(id) = name_exists(original_name)? {
+        return Ok(id);
+    }
+    FolderRepository::new(paths.clone())
+        .create_locked(
+            CreateFolderInput {
+                parent_id: None,
+                name: original_name.to_owned(),
+            },
+            guard,
+        )
+        .map(|folder| folder.id)
+}
+
 fn recovered_folder(
     paths: &StoragePaths,
     guard: &IndexMutationLock,
@@ -1149,6 +1229,7 @@ fn entry_from_manifest(manifest: TrashManifest) -> TrashEntry {
         kind: manifest.kind,
         title: manifest.title,
         previous_folder_id: manifest.previous_folder_id,
+        previous_folder_name: manifest.previous_folder_name,
         previous_relative_path: manifest.previous_relative_path,
         deleted_at: manifest.deleted_at,
         assets: manifest.assets,

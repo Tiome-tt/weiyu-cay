@@ -176,6 +176,15 @@ pub fn move_note(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub fn reorder_notes(
+    state: State<'_, StorageCommandState>,
+    folder_id: Option<FolderId>,
+    ordered_ids: Vec<NoteId>,
+) -> Result<(), CommandError> {
+    repository(&state)?.reorder_notes(folder_id, ordered_ids)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub fn trash_notes(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,
@@ -213,6 +222,16 @@ pub fn undo_trash(
 ) -> Result<RestoreTrashResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
     TrashService::new(state.paths_for(StorageConsumer::Trash)?.clone()).undo(&operation_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn purge_trash(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    note_ids: Vec<NoteId>,
+) -> Result<PurgeTrashResult, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
+    TrashService::new(state.paths_for(StorageConsumer::Trash)?.clone()).purge(note_ids)
 }
 
 #[tauri::command]

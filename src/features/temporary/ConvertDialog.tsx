@@ -6,11 +6,17 @@ interface ConvertDialogProps {
   open: boolean
   busy: boolean
   onCancel(): void
-  onConfirm(folderId: FolderId): void
+  initialTitle?: string
+  initialTags?: string[]
+  onConfirm(folderId: FolderId, title: string, tags: string[]): void
 }
 
-export function ConvertDialog({ folders, open, busy, onCancel, onConfirm }: ConvertDialogProps) {
+export function ConvertDialog({ folders, open, busy, initialTitle = '', initialTags = [], onCancel, onConfirm }: ConvertDialogProps) {
   const [folderId, setFolderId] = useState<FolderId | null>(null)
+  const [title, setTitle] = useState('')
+  const [tagsText, setTagsText] = useState('')
+  const titleRef = useRef<HTMLInputElement>(null)
+  const tagsRef = useRef<HTMLInputElement>(null)
   const selectRef = useRef<HTMLSelectElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
@@ -19,7 +25,11 @@ export function ConvertDialog({ folders, open, busy, onCancel, onConfirm }: Conv
   useEffect(() => {
     if (!open) return
     setFolderId(options[0]?.id ?? null)
+    setTitle(initialTitle)
+    setTagsText(initialTags.join(', '))
     queueMicrotask(() => selectRef.current?.focus())
+  // Initial metadata is captured when the dialog opens. It must not reset
+  // while the editor flushes and updates the selected capture underneath us.
   }, [open, options])
 
   if (!open) return null
@@ -34,9 +44,9 @@ export function ConvertDialog({ folders, open, busy, onCancel, onConfirm }: Conv
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !busy) onCancel()
           if (event.key !== 'Tab') return
-          const focusable = [selectRef.current, cancelRef.current, confirmRef.current]
-            .filter((element): element is HTMLButtonElement | HTMLSelectElement => element !== null && !element.disabled)
-          const current = focusable.indexOf(document.activeElement as HTMLButtonElement | HTMLSelectElement)
+          const focusable = [titleRef.current, tagsRef.current, selectRef.current, cancelRef.current, confirmRef.current]
+            .filter((element): element is HTMLButtonElement | HTMLInputElement | HTMLSelectElement => element !== null && !element.disabled)
+          const current = focusable.indexOf(document.activeElement as HTMLButtonElement | HTMLInputElement | HTMLSelectElement)
           if (current === -1) return
           const next = event.shiftKey
             ? (current - 1 + focusable.length) % focusable.length
@@ -47,6 +57,16 @@ export function ConvertDialog({ folders, open, busy, onCancel, onConfirm }: Conv
       >
         <h2 id="convert-dialog-title">转为笔记</h2>
         <p>所选临时捕捉将分别创建为笔记。</p>
+        {options.length > 0 && <>
+          <label>
+            笔记标题
+            <input ref={titleRef} aria-label="笔记标题" value={title} disabled={busy} onChange={(event) => setTitle(event.target.value)} placeholder="留空则使用正文首行" />
+          </label>
+          <label>
+            笔记标签
+            <input ref={tagsRef} aria-label="笔记标签" value={tagsText} disabled={busy} onChange={(event) => setTagsText(event.target.value)} placeholder="用逗号分隔多个标签" />
+          </label>
+        </>}
         <label>
           目标文件夹
           <select
@@ -63,13 +83,17 @@ export function ConvertDialog({ folders, open, busy, onCancel, onConfirm }: Conv
         </label>
         <footer>
           <button ref={cancelRef} type="button" disabled={busy} onClick={onCancel}>取消</button>
-          <button ref={confirmRef} type="button" disabled={busy || folderId === null} onClick={() => folderId !== null && onConfirm(folderId)}>
+          <button ref={confirmRef} type="button" disabled={busy || folderId === null} onClick={() => folderId !== null && onConfirm(folderId, title.trim(), parseTags(tagsText))}>
             {busy ? '正在转换…' : '确认转换'}
           </button>
         </footer>
       </section>
     </div>
   )
+}
+
+function parseTags(value: string) {
+  return [...new Set(value.split(/[,，]/u).map((tag) => tag.trim()).filter(Boolean))]
 }
 
 function flattenFolders(folders: Folder[], parentId: FolderId | null = null, prefix = ''): Array<{ id: FolderId; label: string }> {

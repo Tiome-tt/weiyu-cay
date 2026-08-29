@@ -38,6 +38,8 @@ struct FolderRecord {
     parent_id: Option<FolderId>,
     name: String,
     sort_order: i64,
+    #[serde(default)]
+    starred: bool,
     created_at: String,
     updated_at: String,
 }
@@ -563,13 +565,14 @@ fn insert_folders(
             {
                 transaction
                     .execute(
-                        "INSERT INTO folders (id, parent_id, name, sort_order, created_at, updated_at) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        "INSERT INTO folders (id, parent_id, name, sort_order, starred, created_at, updated_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                         params![
                             folder_id_blob(folder.id),
                             folder.parent_id.map(folder_id_blob),
                             folder.name,
                             folder.sort_order,
+                            folder.starred,
                             folder.created_at,
                             folder.updated_at,
                         ],

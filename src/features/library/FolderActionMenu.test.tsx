@@ -65,7 +65,7 @@ describe('FolderActionMenu', () => {
 
     trigger.focus()
     await user.keyboard('{ArrowUp}')
-    expect(screen.getByRole('menuitem', { name: '删除空文件夹' })).toHaveFocus()
+    expect(screen.getByRole('menuitem', { name: '删除文件夹' })).toHaveFocus()
     await user.keyboard('{Escape}')
 
     await user.keyboard('{Enter}')
@@ -80,7 +80,7 @@ describe('FolderActionMenu', () => {
     render(<FolderActionMenu enabled onRename={vi.fn()} onMove={vi.fn()} onDelete={onDelete} />)
 
     await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
-    const deletion = screen.getByRole('menuitem', { name: '删除空文件夹' })
+    const deletion = screen.getByRole('menuitem', { name: '删除文件夹' })
     expect(deletion).toHaveAttribute('data-variant', 'danger')
     deletion.focus()
     await user.keyboard('{Enter}')

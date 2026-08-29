@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection, ErrorCode};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     domain::{NoteId, NoteKind},
     error::CommandErrorCode,
     storage::{database::Database, paths::StoragePaths},
@@ -18,15 +18,15 @@ const OTHER_NOTE_UUID: &[u8; 16] = b"abcdef0123456789";
 fn index_mutation_lock_reports_busy_and_releases_with_handle_lifetime() {
     let root = tempfile::tempdir().unwrap();
     let paths = StoragePaths::open(root.path()).unwrap();
-    let first = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
-    let busy = simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+    let first = weiyu_cay_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let busy = weiyu_cay_lib::platform::IndexMutationLock::acquire_with_timeout(
         paths.root(),
         Duration::ZERO,
     )
     .unwrap_err();
     assert_eq!(busy.code(), CommandErrorCode::Conflict);
     drop(first);
-    simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+    weiyu_cay_lib::platform::IndexMutationLock::acquire_with_timeout(
         paths.root(),
         Duration::ZERO,
     )
@@ -39,7 +39,7 @@ fn index_mutation_lock_does_not_retry_a_permanent_open_error_as_contention() {
     let paths = StoragePaths::open(root.path()).unwrap();
     fs::create_dir(paths.root().join(".index-mutation.lock")).unwrap();
 
-    let error = simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
+    let error = weiyu_cay_lib::platform::IndexMutationLock::acquire_with_timeout(
         paths.root(),
         Duration::from_millis(100),
     )
@@ -153,7 +153,7 @@ fn migration_creates_only_the_required_initial_tables_and_is_idempotent() {
     for table in required_tables {
         assert!(db.table_exists(table).unwrap(), "missing table {table}");
     }
-    assert_eq!(db.applied_migration_versions().unwrap(), vec![1, 2]);
+    assert_eq!(db.applied_migration_versions().unwrap(), vec![1, 2, 3, 4]);
 
     let store = TestStore::new();
     let connection = Connection::open(store.paths.database()).unwrap();

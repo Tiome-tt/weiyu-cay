@@ -4,9 +4,13 @@ use std::{path::Path, time::Duration};
 
 const INITIAL_MIGRATION: &str = include_str!("../../migrations/0001_initial.sql");
 const SEARCH_MIGRATION: &str = include_str!("../../migrations/0002_search_fts.sql");
+const FOLDER_STARS_MIGRATION: &str = include_str!("../../migrations/0003_folder_stars.sql");
+const NOTE_SORT_ORDER_MIGRATION: &str = include_str!("../../migrations/0004_note_sort_order.sql");
 const MIGRATIONS: &[(i64, &str, &str)] = &[
     (1, INITIAL_MIGRATION, "initial schema"),
     (2, SEARCH_MIGRATION, "full-text search schema"),
+    (3, FOLDER_STARS_MIGRATION, "folder star metadata"),
+    (4, NOTE_SORT_ORDER_MIGRATION, "note sort order"),
 ];
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 

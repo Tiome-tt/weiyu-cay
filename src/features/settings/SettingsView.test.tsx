@@ -30,15 +30,50 @@ describe('SettingsView', () => {
     expect(screen.queryByText('Simple Notes')).not.toBeInTheDocument()
     expect(screen.getByLabelText('主题')).toHaveValue('forest')
     expect(screen.getByRole('option', { name: '夜海深色' })).toHaveValue('night')
-    expect(screen.getByLabelText('正文字体')).toBeVisible()
-    expect(screen.getByLabelText('代码字体')).toBeVisible()
+    expect(screen.getByLabelText('正文字体')).toHaveRole('combobox')
+    expect(screen.getByLabelText('代码字体')).toHaveRole('combobox')
+    expect(screen.getByRole('option', { name: '苹方' })).toHaveValue('PingFang SC, PingFang TC, sans-serif')
+    expect(screen.getByRole('option', { name: '等线' })).toHaveValue('DengXian, sans-serif')
+    expect(screen.getByRole('option', { name: 'Cascadia Mono' })).toHaveValue('Cascadia Mono')
+    expect(screen.getByRole('option', { name: 'Menlo' })).toHaveValue('Menlo')
     expect(screen.getByLabelText('字号')).toHaveAttribute('min', '12')
     expect(screen.getByLabelText('行高')).toHaveAttribute('max', '2.2')
     expect(screen.getByLabelText('全局快捷键')).toBeVisible()
     expect(screen.getByLabelText('开机启动')).toBeVisible()
     expect(screen.getByLabelText('默认编辑视图')).toBeVisible()
+    expect(screen.getByRole('option', { name: '文档编辑' })).toHaveValue('source')
+    expect(screen.getByRole('option', { name: '分栏校对' })).toHaveValue('split')
+    expect(screen.getByRole('option', { name: '阅读视图' })).toHaveValue('preview')
     expect(screen.getByLabelText('自动保存延迟')).toHaveAttribute('min', '150')
     expect(await screen.findByText(/3 KB/)).toBeVisible()
+  })
+
+  it('records a shortcut from the keyboard instead of asking for accelerator text', async () => {
+    const user = userEvent.setup()
+    const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, shortcut: 'Control+Alt+N' })
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    const record = screen.getByRole('button', { name: '录制快捷键' })
+    await user.click(record)
+    await user.keyboard('{Control>}{Alt>}n{/Alt}{/Control}')
+    expect(screen.getByLabelText('全局快捷键')).toHaveValue('Control+Alt+N')
+    expect(update).toHaveBeenCalledWith({ shortcut: 'Control+Alt+N' })
+  })
+
+  it('records a single key after it is released', async () => {
+    const user = userEvent.setup()
+    const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, shortcut: 'F8' })
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+    await user.click(screen.getByRole('button', { name: '录制快捷键' }))
+    await user.keyboard('{F8}')
+    expect(screen.getByLabelText('全局快捷键')).toHaveValue('F8')
+    expect(update).toHaveBeenCalledWith({ shortcut: 'F8' })
+  })
+
+  it('renders storage and export copy in Chinese and hides the Windows path prefix', async () => {
+    render(<SettingsView settings={settingsPort({ getStorageInfo: vi.fn().mockResolvedValue({ root: '\\\\?\\C:\\Notes', noteBytes: 1, assetBytes: 2, trashBytes: 0 }) })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} exportController={{ busy: false, report: null, status: null, error: null, startExport: vi.fn() }} />)
+    expect(await screen.findByText('C:\\Notes · 3 B')).toBeVisible()
+    expect(screen.getByRole('dialog', { name: '设置' })).toHaveTextContent('便携式导出')
+    expect(screen.queryByText('Portable export')).not.toBeInTheDocument()
   })
 
   it('hosts the explicit update controls inside settings', async () => {
@@ -66,10 +101,8 @@ describe('SettingsView', () => {
     const update = vi.fn().mockRejectedValueOnce(new Error('shortcut conflict'))
     const user = userEvent.setup()
     render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    const shortcut = screen.getByLabelText('全局快捷键')
-    await user.clear(shortcut)
-    await user.type(shortcut, 'Ctrl+Space')
-    await user.click(screen.getByRole('button', { name: '应用快捷键' }))
+    await user.click(screen.getByRole('button', { name: '录制快捷键' }))
+    await user.keyboard('{Control>}{Space}{/Control}')
     expect(await screen.findByRole('alert')).toHaveTextContent('快捷键已被占用')
   })
 
@@ -83,10 +116,8 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     render(<SettingsView settings={settingsPort({ update, getShortcutStatus })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
     expect(await screen.findByRole('status', { name: '快捷键状态警告' })).toBeVisible()
-    const shortcut = screen.getByLabelText('全局快捷键')
-    await user.clear(shortcut)
-    await user.type(shortcut, 'Ctrl+Alt+N')
-    await user.click(screen.getByRole('button', { name: '应用快捷键' }))
+    await user.click(screen.getByRole('button', { name: '录制快捷键' }))
+    await user.keyboard('{Control>}{Alt>}n{/Alt}{/Control}')
     expect(getShortcutStatus).toHaveBeenCalledOnce()
     updated.resolve({ ...DEFAULT_APP_SETTINGS, shortcut: 'Ctrl+Alt+N' })
     await waitFor(() => expect(getShortcutStatus).toHaveBeenCalledTimes(2))
@@ -112,6 +143,20 @@ describe('SettingsView', () => {
     expect(moveStorageRoot).not.toHaveBeenCalled()
     pending.resolve({ ...DEFAULT_APP_SETTINGS, theme: 'sand' })
     await waitFor(() => expect(screen.getByLabelText('主题')).toBeEnabled())
+  })
+
+  it('allows closing while a font update is still pending', async () => {
+    const pending = deferred<AppSettings>()
+    const update = vi.fn().mockReturnValue(pending.promise)
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={onClose} prepareStorageMove={async () => () => undefined} />)
+
+    await user.selectOptions(screen.getByLabelText('正文字体'), 'serif')
+    await user.click(screen.getByRole('button', { name: '关闭设置' }))
+
+    expect(onClose).toHaveBeenCalledOnce()
+    pending.resolve({ ...DEFAULT_APP_SETTINGS, bodyFont: 'serif' })
   })
 
   it('keeps numeric input editable and persists its complete value on blur', async () => {
@@ -200,8 +245,7 @@ describe('SettingsView', () => {
     expect(screen.queryByRole('button', { name: /删除旧数据/ })).not.toBeInTheDocument()
   })
 
-  it('lists only exact cleanup candidates without offering root deletion', async () => {
-    const user = userEvent.setup()
+  it('does not expose the old-location candidate browser', async () => {
     render(<SettingsView settings={settingsPort({ getStorageInfo: vi.fn().mockResolvedValue({
       root: 'E:\\Notes', noteBytes: 1, assetBytes: 2, trashBytes: 3,
       previousStorageCleanup: {
@@ -212,14 +256,9 @@ describe('SettingsView', () => {
         ],
       },
     }) })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    const disclosure = await screen.findByRole('button', { name: '查看旧位置候选项' })
-    await user.click(disclosure)
-    expect(screen.getByLabelText('旧位置（仅供核对）')).toHaveValue('D:\\Old Notes')
-    expect(screen.getByRole('list', { name: '可手动核对的旧数据候选项' })).toHaveTextContent('notes')
-    expect(screen.getByRole('list', { name: '可手动核对的旧数据候选项' })).toHaveTextContent('index.sqlite-wal')
-    expect(screen.getByText(/绝不要删除旧位置根目录/)).toBeVisible()
-    expect(screen.getByText(/settings\.json/)).toBeVisible()
-    expect(screen.queryByRole('button', { name: /删除/ })).not.toBeInTheDocument()
+    await screen.findByText('E:\\Notes · 6 B')
+    expect(screen.queryByRole('button', { name: '查看旧位置候选项' })).not.toBeInTheDocument()
+    expect(screen.queryByText('旧位置（仅供核对）')).not.toBeInTheDocument()
   })
 })
 

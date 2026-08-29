@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::folders::FolderRepository,
     domain::{CreateFolderInput, FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandErrorCode,
@@ -45,6 +45,25 @@ fn create_trims_names_and_appends_a_deterministic_sort_order() {
     assert_eq!(first.sort_order, 0);
     assert_eq!(second.sort_order, 1);
     assert_eq!(repo.list().unwrap(), vec![first, second]);
+}
+
+#[test]
+fn starred_state_round_trips_without_changing_folder_identity() {
+    let store = TestStore::new();
+    let repo = repository(&store);
+    let folder = repo
+        .create(CreateFolderInput { parent_id: None, name: "重点".to_owned() })
+        .unwrap();
+    assert!(!folder.starred);
+
+    let starred = repo.set_starred(folder.id, true).unwrap();
+    assert!(starred.starred);
+    assert_eq!(starred.id, folder.id);
+    assert_eq!(repo.list().unwrap(), vec![starred.clone()]);
+
+    let unstarred = repo.set_starred(folder.id, false).unwrap();
+    assert!(!unstarred.starred);
+    assert_eq!(unstarred.id, folder.id);
 }
 
 #[test]
@@ -104,6 +123,19 @@ fn move_updates_parent_and_reorders_both_sibling_sets() {
             .sort_order,
         0
     );
+}
+
+#[test]
+fn reorder_updates_sibling_order_and_accepts_a_partial_drag_order() {
+    let store = TestStore::new();
+    seed_folder(&store, ROOT_A, None, "项目 A", 0);
+    seed_folder(&store, ROOT_B, None, "项目 B", 1);
+    let repo = repository(&store);
+
+    repo.reorder(None, vec![folder_id(ROOT_B)]).unwrap();
+    let folders = repo.list().unwrap();
+    assert_eq!(folders[0].id, folder_id(ROOT_B));
+    assert_eq!(folders[1].id, folder_id(ROOT_A));
 }
 
 #[test]

@@ -12,14 +12,14 @@ const folders: Folder[] = [{ id: folderId, parentId: null, name: '设计', sortO
 afterEach(cleanup)
 
 function ControlledPopover({
-  initialDraft = { title: '', folderId: null },
+  initialDraft = { title: '', folderId: null, tags: '' },
   status = 'idle',
   onCreate = vi.fn(),
   onClose = vi.fn(),
 }: {
   initialDraft?: CreateNoteDraft
   status?: CreateNoteStatus
-  onCreate?: (title: string, folderId: FolderId | null) => void
+  onCreate?: (title: string, folderId: FolderId | null, tags: string[]) => void
   onClose?: () => void
 }) {
   const [draft, setDraft] = useState(initialDraft)
@@ -43,7 +43,7 @@ describe('CreateNotePopover', () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     render(<ControlledPopover
-      initialDraft={{ title: '潮汐设计', folderId }}
+      initialDraft={{ title: '潮汐设计', folderId, tags: '' }}
       status="error"
       onClose={onClose}
     />)
@@ -58,7 +58,7 @@ describe('CreateNotePopover', () => {
 
   it('moves focus into the title and keeps Tab focus inside the popover', async () => {
     const user = userEvent.setup()
-    render(<ControlledPopover initialDraft={{ title: '', folderId }} />)
+    render(<ControlledPopover initialDraft={{ title: '', folderId, tags: '' }} />)
 
     const title = screen.getByRole('textbox', { name: '笔记标题' })
     expect(title).toHaveFocus()
@@ -83,7 +83,7 @@ describe('CreateNotePopover', () => {
     const onCreate = vi.fn()
     const onClose = vi.fn()
     render(<ControlledPopover
-      initialDraft={{ title: '  潮汐设计  ', folderId }}
+      initialDraft={{ title: '  潮汐设计  ', folderId, tags: '' }}
       status="pending"
       onCreate={onCreate}
       onClose={onClose}

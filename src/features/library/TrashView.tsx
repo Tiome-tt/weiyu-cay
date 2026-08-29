@@ -5,31 +5,30 @@ import type { TrashEntry, TrashPort } from '../../domain/ports'
 interface TrashViewProps {
   trash: TrashPort
   folders: Folder[]
-  recentOperationId?: string | null
   onLibraryChanged?: () => Promise<void> | void
-  onUndoCompleted?: (operationId: string) => void
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
-type BusyAction = 'restore' | 'undo' | null
+type BusyAction = 'restore' | 'purge' | null
 
-export function TrashView({ trash, folders, recentOperationId = null, onLibraryChanged, onUndoCompleted }: TrashViewProps) {
+export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) {
   const [entries, setEntries] = useState<TrashEntry[]>([])
   const [selected, setSelected] = useState<ReadonlySet<NoteId>>(new Set())
   const [state, setState] = useState<LoadState>('loading')
   const [busy, setBusy] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
-  const [dismissedUndoOperations, setDismissedUndoOperations] = useState<ReadonlySet<string>>(new Set())
+  const [purgeTarget, setPurgeTarget] = useState<ReadonlyArray<NoteId> | null>(null)
   const requestRef = useRef(0)
   const busyRef = useRef<BusyAction>(null)
   const feedbackRef = useRef<HTMLParagraphElement>(null)
   const mountedRef = useRef(false)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true
     if (!mountedRef.current) return
     const request = ++requestRef.current
-    setState('loading')
+    if (!silent) setState('loading')
     try {
       const listed = await trash.list()
       if (request !== requestRef.current) return
@@ -38,16 +37,20 @@ export function TrashView({ trash, folders, recentOperationId = null, onLibraryC
       setSelected((current) => new Set([...current].filter((id) => sorted.some((entry) => entry.noteId === id))))
       setState('ready')
     } catch {
-      if (request === requestRef.current) setState('error')
+      if (request === requestRef.current && !silent) setState('error')
     }
   }, [trash])
 
   useEffect(() => {
     mountedRef.current = true
     void refresh()
+    const interval = window.setInterval(() => {
+      if (busyRef.current === null) void refresh({ silent: true })
+    }, 1000)
     return () => {
       mountedRef.current = false
       requestRef.current += 1
+      window.clearInterval(interval)
     }
   }, [refresh])
 
@@ -59,8 +62,10 @@ export function TrashView({ trash, folders, recentOperationId = null, onLibraryC
     () => entries.filter((entry) => selected.has(entry.noteId)).map((entry) => entry.noteId),
     [entries, selected],
   )
-  const undoOperationId = recentOperationId ?? entries[0]?.operationId ?? null
-  const undoAvailable = undoOperationId !== null && !dismissedUndoOperations.has(undoOperationId)
+  const openPurgeDialog = (ids: ReadonlyArray<NoteId>) => {
+    if (busyRef.current !== null || ids.length === 0 || trash.purge === undefined) return
+    setPurgeTarget(ids)
+  }
 
   const toggleSelected = (noteId: NoteId) => {
     setSelected((current) => {
@@ -113,35 +118,27 @@ export function TrashView({ trash, folders, recentOperationId = null, onLibraryC
     }
   }
 
-  const undoRecentDeletion = async () => {
-    if (undoOperationId === null || !undoAvailable || busyRef.current !== null) return
-    const operationId = undoOperationId
+  const purgePermanently = async () => {
+    if (busyRef.current !== null || purgeTarget === null || trash.purge === undefined) return
+    const ids = [...purgeTarget]
+    setPurgeTarget(null)
     requestRef.current += 1
-    busyRef.current = 'undo'
-    setBusy('undo')
+    busyRef.current = 'purge'
+    setBusy('purge')
     setError(null)
     setFeedback(null)
     try {
-      const result = await trash.undo(operationId)
-      let surroundingRefreshFailed = false
-      try {
-        await onLibraryChanged?.()
-      } catch {
-        surroundingRefreshFailed = true
-      }
+      const result = await trash.purge(ids)
       if (!mountedRef.current) return
-      if (result.failed.length > 0) {
-        setError(result.failed.map((failure) => failure.message).join('；'))
-      } else {
-        setDismissedUndoOperations((current) => new Set([...current, operationId]))
-        onUndoCompleted?.(operationId)
-      }
-      if (surroundingRefreshFailed) setError((current) => [current, '项目已恢复，但资料库刷新失败，请手动刷新。'].filter(Boolean).join('；'))
-      if (result.restored.length > 0) setFeedback(`已撤销最近删除，恢复 ${result.restored.length} 项。`)
-      await refresh()
+      const purged = new Set(result.purged)
+      setEntries((current) => current.filter((entry) => !purged.has(entry.noteId)))
+      setSelected((current) => new Set([...current].filter((id) => !purged.has(id))))
+      if (result.failed.length > 0) setError(result.failed.map((failure) => failure.message).join('；'))
+      if (purged.size > 0) setFeedback(`已永久删除 ${purged.size} 项，之后无法恢复。`)
+      setState('ready')
     } catch {
       if (mountedRef.current) {
-        setError('无法撤销最近删除，请重试。')
+        setError('无法永久删除所选项目，请重试。')
         setState('ready')
       }
     } finally {
@@ -157,7 +154,6 @@ export function TrashView({ trash, folders, recentOperationId = null, onLibraryC
           <span className="library-pane__eyebrow">安全恢复</span>
           <h2>回收站</h2>
         </div>
-        <button type="button" disabled={busy !== null} onClick={() => void refresh()}>刷新</button>
       </header>
       <div className="trash-view__actions" aria-label="回收站操作">
         <button
@@ -171,11 +167,12 @@ export function TrashView({ trash, folders, recentOperationId = null, onLibraryC
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void restoreSelected()}>
           {busy === 'restore' ? '正在恢复…' : '恢复所选'}
         </button>
-        {undoAvailable && (
-          <button type="button" disabled={busy !== null} onClick={() => void undoRecentDeletion()}>
-            {busy === 'undo' ? '正在撤销…' : '撤销最近删除'}
-          </button>
-        )}
+        <button type="button" className="trash-view__danger-action" disabled={busy !== null || selectedIds.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(selectedIds)}>
+          永久删除
+        </button>
+        <button type="button" className="trash-view__danger-action" disabled={busy !== null || entries.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(entries.map((entry) => entry.noteId))}>
+          清空回收站
+        </button>
       </div>
       {feedback !== null && <p ref={feedbackRef} tabIndex={-1} role="status" className="library-status">{feedback}</p>}
       {error !== null && <p role="alert" className="library-status library-status--error">{error}</p>}
@@ -183,30 +180,57 @@ export function TrashView({ trash, folders, recentOperationId = null, onLibraryC
       {state === 'error' && <p role="alert" className="library-status library-status--error">无法加载回收站。</p>}
       {state === 'ready' && entries.length === 0 && <p className="library-status">回收站为空。</p>}
       {state === 'ready' && entries.length > 0 && (
-        <ul className="trash-view__list" aria-label="已删除项目">
-          {entries.map((entry) => {
-            const missingFolder = isMissingFolder(entry, folders)
+        <div className="trash-view__sections" aria-label="已删除项目">
+          {(['temporary', 'formal'] as const).map((kind) => {
+            const sectionEntries = entries.filter((entry) => entry.kind === kind)
+            if (sectionEntries.length === 0) return null
+            const label = kind === 'temporary' ? '临时便签' : '笔记'
             return (
-              <li key={entry.noteId}>
-                <label>
-                  <input
-                    type="checkbox"
-                    aria-label={`选择 ${entry.title}`}
-                    checked={selected.has(entry.noteId)}
-                    disabled={busy !== null}
-                    onChange={() => toggleSelected(entry.noteId)}
-                  />
-                  <span className="trash-view__item">
-                    <strong>{entry.title}</strong>
-                    <span>{entry.kind === 'formal' ? '正式笔记' : '临时捕捉'}</span>
-                    <span>{missingFolder ? '原文件夹不可用，将恢复到“已恢复”' : `原位置：${folderName(entry, folders)}`}</span>
-                    <time dateTime={entry.deletedAt}>删除于 {formatDate(entry.deletedAt)}</time>
-                  </span>
-                </label>
-              </li>
+              <section key={kind} className="trash-view__section" aria-labelledby={`trash-${kind}-heading`}>
+                <header className="trash-view__section-header">
+                  <h3 id={`trash-${kind}-heading`}>{label}</h3>
+                  <span>{sectionEntries.length} 条</span>
+                </header>
+                <ul className="trash-view__list">
+                  {sectionEntries.map((entry) => {
+                    const missingFolder = isMissingFolder(entry, folders)
+                    return (
+                      <li key={entry.noteId}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            aria-label={`选择 ${entry.title}`}
+                            checked={selected.has(entry.noteId)}
+                            disabled={busy !== null}
+                            onChange={() => toggleSelected(entry.noteId)}
+                          />
+                          <span className="trash-view__item">
+                            <strong>{entry.title}</strong>
+                            <span>{missingFolder ? missingFolderMessage(entry) : `原位置：${folderName(entry, folders)}`}</span>
+                            <time dateTime={entry.deletedAt}>删除于 {formatDate(entry.deletedAt)}</time>
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </section>
             )
           })}
-        </ul>
+        </div>
+      )}
+      {purgeTarget !== null && (
+        <div className="trash-view__dialog-backdrop" role="presentation">
+          <section className="trash-view__dialog" role="alertdialog" aria-modal="true" aria-labelledby="trash-purge-heading">
+            <span className="library-pane__eyebrow">不可撤销</span>
+            <h3 id="trash-purge-heading">确定永久删除这些笔记吗？</h3>
+            <p>删除后将清除笔记及其附件，之后无法恢复。</p>
+            <footer>
+              <button type="button" onClick={() => setPurgeTarget(null)}>先不删除</button>
+              <button type="button" className="trash-view__danger-action" onClick={() => void purgePermanently()}>永久删除</button>
+            </footer>
+          </section>
+        </div>
       )}
     </section>
   )
@@ -220,6 +244,13 @@ function folderName(entry: TrashEntry, folders: Folder[]) {
   if (entry.kind === 'temporary') return '临时收集箱'
   if (entry.previousFolderId === null) return '未归档笔记'
   return folders.find((folder) => folder.id === entry.previousFolderId)?.name ?? '已恢复'
+}
+
+function missingFolderMessage(entry: TrashEntry) {
+  if (entry.kind === 'temporary') return '原文件夹不可用，将恢复到“已恢复”'
+  return entry.previousFolderName
+    ? `原文件夹“${entry.previousFolderName}”已被删除，恢复时将重新创建该文件夹`
+    : '原文件夹已被删除，恢复时将放入“已恢复”'
 }
 
 function formatDate(value: string) {

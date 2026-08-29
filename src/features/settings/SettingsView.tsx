@@ -25,14 +25,18 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const [error, setError] = useState<string | null>(null)
   const [restartRequired, setRestartRequired] = useState(false)
   const [restarting, setRestarting] = useState(false)
-  const [cleanupExpanded, setCleanupExpanded] = useState(false)
   const [shortcutWarning, setShortcutWarning] = useState<string | null>(null)
+  const [recordingShortcut, setRecordingShortcut] = useState(false)
+  const recordedShortcutKeysRef = useRef(new Set<string>())
+  const pressedShortcutKeysRef = useRef(new Set<string>())
+  const recordedNonModifierRef = useRef(false)
   const requestRef = useRef(0)
   const busyRef = useRef(false)
   const draftRef = useRef(value)
   const shortcutStatusRequest = useRef(0)
   const restartBarrierReleaseRef = useRef<(() => void) | null>(null)
   const operationBusy = busy !== null || exportController?.busy === true
+  const closeDisabled = busy === 'move' || busy === 'reset' || exportController?.busy === true
 
   useEffect(() => {
     if (busyRef.current) return
@@ -44,7 +48,6 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     void settings.getStorageInfo().then((info) => {
       if (requestRef.current === request) {
         setStorage(info)
-        setCleanupExpanded(false)
       }
     }).catch(() => {
       if (requestRef.current === request) setError('无法读取存储信息。')
@@ -65,6 +68,34 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     void refreshShortcutStatus()
     return () => { shortcutStatusRequest.current += 1 }
   }, [refreshShortcutStatus])
+
+  useEffect(() => {
+    if (!recordingShortcut) return
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      event.preventDefault()
+      const key = keyName(event.key)
+      recordedShortcutKeysRef.current.add(key)
+      pressedShortcutKeysRef.current.add(key)
+      if (!isShortcutModifier(key)) recordedNonModifierRef.current = true
+    }
+    const handleKeyUp = (event: globalThis.KeyboardEvent) => {
+      event.preventDefault()
+      pressedShortcutKeysRef.current.delete(keyName(event.key))
+      if (pressedShortcutKeysRef.current.size !== 0 || !recordedNonModifierRef.current) return
+      const shortcut = formatRecordedShortcut(recordedShortcutKeysRef.current)
+      recordedShortcutKeysRef.current.clear()
+      pressedShortcutKeysRef.current.clear()
+      recordedNonModifierRef.current = false
+      setRecordingShortcut(false)
+      void update({ shortcut }, 'shortcut')
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [recordingShortcut])
 
   const update = async (patch: Partial<AppSettings>, kind: 'shortcut' | 'general' = 'general') => {
     if (busyRef.current) return
@@ -183,23 +214,23 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
-        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={operationBusy} onClick={onClose} aria-label="关闭设置"><Icon name="close" size={17} /></button></header>
+        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={closeDisabled} onClick={onClose} aria-label="关闭设置"><Icon name="close" size={17} /></button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
         {shortcutWarning && <p className="settings-view__warning" role="status" aria-label="快捷键状态警告">{shortcutWarning}</p>}
         <div className="settings-view__body">
           <fieldset disabled={operationBusy}>
             <legend>外观与编辑</legend>
             <label>主题<select aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">潮汐浅色</option><option value="sand">沙岸暖色</option><option value="night">夜海深色</option><option value="system">跟随系统</option></select></label>
-            <label>正文字体<input aria-label="正文字体" value={draft.bodyFont} onChange={(event) => editDraft({ bodyFont: event.target.value })} onBlur={() => void update({ bodyFont: draftRef.current.bodyFont })} /></label>
-            <label>代码字体<input aria-label="代码字体" value={draft.codeFont} onChange={(event) => editDraft({ codeFont: event.target.value })} onBlur={() => void update({ codeFont: draftRef.current.codeFont })} /></label>
+            <label>正文字体<select aria-label="正文字体" value={draft.bodyFont} onChange={(event) => void update({ bodyFont: event.target.value })}><option value="KaiTi, STKaiti, serif">系统默认（楷体）</option><option value="PingFang SC, PingFang TC, sans-serif">苹方</option><option value="Hiragino Sans GB, Hiragino Sans, sans-serif">冬青黑体</option><option value="Microsoft YaHei, Microsoft YaHei UI, sans-serif">微软雅黑 UI</option><option value="DengXian, sans-serif">等线</option><option value="SimSun, NSimSun, serif">宋体</option><option value="SimHei, sans-serif">黑体</option><option value="FangSong, STFangsong, serif">仿宋</option><option value="Georgia, serif">Georgia</option><option value="serif">Serif</option></select></label>
+            <label>代码字体<select aria-label="代码字体" value={draft.codeFont} onChange={(event) => void update({ codeFont: event.target.value })}><option value="ui-monospace, SFMono-Regular, Consolas, monospace">系统等宽</option><option value="Cascadia Code">Cascadia Code</option><option value="Cascadia Mono">Cascadia Mono</option><option value="Segoe UI Mono">Segoe UI Mono</option><option value="SFMono-Regular, Menlo, Monaco, monospace">SF Mono</option><option value="Menlo">Menlo</option><option value="Monaco">Monaco</option><option value="Consolas">Consolas</option><option value="Courier New">Courier New</option></select></label>
             <label>字号<input aria-label="字号" type="number" min="12" max="28" value={draft.fontSize} onChange={updateNumberDraft('fontSize')} onBlur={() => void update({ fontSize: draftRef.current.fontSize })} /></label>
             <label>行高<input aria-label="行高" type="number" min="1.2" max="2.2" step="0.1" value={draft.lineHeight} onChange={updateNumberDraft('lineHeight')} onBlur={() => void update({ lineHeight: draftRef.current.lineHeight })} /></label>
-            <label>默认编辑视图<select aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">Markdown 源码</option><option value="split">源码与预览</option><option value="preview">预览</option></select></label>
+            <label>默认编辑视图<select aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">文档编辑</option><option value="split">分栏校对</option><option value="preview">阅读视图</option></select></label>
             <label>自动保存延迟<input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumberDraft('autosaveDelayMs')} onBlur={() => void update({ autosaveDelayMs: draftRef.current.autosaveDelayMs })} /><span>毫秒</span></label>
           </fieldset>
           <fieldset disabled={operationBusy}>
             <legend>系统</legend>
-            <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" value={draft.shortcut} onChange={(event) => editDraft({ shortcut: event.target.value })} /><button type="button" onClick={() => void update({ shortcut: draftRef.current.shortcut }, 'shortcut')}>应用快捷键</button></label>
+            <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" readOnly value={draft.shortcut} /><button type="button" aria-label="录制快捷键" onClick={() => { recordedShortcutKeysRef.current.clear(); pressedShortcutKeysRef.current.clear(); recordedNonModifierRef.current = false; setRecordingShortcut(true) }}>{recordingShortcut ? '请按下按键…' : '录制快捷键'}</button></label>
             <label className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} />开机启动</label>
           </fieldset>
           {updateController !== undefined && (
@@ -210,32 +241,18 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
           )}
           <fieldset disabled={operationBusy}>
             <legend>本地存储</legend>
-            <p>{storage ? `${storage.root} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>
+            <p>{storage ? `${displayStoragePath(storage.root)} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>
             <p>应用不会自动删除旧位置中的数据。请保留应用配置和未知文件，直到你确认新位置中的笔记与附件完整可用。</p>
             <label className="settings-view__shortcut">新的数据位置<input aria-label="新的数据位置" value={destination} onChange={(event) => setDestination(event.target.value)} /><button type="button" disabled={destination.trim().length === 0 || busy === 'move'} onClick={() => void moveStorage()}>移动数据</button></label>
-            {storage?.previousStorageCleanup !== undefined && (
-              <div className="settings-cleanup">
-                <button type="button" aria-expanded={cleanupExpanded} aria-controls="settings-cleanup-candidates" onClick={() => setCleanupExpanded((value) => !value)}>
-                  {cleanupExpanded ? '收起旧位置候选项' : '查看旧位置候选项'}
-                </button>
-                {cleanupExpanded && <div id="settings-cleanup-candidates" className="settings-cleanup__guidance">
-                  <p><strong>{APP_NAME} 不提供自动删除。</strong>请先核验新位置的笔记与附件。绝不要删除旧位置根目录、<code>settings.json</code>、应用配置或任何未知文件。</p>
-                  <label>旧位置（仅供核对）<input aria-label="旧位置（仅供核对）" readOnly value={storage.previousStorageCleanup.root} onFocus={(event) => event.currentTarget.select()} /></label>
-                  <ul aria-label="可手动核对的旧数据候选项">
-                    {storage.previousStorageCleanup.candidates.map((candidate) => <li key={`${candidate.kind}:${candidate.relativePath}`}><code>{candidate.relativePath}</code> <span>{candidate.kind}</span></li>)}
-                  </ul>
-                </div>}
-              </div>
-            )}
           </fieldset>
           {exportController !== undefined && (
             <fieldset disabled={busy !== null}>
-              <legend>Portable export</legend>
+              <legend>便携式导出</legend>
               <ExportLibrary controller={exportController} />
             </fieldset>
           )}
         </div>
-        <footer><div><button type="button" disabled={operationBusy} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={operationBusy} onClick={onClose}>完成</button></footer>
+        <footer><div><button type="button" disabled={operationBusy} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={closeDisabled} onClick={onClose}>完成</button></footer>
       </section>
     </div>
   )
@@ -245,4 +262,30 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function displayStoragePath(path: string) {
+  return path.replace(/^\\\\\?\\/u, '')
+}
+
+
+function keyName(key: string) {
+  if (key === 'Control' || key === 'Ctrl') return 'Control'
+  if (key === 'Meta' || key === 'Command') return 'Command'
+  if (key === 'Alt' || key === 'Option') return 'Alt'
+  if (key === 'Shift') return 'Shift'
+  if (key === ' ') return 'Space'
+  if (key.length === 1) return key.toUpperCase()
+  return key
+}
+
+function isShortcutModifier(key: string) {
+  return ['Command', 'Control', 'Alt', 'Shift', 'Super'].includes(key)
+}
+
+function formatRecordedShortcut(keys: Set<string>) {
+  const order = ['CommandOrControl', 'Command', 'Control', 'Alt', 'Shift', 'Super']
+  const modifiers = order.filter((modifier) => keys.has(modifier))
+  const normalKeys = [...keys].filter((key) => !isShortcutModifier(key))
+  return [...modifiers, ...normalKeys].join('+')
 }

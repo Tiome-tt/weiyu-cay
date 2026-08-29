@@ -65,7 +65,7 @@ describe('App', () => {
     expect(await screen.findByLabelText('保存状态')).toHaveTextContent('待保存')
   })
 
-  it('restores the actual toolbar create trigger when pointer activation did not focus it', async () => {
+  it('keeps the global toolbar focused on search and settings actions', async () => {
     render(
       <App
         services={{
@@ -78,15 +78,9 @@ describe('App', () => {
         }}
       />,
     )
-    const trigger = within(screen.getByRole('toolbar', { name: '全局应用栏' })).getByRole('button', { name: '新建笔记' })
-    screen.getByRole('button', { name: '打开设置' }).focus()
-
-    fireEvent.click(trigger)
-    expect(screen.getByRole('textbox', { name: '笔记标题' })).toHaveFocus()
-    await userEvent.setup().keyboard('{Escape}')
-
-    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
+    const toolbar = screen.getByRole('toolbar', { name: '全局应用栏' })
+    expect(within(toolbar).queryByRole('button', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(within(toolbar).getByRole('button', { name: '打开设置' })).toBeVisible()
   })
 
   it('dismisses search before keyboard activation opens create from the empty state', async () => {
@@ -770,6 +764,48 @@ describe('App', () => {
     vi.useRealTimers()
   })
 
+  it('reloads a reused sticky window when the native window is shown again', async () => {
+    const previousUrl = window.location.href
+    const temporaryId = '019c0000-0000-7000-8000-000000000031' as NoteId
+    window.history.replaceState(null, '', `?sticky=${temporaryId}`)
+    const initial: NoteDocument = {
+      id: temporaryId, kind: 'temporary', title: 'Capture', folderId: null, tags: [], markdown: 'old', revision: 0,
+      createdAt: '2026-07-30T08:00:00Z', updatedAt: '2026-07-30T08:00:00Z',
+    }
+    const refreshed = { ...initial, markdown: 'new durable text', revision: 2, updatedAt: '2026-07-30T09:00:00Z' }
+    let shownAgain!: (noteId: unknown) => void
+    const temporary = {
+      load: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed),
+      save: vi.fn(), create: vi.fn(), list: vi.fn(), convert: vi.fn(), delete: vi.fn(), undoDelete: vi.fn(),
+    }
+    const temporaryWindows = {
+      hide: vi.fn(), show: vi.fn(), setAlwaysOnTop: vi.fn(), startDragging: vi.fn(),
+      onShown: vi.fn(async (handler: (noteId: unknown) => void) => { shownAgain = handler; return () => undefined }),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      temporary, temporaryWindows, stickySettings: fakeStickySettingsPort(),
+    }} />)
+
+    await screen.findByTestId('sticky-window')
+    await waitFor(() => expect(temporaryWindows.onShown).toHaveBeenCalledOnce())
+    act(() => shownAgain(temporaryId))
+
+    await waitFor(() => expect(temporary.load).toHaveBeenCalledTimes(2))
+    const editor = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
+    expect(editor?.state.doc.toString()).toBe('new durable text')
+    act(() => {
+      editor?.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'saved after reopen' } })
+      window.dispatchEvent(new Event('blur'))
+    })
+    await waitFor(() => expect(temporary.save).toHaveBeenCalledWith(expect.objectContaining({
+      markdown: 'saved after reopen',
+      revision: 2,
+    })))
+    window.history.replaceState(null, '', previousUrl)
+  })
+
   it('adopts narrowed sticky events, ignores a stale sticky load, and removes its listener', async () => {
     const temporaryId = '019c0000-0000-7000-8000-000000000031' as NoteId
     window.history.replaceState(null, '', `?sticky=${temporaryId}`)
@@ -819,6 +855,26 @@ describe('App', () => {
     retry.resolve({ ...defaultStickySettings, theme: 'sand' })
     await retry.promise
     expect(unlisten).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a sticky window mounted when native event setup throws synchronously', async () => {
+    const temporaryId = '019c0000-0000-7000-8000-000000000031' as NoteId
+    window.history.replaceState(null, '', `?sticky=${temporaryId}`)
+    const stickySettings = fakeStickySettingsPort({
+      load: vi.fn().mockResolvedValue(defaultStickySettings),
+      onChanged: vi.fn(() => { throw new Error('native window metadata is not ready') }),
+    })
+    const temporary = {
+      load: vi.fn().mockResolvedValue({ id: temporaryId, kind: 'temporary', title: 'Capture', folderId: null, tags: [], markdown: '', revision: 0, createdAt: '', updatedAt: '' }),
+      save: vi.fn(), create: vi.fn(), list: vi.fn(), convert: vi.fn(), delete: vi.fn(), undoDelete: vi.fn(),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      temporary, temporaryWindows: { hide: vi.fn(), show: vi.fn(), setAlwaysOnTop: vi.fn(), startDragging: vi.fn() }, stickySettings,
+    }} />)
+
+    expect(await screen.findByTestId('sticky-window')).toBeInTheDocument()
   })
 
   it('tracks system color-scheme changes and cleans up the media listener', async () => {

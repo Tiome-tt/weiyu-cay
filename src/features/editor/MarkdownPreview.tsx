@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { forwardRef, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
 import {
@@ -6,7 +6,7 @@ import {
   resolutionClass,
   resolutionTitle,
 } from './internalLinks'
-import { renderPreviewMarkdown } from './markdownPipeline'
+import { applyMarkdownTableMerges, renderPreviewMarkdown } from './markdownPipeline'
 
 interface MarkdownPreviewProps {
   markdown: string
@@ -19,7 +19,7 @@ interface MarkdownPreviewProps {
   external?: Pick<SystemPort, 'openExternal'>
 }
 
-export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
+export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps>(
   function MarkdownPreview({ markdown, onScroll, links, linkCache, onNavigateLink, noteId, assetReader, external }, ref) {
     const prepared = useMemo(() => {
       const identity = createPreviewIdentity()
@@ -27,6 +27,7 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
     }, [markdown])
     const html = useMemo(() => renderPreviewMarkdown(prepared.markdown), [prepared.markdown])
     const [resolutions, setResolutions] = useState<ReadonlyMap<NoteId, NoteSummary | null>>(new Map())
+    const [previewZoom, setPreviewZoom] = useState(1)
     const [assetState, setAssetState] = useState<{
       html: string
       urls: ReadonlyMap<string, string>
@@ -121,6 +122,12 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
       })
     }, [prepared.links, resolutions, resolvedHtml])
 
+    useEffect(() => {
+      const host = articleRef.current
+      if (host === null) return
+      applyMarkdownTableMerges(host, prepared.markdown)
+    }, [prepared.markdown, resolvedHtml])
+
     const activate = (event: MouseEvent<HTMLElement>) => {
       const element = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a') : null
       const href = element?.getAttribute('href')
@@ -137,6 +144,14 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
       onNavigateLink?.(link.targetId)
     }
 
+    const handleZoom = (event: React.WheelEvent<HTMLElement>) => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      setPreviewZoom((value) => Math.min(2, Math.max(0.5, value + (event.deltaY < 0 ? 0.1 : -0.1))))
+    }
+
+    const previewStyle = { '--preview-zoom': previewZoom } as CSSProperties
+
     return (
       <article
         ref={(element) => {
@@ -145,13 +160,16 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
           else if (ref !== null) ref.current = element
         }}
         className="markdown-preview"
+        style={previewStyle}
         onScroll={onScroll}
         onClick={activate}
-        dangerouslySetInnerHTML={{ __html: resolvedHtml }}
-      />
+        onWheel={handleZoom}
+      >
+        <div className="markdown-preview__page" dangerouslySetInnerHTML={{ __html: resolvedHtml }} />
+      </article>
     )
   },
-)
+))
 
 function createPreviewIdentity(): string {
   const random = new Uint32Array(4)

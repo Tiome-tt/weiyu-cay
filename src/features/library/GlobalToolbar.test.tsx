@@ -16,7 +16,6 @@ describe('GlobalToolbar', () => {
         saveState="saved"
         updateAttention="none"
         onSelectResult={vi.fn()}
-        onCreateNote={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
@@ -27,12 +26,11 @@ describe('GlobalToolbar', () => {
     expect(within(toolbar).getByTestId('global-toolbar-search')).toBeVisible()
     expect(within(toolbar).getByTestId('global-toolbar-actions')).toBeVisible()
     expect(screen.getByRole('searchbox', { name: '搜索笔记' })).toHaveAttribute('placeholder', '搜索标题、正文或 #标签')
-    expect(screen.getByRole('button', { name: '新建笔记' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '新建笔记' })).not.toBeInTheDocument()
     expect(screen.getByRole('status', { name: '保存状态' })).toHaveTextContent('已保存')
   })
 
   it('routes explicit toolbar actions and only surfaces actionable update attention', async () => {
-    const onCreateNote = vi.fn()
     const onOpenSettings = vi.fn()
     const user = userEvent.setup()
     const rendered = render(
@@ -42,16 +40,12 @@ describe('GlobalToolbar', () => {
         saveState="hidden"
         updateAttention="none"
         onSelectResult={vi.fn()}
-        onCreateNote={onCreateNote}
         onOpenSettings={onOpenSettings}
       />,
     )
 
     expect(screen.queryByRole('button', { name: /可用更新|需要重启/ })).not.toBeInTheDocument()
-    const createTrigger = screen.getByRole('button', { name: '新建笔记' })
-    await user.click(createTrigger)
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    expect(onCreateNote).toHaveBeenCalledWith(createTrigger)
     expect(onOpenSettings).toHaveBeenCalledOnce()
 
     rendered.rerender(
@@ -61,7 +55,6 @@ describe('GlobalToolbar', () => {
         saveState="hidden"
         updateAttention="restart-required"
         onSelectResult={vi.fn()}
-        onCreateNote={onCreateNote}
         onOpenSettings={onOpenSettings}
       />,
     )
@@ -88,7 +81,6 @@ describe('GlobalToolbar', () => {
         saveState="hidden"
         updateAttention="none"
         onSelectResult={vi.fn()}
-        onCreateNote={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
@@ -104,7 +96,6 @@ describe('GlobalToolbar', () => {
         saveState="hidden"
         updateAttention="none"
         onSelectResult={vi.fn()}
-        onCreateNote={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )
@@ -120,7 +111,6 @@ describe('GlobalToolbar', () => {
         saveState="hidden"
         updateAttention="none"
         onSelectResult={vi.fn()}
-        onCreateNote={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     )

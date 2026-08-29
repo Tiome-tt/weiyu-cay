@@ -23,7 +23,6 @@ export function MainWindowEmptyState({ onCreateNote }: MainWindowEmptyStateProps
       </svg>
       <div className="main-window-empty-state__copy">
         <h2>每个念头，都是一座小岛。</h2>
-        <p>写下此刻的念头，内容会自动保存在本地。</p>
       </div>
       <button
         type="button"

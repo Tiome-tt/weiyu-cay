@@ -13,7 +13,6 @@ export interface GlobalToolbarProps {
   saveState: ToolbarSaveState
   updateAttention: 'none' | 'available' | 'restart-required'
   onSelectResult(noteId: NoteId): void
-  onCreateNote(trigger: HTMLButtonElement): void
   onOpenSettings(): void
 }
 
@@ -24,7 +23,7 @@ const SAVE_LABELS: Record<Exclude<ToolbarSaveState, 'hidden'>, string> = {
   error: '保存失败',
 }
 
-export function GlobalToolbar({ search, searchDismissSignal, saveState, updateAttention, onSelectResult, onCreateNote, onOpenSettings }: GlobalToolbarProps) {
+export function GlobalToolbar({ search, searchDismissSignal, saveState, updateAttention, onSelectResult, onOpenSettings }: GlobalToolbarProps) {
   return (
     <header className="global-toolbar" role="toolbar" aria-label="全局应用栏">
       <div className="global-toolbar__brand" data-testid="global-toolbar-brand">
@@ -53,15 +52,6 @@ export function GlobalToolbar({ search, searchDismissSignal, saveState, updateAt
         )}
         <button type="button" className="global-toolbar__icon-button" aria-label="打开设置" title="设置" onClick={onOpenSettings}>
           <Icon name="settings" size={18} />
-        </button>
-        <button
-          type="button"
-          className="global-toolbar__create"
-          aria-label="新建笔记"
-          onClick={(event) => onCreateNote(event.currentTarget)}
-        >
-          <Icon name="plus" size={17} />
-          <span>新建笔记</span>
         </button>
       </div>
     </header>

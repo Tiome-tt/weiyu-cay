@@ -1,9 +1,9 @@
-use simple_notes_lib::commands::notes::CreateNoteInput;
-use simple_notes_lib::domain::{
+use weiyu_cay_lib::commands::notes::CreateNoteInput;
+use weiyu_cay_lib::domain::{
     BatchConversionFailure, BatchConversionResult, ConvertedTemporaryNote, FolderId, NoteDocument,
     NoteId, NoteKind,
 };
-use simple_notes_lib::error::{CommandError, CommandErrorCode};
+use weiyu_cay_lib::error::{CommandError, CommandErrorCode};
 
 #[test]
 fn create_note_command_accepts_the_renderer_title_and_folder_contract() {

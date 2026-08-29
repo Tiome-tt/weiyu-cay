@@ -268,7 +268,7 @@ impl TemporaryRepository {
             NoteDocument {
                 id: NoteId::now_v7(),
                 kind: NoteKind::Temporary,
-                title: "Temporary capture".to_owned(),
+                title: "临时便签".to_owned(),
                 folder_id: None,
                 tags: Vec::new(),
                 markdown: String::new(),
@@ -342,6 +342,7 @@ pub trait TemporaryWindowBackend: Clone + Send + Sync + 'static {
         state: TemporaryWindowState,
     ) -> Result<(), CommandError>;
     fn show_and_focus(&self, label: &str) -> Result<(), CommandError>;
+    fn notify_shown(&self, label: &str, note_id: NoteId) -> Result<(), CommandError>;
     fn hide(&self, label: &str) -> Result<(), CommandError>;
     fn set_always_on_top(&self, label: &str, always_on_top: bool) -> Result<(), CommandError>;
     fn apply_state(
@@ -364,21 +365,41 @@ impl<B: TemporaryWindowBackend> TemporaryWindowService<B> {
     }
 
     pub fn show(&self, note_id: NoteId) -> Result<TemporaryWindowState, CommandError> {
-        let guard = IndexMutationLock::acquire(self.paths.root())?;
-        ensure_temporary(&self.paths, note_id, &guard)?;
         let label = temporary_window_label(note_id);
-        let previous = self.load_state_locked(note_id, &guard)?;
+        // Do not hold the index lock while invoking native window APIs. On
+        // Windows, creating or positioning a WebView can synchronously emit
+        // moved/resized events, and those handlers persist bounds through the
+        // same lock.
+        let previous = {
+            let guard = IndexMutationLock::acquire(self.paths.root())?;
+            ensure_temporary(&self.paths, note_id, &guard)?;
+            self.load_state_locked(note_id, &guard)?
+        };
         self.backend.ensure_window(&label, note_id, previous)?;
-        let applied = self.backend.apply_state(&label, previous)?;
+        let applied = match self.backend.apply_state(&label, previous) {
+            Ok(applied) => applied,
+            Err(error) => {
+                let _ = self.backend.hide(&label);
+                return Err(error);
+            }
+        };
         if let Err(error) = self.backend.show_and_focus(&label) {
             let _ = self.backend.hide(&label);
             return Err(error);
         }
+        // A newly created webview can still be initializing when the native
+        // window becomes visible. The initial sticky load covers that case;
+        // this notification only refreshes an already-mounted hidden window.
+        let _ = self.backend.notify_shown(&label, note_id);
         let next = TemporaryWindowState {
             visible: true,
             ..applied
         };
-        let publication = self.persist_state_locked(next, &guard);
+        let publication = (|| {
+            let guard = IndexMutationLock::acquire(self.paths.root())?;
+            ensure_temporary(&self.paths, note_id, &guard)?;
+            self.persist_state_locked(next, &guard)
+        })();
         if let Err(error) = publication {
             let _ = self.backend.hide(&label);
             return Err(error);
@@ -637,6 +658,7 @@ pub struct InMemoryTemporaryWindowBackend {
 struct InMemoryBackendState {
     created: Vec<String>,
     show_count: usize,
+    shown_notification_count: usize,
     operations: usize,
     fail_on_operation: Option<usize>,
     state_apply_count: usize,
@@ -658,6 +680,13 @@ impl InMemoryTemporaryWindowBackend {
             .lock()
             .expect("backend mutex poisoned")
             .show_count
+    }
+
+    pub fn shown_notification_count(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .shown_notification_count
     }
 
     pub fn fail_next(&self) {
@@ -729,6 +758,15 @@ impl TemporaryWindowBackend for InMemoryTemporaryWindowBackend {
         Ok(())
     }
 
+    fn notify_shown(&self, _label: &str, _note_id: NoteId) -> Result<(), CommandError> {
+        self.operation()?;
+        self.inner
+            .lock()
+            .expect("backend mutex poisoned")
+            .shown_notification_count += 1;
+        Ok(())
+    }
+
     fn hide(&self, _label: &str) -> Result<(), CommandError> {
         self.operation()
     }
@@ -791,6 +829,23 @@ impl TauriTemporaryWindowBackend {
     }
 }
 
+fn sticky_route_query(note_id: NoteId, state: TemporaryWindowState) -> String {
+    format!(
+        "sticky={note_id}&x={}&y={}&width={}&height={}&pin={}",
+        state.x,
+        state.y,
+        state.width,
+        state.height,
+        if state.always_on_top { 1 } else { 0 },
+    )
+}
+
+fn sticky_route_bootstrap_script(note_id: NoteId, state: TemporaryWindowState) -> String {
+    let location = format!("?{}", sticky_route_query(note_id, state));
+    let encoded = serde_json::to_string(&location).expect("sticky route is always a string");
+    format!("window.history.replaceState(null, '', {encoded});")
+}
+
 impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
     fn ensure_window(
         &self,
@@ -803,27 +858,43 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
                 "temporary window label does not match its note",
             ));
         }
-        if self.app.get_webview_window(label).is_some() {
+        if let Some(window) = self.app.get_webview_window(label) {
+            // Older builds created this window without a stable route bootstrap.
+            // Repair that URL in-place and reload only when the route is wrong;
+            // a normal show must not discard an unsaved sticky draft.
+            let route_matches = window
+                .url()
+                .ok()
+                .and_then(|url| {
+                    url.query_pairs()
+                        .find(|(key, _)| key == "sticky")
+                        .map(|(_, value)| value.into_owned())
+                })
+                .is_some_and(|value| value == note_id.to_string());
+            if !route_matches {
+                let _ = window.eval(format!(
+                    "{} window.location.reload();",
+                    sticky_route_bootstrap_script(note_id, state),
+                ));
+            }
             return Ok(());
         }
         let window = WebviewWindowBuilder::new(
             &self.app,
             label,
-            WebviewUrl::App(
-                format!(
-                    "index.html?sticky={note_id}&x={}&y={}&width={}&height={}&pin={}",
-                    state.x,
-                    state.y,
-                    state.width,
-                    state.height,
-                    if state.always_on_top { 1 } else { 0 }
-                )
-                .into(),
-            ),
+            // Keep the app URL path plain. The route is installed before the
+            // Vite entry script runs, avoiding WebView URL/query handling
+            // differences between the dev proxy and packaged protocol.
+            WebviewUrl::App("index.html".into()),
         )
+        .initialization_script(sticky_route_bootstrap_script(note_id, state))
         .title(crate::brand::APP_NAME)
         .decorations(false)
         .resizable(true)
+        // Let WebView2 finish its first document load before exposing the
+        // child window. Calling show immediately after build is reliable once
+        // the native window has a completed handle, while exposing a partially
+        // initialized WebView can make Windows mark the window unresponsive.
         .visible(false)
         .inner_size(state.width, state.height)
         .position(state.x, state.y)
@@ -887,11 +958,28 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
 
     fn show_and_focus(&self, label: &str) -> Result<(), CommandError> {
         let window = self.window(label)?;
+        // A sticky can have been minimized independently of the hide/show
+        // lifecycle. Restore it before showing so the native window is not
+        // left minimized behind the main window.
+        let _ = window.unminimize();
+        window.show().map_err(|source| {
+            CommandError::io(format!("could not show temporary window: {source}"))
+        })?;
+        // Windows may reject focus while the webview is still initializing or
+        // when the main window owns the foreground activation. Visibility is
+        // the durable operation; focus is a best-effort convenience.
+        let _ = window.set_focus();
+        Ok(())
+    }
+
+    fn notify_shown(&self, label: &str, note_id: NoteId) -> Result<(), CommandError> {
+        let window = self.window(label)?;
         window
-            .show()
-            .and_then(|_| window.set_focus())
+            .emit("temporary-window-shown", note_id.to_string())
             .map_err(|source| {
-                CommandError::io(format!("could not show temporary window: {source}"))
+                CommandError::io(format!(
+                    "could not notify temporary window that it was shown: {source}"
+                ))
             })
     }
 
@@ -984,5 +1072,38 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
         window.destroy().map_err(|source| {
             CommandError::io(format!("could not retire temporary window: {source}"))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sticky_route_bootstrap_script, sticky_route_query};
+    use crate::domain::{NoteId, TemporaryWindowState};
+
+    fn state() -> TemporaryWindowState {
+        TemporaryWindowState {
+            note_id: NoteId::parse_str("019c0000-0000-7000-8000-000000000031")
+                .expect("valid note id"),
+            visible: true,
+            x: 12.0,
+            y: 24.0,
+            width: 360.0,
+            height: 420.0,
+            always_on_top: true,
+        }
+    }
+
+    #[test]
+    fn sticky_route_bootstrap_is_plain_index_url_safe() {
+        let state = state();
+        let query = sticky_route_query(state.note_id, state);
+        let script = sticky_route_bootstrap_script(state.note_id, state);
+
+        assert_eq!(
+            query,
+            "sticky=019c0000-0000-7000-8000-000000000031&x=12&y=24&width=360&height=420&pin=1"
+        );
+        assert!(script.contains("history.replaceState"));
+        assert!(script.contains("?sticky=019c0000-0000-7000-8000-000000000031"));
     }
 }

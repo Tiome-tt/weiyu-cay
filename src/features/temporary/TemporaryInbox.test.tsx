@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createRef } from 'react'
 import { EditorView } from '@codemirror/view'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -22,6 +23,69 @@ function deferred<T>() {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('TemporaryInbox', () => {
+  it('opens a temporary capture in the document editor', async () => {
+    const capture = twoCaptures()[0]
+    const temporary = fakeTemporaryPort([capture])
+    const user = userEvent.setup()
+
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+
+    expect(temporary.load).toHaveBeenCalledWith(capture.id)
+    expect(await screen.findByRole('textbox', { name: 'Markdown source' })).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveValue('发布前检查')
+  })
+
+  it('opens the listed snapshot when a second load is temporarily unavailable', async () => {
+    const capture = twoCaptures()[0]
+    const temporary = {
+      ...fakeTemporaryPort([capture]),
+      load: vi.fn().mockRejectedValue(new Error('temporary index busy')),
+    }
+    const user = userEvent.setup()
+
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+
+    expect(await screen.findByRole('textbox', { name: 'Markdown source' })).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveValue('发布前检查')
+    expect(screen.queryByText('无法打开临时捕捉。')).not.toBeInTheDocument()
+  })
+
+  it('keeps the listed snapshot visible while the durable load is pending', async () => {
+    const capture = twoCaptures()[0]
+    const pendingLoad = deferred<NoteDocument>()
+    const temporary = {
+      ...fakeTemporaryPort([capture]),
+      load: vi.fn(() => pendingLoad.promise),
+    }
+    const user = userEvent.setup()
+
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+
+    expect(await screen.findByRole('textbox', { name: 'Markdown source' })).toHaveValue('发布前检查')
+    expect(screen.queryByText('正在打开临时捕捉…')).not.toBeInTheDocument()
+    pendingLoad.resolve(capture)
+  })
+
+  it('does not reload the inbox just because a capture is opened', async () => {
+    const capture = twoCaptures()[0]
+    const pendingLoad = deferred<NoteDocument>()
+    const list = vi.fn().mockResolvedValue([capture])
+    const temporary = { ...fakeTemporaryPort([capture]), list, load: vi.fn(() => pendingLoad.promise) }
+    const user = userEvent.setup()
+
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+    await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
+
+    expect(list).toHaveBeenCalledOnce()
+    pendingLoad.resolve(capture)
+  })
+
   it('reopens a hidden sticky window from the main temporary inbox', async () => {
     const captures = twoCaptures()
     const windows = {
@@ -92,7 +156,7 @@ describe('TemporaryInbox', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('目标文件夹不可用')
   })
 
-  it('deletes successful captures, exposes undo, and leaves failed captures selected', async () => {
+  it('deletes successful captures directly to trash and leaves failed captures selected', async () => {
     const captures = twoCaptures()
     const deleted = captures[0].id
     const temporary = {
@@ -113,10 +177,9 @@ describe('TemporaryInbox', () => {
     await user.click(screen.getByRole('button', { name: '删除所选' }))
 
     await waitFor(() => expect(temporary.delete).toHaveBeenCalledWith(captures.map((item) => item.id)))
-    expect(screen.getByRole('button', { name: '撤销删除' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: '选择 接口异常处理' })).toBeChecked()
-    await user.click(screen.getByRole('button', { name: '撤销删除' }))
-    await waitFor(() => expect(temporary.undoDelete).toHaveBeenCalledWith('019c0000-0000-7000-8000-000000000099'))
+    expect(temporary.undoDelete).not.toHaveBeenCalled()
   })
 
   it('removes stale selection when a refresh no longer includes that capture', async () => {
@@ -130,10 +193,11 @@ describe('TemporaryInbox', () => {
       undoDelete: vi.fn(),
     }
     const user = userEvent.setup()
-    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+    const inboxRef = createRef<import('./TemporaryInbox').TemporaryInboxHandle>()
+    render(<TemporaryInbox ref={inboxRef} temporary={temporary} folders={folderRows} />)
 
     await user.click(await screen.findByRole('checkbox', { name: '选择 发布前检查' }))
-    await user.click(screen.getByRole('button', { name: '刷新临时收集箱' }))
+    await act(async () => { await inboxRef.current?.refresh() })
 
     await waitFor(() => expect(screen.queryByRole('checkbox', { name: '选择 发布前检查' })).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '删除所选' })).toBeDisabled()
@@ -316,6 +380,9 @@ describe('TemporaryInbox', () => {
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'pending conversion edit' } }))
     await user.click(screen.getByRole('button', { name: '转为笔记' }))
     await user.selectOptions(await screen.findByRole('combobox', { name: '目标文件夹' }), project)
+    await user.clear(screen.getByRole('textbox', { name: '笔记标题' }))
+    await user.type(screen.getByRole('textbox', { name: '笔记标题' }), '发布前检查笔记')
+    await user.type(screen.getByRole('textbox', { name: '笔记标签' }), '工作,发布')
     const confirm = screen.getByRole('button', { name: '确认转换' })
 
     confirm.click()
@@ -326,7 +393,46 @@ describe('TemporaryInbox', () => {
     expect(editor.state.facet(EditorView.editable)).toBe(false)
     await act(async () => pendingSave.resolve({ ...captures[0], markdown: 'pending conversion edit', revision: 2 }))
     await waitFor(() => expect(convert).toHaveBeenCalledOnce())
-    expect(convert).toHaveBeenCalledWith({ ids: [captures[0].id], folderId: project })
+    expect(convert).toHaveBeenCalledWith({ ids: [captures[0].id], folderId: project, title: '发布前检查笔记', tags: ['工作', '发布'] })
+  })
+
+  it('refreshes automatically and does not expose a manual refresh button', async () => {
+    vi.useFakeTimers()
+    const list = vi.fn().mockResolvedValue(twoCaptures())
+    const temporary = { ...fakeTemporaryPort(twoCaptures()), list }
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByRole('checkbox', { name: '选择 发布前检查' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '刷新临时收集箱' })).not.toBeInTheDocument()
+
+    const initialCalls = list.mock.calls.length
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(list.mock.calls.length).toBeGreaterThan(initialCalls)
+  })
+
+  it('refreshes the formal library after a successful conversion', async () => {
+    const capture = twoCaptures()[0]
+    const convert = vi.fn(async () => ({
+      converted: [{ temporaryId: capture.id, noteId: capture.id }],
+      failed: [],
+    }))
+    const onConversionComplete = vi.fn(async () => undefined)
+    const user = userEvent.setup()
+    render(
+      <TemporaryInbox
+        temporary={{ ...fakeTemporaryPort([capture]), convert }}
+        folders={folderRows}
+        onConversionComplete={onConversionComplete}
+      />,
+    )
+
+    await user.click(await screen.findByRole('checkbox', { name: /选择 发布前检查/ }))
+    await user.click(screen.getByRole('button', { name: '转为笔记' }))
+    await user.selectOptions(await screen.findByRole('combobox', { name: '目标文件夹' }), project)
+    await user.click(screen.getByRole('button', { name: '确认转换' }))
+
+    await waitFor(() => expect(onConversionComplete).toHaveBeenCalledWith(capture.id, project))
   })
 
   it('keeps the current capture open when its flush fails during a switch', async () => {
@@ -390,28 +496,23 @@ describe('TemporaryInbox', () => {
     expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
   })
 
-  it('does not select a capture created during a refresh and keeps a partial undo retryable', async () => {
+  it('does not select a capture created during a refresh after deletion', async () => {
     const captures = twoCaptures()
     const created = { ...captures[0], id: '019c0000-0000-7000-8000-000000000088' as NoteId, markdown: 'new shortcut capture' }
     const list = vi.fn().mockResolvedValueOnce(captures).mockResolvedValue([...captures, created])
-    const undoDelete = vi.fn(async () => ({ operationId: 'op', restored: [], failed: [{ temporaryId: captures[0].id, message: '恢复冲突' }] }))
     const temporary = {
       ...fakeTemporaryPort(captures),
       list,
       delete: vi.fn(async () => ({ operationId: 'op', deleted: [captures[0].id], failed: [] })),
-      undoDelete,
     }
     const user = userEvent.setup()
-    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+    const inboxRef = createRef<import('./TemporaryInbox').TemporaryInboxHandle>()
+    render(<TemporaryInbox ref={inboxRef} temporary={temporary} folders={folderRows} />)
 
     await user.click(await screen.findByRole('checkbox', { name: '选择 发布前检查' }))
-    await user.click(screen.getByRole('button', { name: '刷新临时收集箱' }))
+    await act(async () => { await inboxRef.current?.refresh() })
     expect(await screen.findByRole('checkbox', { name: '选择 new shortcut capture' })).not.toBeChecked()
     await user.click(screen.getByRole('button', { name: '删除所选' }))
-    await user.click(await screen.findByRole('button', { name: '撤销删除' }))
-    expect(await screen.findByText('恢复冲突')).toBeVisible()
-    expect(screen.getByRole('button', { name: '撤销删除' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: '撤销删除' }))
-    expect(undoDelete).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
   })
 })

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { FolderPort, NotePort } from '../../domain/ports'
 
-export type LibraryNotePort = Pick<NotePort, 'createNote' | 'listNotes' | 'loadNote' | 'saveNote' | 'renameNote' | 'moveNote'>
+export type LibraryNotePort = Pick<NotePort, 'createNote' | 'listNotes' | 'loadNote' | 'saveNote' | 'renameNote' | 'moveNote' | 'reorderNotes'>
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -10,6 +10,7 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   const [folders, setFolders] = useState<Folder[]>([])
   const [folderState, setFolderState] = useState<LoadState>('loading')
   const [notes, setNotes] = useState<NoteSummary[]>([])
+  const [notesByFolder, setNotesByFolder] = useState<Record<string, NoteSummary[]>>({})
   const [noteListState, setNoteListState] = useState<LoadState>('loading')
   const [documentState, setDocumentState] = useState<LoadState>('ready')
   const [activeFolderId, setActiveFolderId] = useState<FolderId | null>(null)
@@ -49,15 +50,15 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     void refreshFolders()
   }, [refreshFolders])
 
-  const refreshNotes = useCallback(async () => {
+  const refreshNotes = useCallback(async (folderId = activeFolderId) => {
     if (!mountedRef.current) return
     const request = ++noteListRequest.current
     setNoteListState('loading')
-    setNotes([])
     try {
-      const result = await notesPort.listNotes(activeFolderId)
+      const result = await notesPort.listNotes(folderId)
       if (!mountedRef.current || noteListRequest.current !== request) return
       setNotes(result)
+      setNotesByFolder((current) => ({ ...current, [folderKey(folderId)]: result }))
       setNoteListState('ready')
     } catch {
       if (!mountedRef.current || noteListRequest.current !== request) return
@@ -112,11 +113,13 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
   const createNote = useCallback(async (title: string, folderId: FolderId | null = activeFolderId) => {
     const request = ++noteRequest.current
     const created = await notesPort.createNote({ folderId, title })
-    if (!mountedRef.current || noteRequest.current !== request) return
+    if (!mountedRef.current || noteRequest.current !== request) return created
+    setActiveFolderId(folderId)
     setActiveNoteId(created.id)
     setDocument(created)
     setDocumentState('ready')
-    await refreshNotes()
+    await refreshNotes(folderId)
+    return created
   }, [activeFolderId, notesPort, refreshNotes])
 
   const renameNote = useCallback(async (id: NoteId, title: string) => {
@@ -157,9 +160,31 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     [foldersPort, refreshFolders],
   )
 
+  const reorderFolders = useCallback(async (parentId: FolderId | null, orderedIds: FolderId[]) => {
+    if (foldersPort.reorderFolders === undefined) return
+    await foldersPort.reorderFolders(parentId, orderedIds)
+    await refreshFolders()
+  }, [foldersPort, refreshFolders])
+
+  const reorderNotes = useCallback(async (folderId: FolderId | null, orderedIds: NoteId[]) => {
+    if (notesPort.reorderNotes === undefined) return
+    await notesPort.reorderNotes(folderId, orderedIds)
+    await refreshNotes()
+  }, [notesPort, refreshNotes])
+
+  const toggleFolderStar = useCallback(
+    async (id: FolderId, starred: boolean) => {
+      if (foldersPort.setFolderStarred === undefined) return
+      await foldersPort.setFolderStarred(id, starred)
+      await refreshFolders()
+    },
+    [foldersPort, refreshFolders],
+  )
+
   const deleteFolder = useCallback(
     async (id: FolderId) => {
-      await foldersPort.deleteEmptyFolder(id)
+      if (foldersPort.deleteFolder !== undefined) await foldersPort.deleteFolder(id)
+      else await foldersPort.deleteEmptyFolder(id)
       if (activeFolderId === id) selectFolder(null)
       await refreshFolders()
     },
@@ -178,6 +203,18 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     noteRequest.current += 1
     noteListRequest.current += 1
     setNotes((current) => current.filter((note) => note.id !== id))
+    setNotesByFolder((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const [key, items] of Object.entries(current)) {
+        const filtered = items.filter((note) => note.id !== id)
+        if (filtered.length !== items.length) {
+          next[key] = filtered
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
     if (activeNoteId !== id) return
     setActiveNoteId(null)
     setDocument(null)
@@ -192,6 +229,7 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     folders,
     folderState,
     notes,
+    notesByFolder,
     noteListState,
     documentState,
     activeFolderId,
@@ -205,6 +243,9 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     moveNote,
     renameFolder,
     moveFolder,
+    reorderFolders,
+    reorderNotes,
+    toggleFolderStar,
     deleteFolder,
     adoptDocument,
     clearDeletedNote,
@@ -212,4 +253,8 @@ export function useLibrary(notesPort: LibraryNotePort, foldersPort: FolderPort) 
     refreshNotes,
     refreshLibrary,
   }
+}
+
+function folderKey(folderId: FolderId | null): string {
+  return folderId ?? '__unfiled__'
 }

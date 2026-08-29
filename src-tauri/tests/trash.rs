@@ -1,7 +1,7 @@
 mod support;
 
 use rusqlite::{params, Connection};
-use simple_notes_lib::{
+use weiyu_cay_lib::{
     commands::folders::FolderRepository,
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     storage::{
@@ -140,7 +140,7 @@ fn restore_uses_one_stable_recovered_folder_when_previous_folder_is_missing() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(names, vec!["已恢复"]);
+    assert_eq!(names, vec!["Removed"]);
 }
 
 #[test]
@@ -200,6 +200,27 @@ fn purge_keeps_29_day_entries_and_removes_31_day_entries() {
         .collect();
     assert!(retained.contains(&young.id));
     assert!(retained.contains(&boundary.id));
+}
+
+#[test]
+fn purge_removes_a_manually_selected_deleted_note() {
+    let store = TestStore::new();
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        None,
+        "Selected",
+    );
+    let service = TrashService::new(store.paths.clone());
+    service.trash(vec![note.id], "2026-08-02T00:00:00Z").unwrap();
+
+    let result = service.purge(vec![note.id]).unwrap();
+
+    assert_eq!(result.purged, vec![note.id]);
+    assert!(result.failed.is_empty());
+    assert!(service.list().unwrap().is_empty());
+    assert!(NoteRepository::new(store.paths.clone()).load(note.id).is_err());
 }
 
 #[test]

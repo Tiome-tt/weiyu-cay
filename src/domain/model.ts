@@ -26,4 +26,5 @@ export interface Folder {
   parentId: FolderId | null
   name: string
   sortOrder: number
+  starred?: boolean
 }

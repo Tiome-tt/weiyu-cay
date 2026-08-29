@@ -146,6 +146,7 @@ pub struct Folder {
     pub parent_id: Option<FolderId>,
     pub name: String,
     pub sort_order: i64,
+    pub starred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,6 +234,7 @@ pub struct TrashEntry {
     pub kind: NoteKind,
     pub title: String,
     pub previous_folder_id: Option<FolderId>,
+    pub previous_folder_name: Option<String>,
     pub previous_relative_path: String,
     pub deleted_at: String,
     pub assets: Vec<String>,

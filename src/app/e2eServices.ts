@@ -22,8 +22,8 @@ function initialState(): E2EState {
   return {
     notes: [document(authenticationId, 'formal', '用户认证', '# 用户认证\n\n身份验证入口。', folderId)],
     temporary: [
-      document('019c0000-0000-7000-8000-000000000703' as NoteId, 'temporary', 'Temporary capture', '发布前检查', null),
-      document('019c0000-0000-7000-8000-000000000704' as NoteId, 'temporary', 'Temporary capture', '接口异常处理', null),
+      document('019c0000-0000-7000-8000-000000000703' as NoteId, 'temporary', '临时便签', '发布前检查', null),
+      document('019c0000-0000-7000-8000-000000000704' as NoteId, 'temporary', '临时便签', '接口异常处理', null),
     ],
     deletedTemporary: [],
     trashed: [],
@@ -265,6 +265,12 @@ export function createE2EAppServices(): AppServices {
         return { restored, failed: [] }
       },
       async undo() { return { restored: [], failed: [] } },
+      async purge(ids) {
+        const purged = state.trashed.filter((note) => ids.includes(note.id)).map((note) => note.id)
+        state.trashed = state.trashed.filter((note) => !ids.includes(note.id))
+        saveState(state)
+        return { purged, failed: [] }
+      },
       async purgeExpired() { return { purged: [], failed: [] } },
     },
     settings: settingsPort(),

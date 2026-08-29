@@ -1,5 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
@@ -36,6 +37,10 @@ class TauriNotePort implements LibraryNotePort {
 
   moveNote(noteId: NoteId, folderId: FolderId | null) {
     return this.client.invoke<NoteDocument>('move_note', { noteId, folderId })
+  }
+
+  reorderNotes(folderId: FolderId | null, orderedIds: NoteId[]) {
+    return this.client.invoke<void>('reorder_notes', { folderId, orderedIds })
   }
 }
 
@@ -133,8 +138,20 @@ class TauriFolderPort implements FolderPort {
     return this.client.invoke<Folder>('move_folder', { folderId, parentId })
   }
 
+  reorderFolders(parentId: FolderId | null, orderedIds: FolderId[]) {
+    return this.client.invoke<void>('reorder_folders', { parentId, orderedIds })
+  }
+
+  setFolderStarred(folderId: FolderId, starred: boolean) {
+    return this.client.invoke<Folder>('set_folder_starred', { folderId, starred })
+  }
+
   async deleteEmptyFolder(folderId: FolderId) {
     await this.client.invoke<void>('delete_empty_folder', { folderId })
+  }
+
+  async deleteFolder(folderId: FolderId) {
+    await this.client.invoke<void>('delete_folder', { folderId })
   }
 }
 
@@ -252,7 +269,7 @@ class TauriTemporaryPort implements TemporaryPort {
   }
 
   convert(input: Parameters<TemporaryPort['convert']>[0]) {
-    return this.client.invoke<Awaited<ReturnType<TemporaryPort['convert']>>>('convert_temporary', input)
+    return this.client.invoke<Awaited<ReturnType<TemporaryPort['convert']>>>('convert_temporary', { input })
   }
 
   delete(ids: NoteId[]) {
@@ -287,7 +304,13 @@ class TauriTemporaryWindowPort implements TemporaryWindowPort {
   }
 
   onCloseRequested(handler: (noteId: unknown) => void) {
-    return getCurrentWebviewWindow().listen<unknown>('temporary-close-requested', (event) => {
+    return listen<unknown>('temporary-close-requested', (event) => {
+      handler(event.payload)
+    })
+  }
+
+  onShown(handler: (noteId: unknown) => void) {
+    return listen<unknown>('temporary-window-shown', (event) => {
       handler(event.payload)
     })
   }
@@ -310,6 +333,10 @@ class TauriTrashPort implements TrashPort {
 
   undo(operationId: string) {
     return this.client.invoke<Awaited<ReturnType<TrashPort['undo']>>>('undo_trash', { operationId })
+  }
+
+  purge(noteIds: NoteId[]) {
+    return this.client.invoke<Awaited<ReturnType<NonNullable<TrashPort['purge']>>>>('purge_trash', { noteIds })
   }
 
   purgeExpired() {
@@ -361,7 +388,7 @@ class TauriStickySettingsPort implements StickySettingsPort {
   }
 
   onChanged(handler: (settings: StickySettings) => void) {
-    return getCurrentWebviewWindow().listen<StickySettings>('sticky-settings-updated', (event) => handler(event.payload))
+    return listen<StickySettings>('sticky-settings-updated', (event) => handler(event.payload))
   }
 }
 

@@ -6,7 +6,6 @@ interface ExportLibraryProps {
   chooseDestination?(): Promise<string | null>
   controller?: ExportLibraryController
 }
-
 export interface ExportLibraryController {
   busy: boolean
   report: ExportReport | null
@@ -53,7 +52,7 @@ export function useExportLibraryController(
       const destination = await chooseDestination()
       if (!mounted.current || request.current !== current) return
       if (destination === null) {
-        setStatus('Export cancelled. No files were changed.')
+        setStatus('已取消导出，未修改任何文件。')
         return
       }
       const next = await exporter.exportLibrary(destination)
@@ -63,14 +62,14 @@ export function useExportLibraryController(
         setStatus(reportSummary(next))
       } else {
         const retained = next.incompleteRoot === null
-          ? 'No retained output location was available.'
-          : `Incomplete files may remain at ${next.incompleteRoot}.`
-        setError(`The export was not published. ${retained} ${next.globalFailure ?? 'The operation did not complete.'}`)
+          ? '没有可保留的输出位置。'
+          : `不完整的文件可能仍保留在 ${next.incompleteRoot}。`
+        setError(`导出未发布。${retained}${next.globalFailure ?? '操作未完成。'}`)
       }
     } catch {
       if (mounted.current && request.current === current) {
         setError(
-          'The export command failed. Check the selected parent folder for incomplete export files before retrying.',
+          '导出命令失败。重试前请检查所选父文件夹中是否存在不完整的导出文件。',
         )
       }
     } finally {
@@ -88,17 +87,17 @@ export function ExportLibrary({ exporter, chooseDestination, controller }: Expor
 
   return (
     <div className="settings-export">
-      <p>Choose a parent folder. A new portable export folder will contain formal Markdown notes, their assets, and a recovery manifest.</p>
+      <p>选择一个父文件夹。新的便携式导出文件夹将包含正式 Markdown 笔记、附件和恢复清单。</p>
       <button type="button" disabled={busy} onClick={() => void startExport()}>
-        {busy ? 'Exporting library…' : 'Export complete library'}
+        {busy ? '正在导出资料库…' : '导出完整资料库'}
       </button>
       {status && <p role="status">{status}</p>}
       {error && <p role="alert">{error}</p>}
       {report !== null && report.renamedPaths.length > 0 && (
-        <p>{plural(report.renamedPaths.length, 'path was', 'paths were')} renamed for portability.</p>
+        <p>为保证可移植性，已重命名 {report.renamedPaths.length} 个路径。</p>
       )}
       {report !== null && report.failed.length > 0 && (
-        <ul aria-label="Notes that could not be exported">
+        <ul aria-label="无法导出的笔记">
           {report.failed.map((failure) => <li key={failure.noteId}><code>{failure.noteId}</code>: {failure.message}</li>)}
         </ul>
       )}
@@ -107,13 +106,9 @@ export function ExportLibrary({ exporter, chooseDestination, controller }: Expor
 }
 
 function reportSummary(report: ExportReport) {
-  const completed = `Exported ${plural(report.notesExported, 'note', 'notes')} and ${plural(report.assetsExported, 'asset', 'assets')}`
+  const completed = `已导出 ${report.notesExported} 篇笔记和 ${report.assetsExported} 个附件`
   const counts = report.failed.length === 0
-    ? `${completed}.`
-    : `${completed} with ${plural(report.failed.length, 'failure', 'failures')}.`
-  return report.outputRoot === null ? counts : `${counts} Output: ${report.outputRoot}.`
-}
-
-function plural(count: number, singular: string, pluralForm: string) {
-  return `${count} ${count === 1 ? singular : pluralForm}`
+    ? `${completed}。`
+    : `${completed}，但有 ${report.failed.length} 项失败。`
+  return report.outputRoot === null ? counts : `${counts} 输出位置：${report.outputRoot}。`
 }
