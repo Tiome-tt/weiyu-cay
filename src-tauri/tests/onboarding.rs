@@ -61,7 +61,7 @@ fn fresh_storage_creates_the_getting_started_guide_once() {
 }
 
 #[test]
-fn an_existing_empty_library_is_never_seeded() {
+fn an_existing_empty_library_is_seeded_with_the_getting_started_guide() {
     let root = tempfile::tempdir().expect("create existing storage root");
     let paths = StoragePaths::open(root.path()).expect("open existing storage paths");
     let database = Database::open(paths.database()).expect("create existing database");
@@ -73,12 +73,18 @@ fn an_existing_empty_library_is_never_seeded() {
 
     prepare_startup_repository(&state).expect("prepare existing repository");
 
-    assert!(FolderRepository::new(paths.clone())
-        .list()
-        .unwrap()
-        .is_empty());
-    assert!(NoteRepository::new(paths).list().unwrap().is_empty());
-    assert_eq!(state.startup_guide_target().unwrap(), None);
+    let folders = FolderRepository::new(paths.clone()).list().unwrap();
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0].name, "开始使用");
+    let notes = NoteRepository::new(paths)
+        .list_in_folder(Some(folders[0].id))
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].title, "欢迎来到微屿");
+    assert_eq!(
+        state.startup_guide_target().unwrap().unwrap().note_id,
+        notes[0].id
+    );
 }
 
 #[test]

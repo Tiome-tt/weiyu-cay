@@ -152,9 +152,6 @@ fn load_or_create_startup_guide_marker(
             })?;
             Ok(Some(target))
         }
-        Err(source) if source.kind() == ErrorKind::NotFound && paths.database().exists() => {
-            Ok(None)
-        }
         Err(source)
             if source.kind() == ErrorKind::NotFound && storage_has_durable_content(paths)? =>
         {
