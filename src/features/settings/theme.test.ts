@@ -6,7 +6,7 @@ describe('settings theme', () => {
     expect(DEFAULT_APP_SETTINGS).toEqual({
       theme: 'forest',
       stickyColorMode: 'follow-theme',
-      bodyFont: 'system-ui, sans-serif',
+      bodyFont: 'KaiTi, STKaiti, serif',
       codeFont: 'ui-monospace, SFMono-Regular, Consolas, monospace',
       fontSize: 16,
       lineHeight: 1.6,
