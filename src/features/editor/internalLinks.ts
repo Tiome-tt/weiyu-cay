@@ -1,4 +1,12 @@
-import { EditorSelection, EditorState, StateEffect, type Extension } from '@codemirror/state'
+import {
+  EditorSelection,
+  EditorState,
+  StateEffect,
+  StateField,
+  type ChangeSet,
+  type Extension,
+  type Text,
+} from '@codemirror/state'
 import { history, historyKeymap } from '@codemirror/commands'
 import {
   Decoration,
@@ -36,7 +44,19 @@ export { escapeInternalLinkLabel } from '../../domain/noteFormat'
 
 export const refreshInternalLinkContext = StateEffect.define<void>()
 
+const internalLinkRangesField = StateField.define<readonly InternalLinkRange[]>({
+  create: (state) => parseInternalLinks(state.doc.toString()),
+  update: (ranges, transaction) => {
+    if (!transaction.docChanged) return ranges
+    if (requiresInternalLinkRescan(transaction.changes, transaction.startState.doc, ranges)) {
+      return parseInternalLinks(transaction.newDoc.toString())
+    }
+    return ranges.map((link) => mapInternalLinkRange(transaction.changes, link))
+  },
+})
+
 export function parseInternalLinks(markdown: string): InternalLinkRange[] {
+  if (!markdown.includes('[[')) return []
   const links: InternalLinkRange[] = []
   for (const range of commonmarkProseRanges(markdown)) {
     let cursor = range.from
@@ -82,6 +102,7 @@ export function internalLinkExtension(options: InternalLinkExtensionOptions): Ex
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
+      private ranges: InternalLinkRange[] = []
       private readonly resolutions = new Map<NoteId, Resolution>()
       private generation = 0
 
@@ -94,14 +115,27 @@ export function internalLinkExtension(options: InternalLinkExtensionOptions): Ex
           transaction.effects.some((effect) => effect.is(refreshInternalLinkContext)),
         )
         if (!update.docChanged && !contextChanged) return
+        if (
+          update.docChanged &&
+          !contextChanged &&
+          !requiresInternalLinkRescan(update.changes, update.startState.doc, this.ranges)
+        ) {
+          this.ranges = [...update.state.field(internalLinkRangesField)]
+          this.decorations = this.decorations.map(update.changes)
+          return
+        }
         this.generation += 1
         const retained = contextChanged ? undefined : new Map(this.resolutions)
         this.resolutions.clear()
-        this.decorations = this.buildDecorations(retained)
+        this.decorations = this.buildDecorations(retained, update.state.field(internalLinkRangesField))
       }
 
-      private buildDecorations(retained?: ReadonlyMap<NoteId, Resolution>) {
-        const ranges = parseInternalLinks(this.view.state.doc.toString())
+      private buildDecorations(
+        retained?: ReadonlyMap<NoteId, Resolution>,
+        nextRanges: readonly InternalLinkRange[] = this.view.state.field(internalLinkRangesField),
+      ) {
+        this.ranges = [...nextRanges]
+        const ranges = this.ranges
         for (const link of ranges) {
           if (this.resolutions.has(link.targetId)) continue
           const cached = options.getCached(link.targetId)
@@ -147,10 +181,11 @@ export function internalLinkExtension(options: InternalLinkExtensionOptions): Ex
   )
 
   return [
+    internalLinkRangesField,
     history(),
     EditorState.transactionFilter.of((transaction) => {
       if (!transaction.docChanged) return transaction
-      const links = parseInternalLinks(transaction.startState.doc.toString())
+      const links = transaction.startState.field(internalLinkRangesField)
       let partial = false
       transaction.changes.iterChangedRanges((from, to) => {
         if (partial) return
@@ -171,6 +206,47 @@ export function internalLinkExtension(options: InternalLinkExtensionOptions): Ex
       ...historyKeymap,
     ]),
   ]
+}
+
+function containsLinkSyntax(value: string) {
+  return /[\[\]|\\]/u.test(value)
+}
+
+function rangesTouch(link: InternalLinkRange, from: number, to: number) {
+  return from <= link.to && to >= link.from
+}
+
+function requiresInternalLinkRescan(
+  changes: ChangeSet,
+  startDoc: Text,
+  ranges: readonly InternalLinkRange[],
+) {
+  let changed = false
+  changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    if (changed) return
+    const deleted = startDoc.sliceString(fromA, toA)
+    const insertedText = inserted.toString()
+    const linePrefixChanged = fromA - startDoc.lineAt(Math.min(fromA, startDoc.length)).from < 4
+    if (
+      containsLinkSyntax(insertedText) ||
+      containsLinkSyntax(deleted) ||
+      insertedText.includes('\n') ||
+      deleted.includes('\n') ||
+      linePrefixChanged ||
+      ranges.some((link) => rangesTouch(link, fromA, toA))
+    ) {
+      changed = true
+    }
+  })
+  return changed
+}
+
+function mapInternalLinkRange(changes: ChangeSet, link: InternalLinkRange): InternalLinkRange {
+  return {
+    ...link,
+    from: changes.mapPos(link.from, 1),
+    to: changes.mapPos(link.to, -1),
+  }
 }
 
 export function insertInternalLink(view: EditorView, target: NoteSummary): boolean {

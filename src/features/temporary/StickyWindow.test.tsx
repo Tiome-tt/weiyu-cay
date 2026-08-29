@@ -57,6 +57,8 @@ describe('StickyWindow', () => {
     const { windows } = setup()
 
     expect(screen.queryByRole('button', { name: /删除|搜索|转为笔记|颜色/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '添加内容块' })).not.toBeInTheDocument()
+    expect(screen.queryByText('已就绪')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '关闭便签' })).toBeVisible()
     expect(screen.getByRole('button', { name: '钉在桌面上' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('sticky-window')).not.toHaveAttribute('style')
@@ -77,7 +79,32 @@ describe('StickyWindow', () => {
     expect(windows.hide).toHaveBeenCalledWith(capture.id)
   })
 
-  it('does not hide when the close flush fails and exposes retry', async () => {
+  it('preserves the temporary port receiver when saving from the editor', async () => {
+    const saveThroughClient = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 1 }))
+    const temporary = {
+      client: { save: saveThroughClient },
+      save(document: NoteDocument) {
+        return this.client.save(document)
+      },
+    }
+    const windows = {
+      hide: vi.fn().mockResolvedValue(undefined),
+      setAlwaysOnTop: vi.fn().mockImplementation(async (noteId: NoteId, alwaysOnTop: boolean) => ({
+        noteId, visible: true, x: 0, y: 0, width: 360, height: 420, alwaysOnTop,
+      })),
+      startDragging: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<StickyWindow note={capture} temporary={temporary} windows={windows} />)
+    const editor = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'receiver safe' } })
+
+    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+
+    expect(saveThroughClient).toHaveBeenCalledWith(expect.objectContaining({ markdown: 'receiver safe' }))
+  })
+
+  it('hides after a close flush fails while keeping a retryable local draft', async () => {
     const save = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockImplementationOnce(
       async (document: NoteDocument) => ({ ...document, revision: 1 }),
     )
@@ -86,21 +113,21 @@ describe('StickyWindow', () => {
 
     await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
 
-    expect(windows.hide).not.toHaveBeenCalled()
+    expect(windows.hide).toHaveBeenCalledWith(capture.id)
     expect(editor.state.doc.toString()).toBe('kept locally')
     expect(screen.getByRole('alert')).toHaveTextContent('无法保存，修改内容已保留在本地。')
     await act(async () => screen.getByRole('button', { name: '重试保存' }).click())
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2))
   })
 
-  it('turns a synchronous save failure into a retryable error instead of staying in saving', async () => {
+  it('hides after a synchronous save failure instead of staying in saving', async () => {
     const save = vi.fn(() => { throw new Error('native save unavailable') })
     const { editor, windows } = setup(save)
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'kept locally' } })
 
     await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
 
-    expect(windows.hide).not.toHaveBeenCalled()
+    expect(windows.hide).toHaveBeenCalledWith(capture.id)
     expect(screen.getByRole('alert')).toHaveTextContent('无法保存，修改内容已保留在本地。')
   })
 
@@ -192,6 +219,30 @@ describe('StickyWindow', () => {
     )
   })
 
+  it('renders pasted image assets inside the sticky editor', async () => {
+    const relativePath = `assets/capture-${capture.id}.png`
+    const readImage = vi.fn().mockResolvedValue({ mediaType: 'image/png', bytes: pngBytes })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:sticky-image')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    render(
+      <StickyWindow
+        note={{ ...capture, markdown: `![海岸](${relativePath})` }}
+        temporary={{ save: vi.fn(async (document: NoteDocument) => document) }}
+        windows={{
+          hide: vi.fn().mockResolvedValue(undefined),
+          setAlwaysOnTop: vi.fn().mockResolvedValue({ ...defaultWindowState(), noteId: capture.id }),
+          startDragging: vi.fn().mockResolvedValue(undefined),
+        }}
+        assets={{ saveImage: vi.fn() }}
+        assetReader={{ readImage }}
+      />,
+    )
+
+    expect(await screen.findByRole('img', { name: '海岸' })).toHaveAttribute('src', 'blob:sticky-image')
+    expect(readImage).toHaveBeenCalledWith({ noteId: capture.id, relativePath })
+  })
+
   it('handles only a close event carrying its own note identity', () => {
     expect(shouldHandleTemporaryClose(capture.id, { payload: capture.id })).toBe(true)
     expect(
@@ -201,3 +252,14 @@ describe('StickyWindow', () => {
     ).toBe(false)
   })
 })
+
+function defaultWindowState() {
+  return {
+    visible: true,
+    x: 0,
+    y: 0,
+    width: 360,
+    height: 420,
+    alwaysOnTop: true,
+  }
+}

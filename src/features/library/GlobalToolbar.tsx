@@ -35,9 +35,9 @@ export function GlobalToolbar({ search, searchDismissSignal, saveState, updateAt
       </div>
       <div className="global-toolbar__actions" data-testid="global-toolbar-actions">
         {saveState !== 'hidden' && (
-          <span className={`global-toolbar__save global-toolbar__save--${saveState}`} role="status" aria-label="全局保存状态">
-            {SAVE_LABELS[saveState]}
-          </span>
+                    <div aria-label="全局保存状态" className={'global-toolbar__save global-toolbar__save--' + saveState}>
+            <span role="status" aria-label="保存状态">{SAVE_LABELS[saveState]}</span>
+          </div>
         )}
         {updateAttention !== 'none' && (
           <button

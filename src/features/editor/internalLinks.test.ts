@@ -16,6 +16,7 @@ import {
   parseInternalLinks,
   serializeInternalLink,
 } from './internalLinks'
+import * as markdownPipeline from './markdownPipeline'
 import { pngBytes } from '../../test/fakes'
 import linkContract from '../../shared/internal-link-contract.json'
 
@@ -91,6 +92,13 @@ describe('persisted internal link helpers', () => {
     expect(parseInternalLinks(markdown)).toEqual([
       expect.objectContaining({ label: 'valid', targetId }),
     ])
+  })
+
+  it('skips the CommonMark scan when the document has no internal-link opener', () => {
+    const proseScan = vi.spyOn(markdownPipeline, 'commonmarkProseRanges')
+
+    expect(parseInternalLinks('plain text without wiki links')).toEqual([])
+    expect(proseScan).not.toHaveBeenCalled()
   })
 
   it('serializes a selected target while keeping its UUID out of the display helper', () => {
@@ -191,6 +199,38 @@ describe('persisted internal link helpers', () => {
 })
 
 describe('CodeMirror internal link extension', () => {
+  it('does not rescan the whole document when typing ordinary text away from links', async () => {
+    const raw = `[[Target|${targetId}]]`
+    const proseScan = vi.spyOn(markdownPipeline, 'commonmarkProseRanges')
+    render(createElement(MarkdownSource, {
+      markdown: `intro\n${raw}\nbody`,
+      onChange: vi.fn(),
+      links: linkPort(),
+      linkCache: new Map([[targetId, summary(targetId, 'Target')]]),
+    }))
+    await act(async () => {})
+    const initialScanCount = proseScan.mock.calls.length
+    const view = editorView()
+    for (const character of ' ordinary text typed one character at a time') {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: character } })
+    }
+    expect(proseScan.mock.calls.length).toBe(initialScanCount)
+  })
+
+  it('rescans when an edit changes the Markdown indentation context around a link', () => {
+    const raw = `[[Target|${targetId}]]`
+    render(createElement(MarkdownSource, {
+      markdown: `    ${raw}`,
+      onChange: vi.fn(),
+      links: linkPort(),
+      linkCache: new Map([[targetId, summary(targetId, 'Target')]]),
+    }))
+    const view = editorView()
+    view.dispatch({ changes: { from: 0, to: 1 } })
+
+    expect(screen.getByRole('link', { name: '[[Target]]' })).toBeVisible()
+  })
+
   it('hides the UUID and resolves from cache without calling the fallback port', async () => {
     const links = linkPort()
     render(createElement(MarkdownSource, {

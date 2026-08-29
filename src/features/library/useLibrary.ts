@@ -55,15 +55,15 @@ export function useLibrary(
     void refreshFolders()
   }, [refreshFolders])
 
-  const refreshNotes = useCallback(async () => {
+  const refreshNotes = useCallback(async (folderId = activeFolderId) => {
     if (!mountedRef.current) return
     const request = ++noteListRequest.current
     setNoteListState('loading')
     try {
-      const result = await notesPort.listNotes(activeFolderId)
+      const result = await notesPort.listNotes(folderId)
       if (!mountedRef.current || noteListRequest.current !== request) return
       setNotes(result)
-      setNotesByFolder((current) => ({ ...current, [folderKey(activeFolderId)]: result }))
+      setNotesByFolder((current) => ({ ...current, [folderKey(folderId)]: result }))
       setNoteListState('ready')
     } catch {
       if (!mountedRef.current || noteListRequest.current !== request) return
@@ -133,7 +133,6 @@ export function useLibrary(
     pendingStartupGuide.current = null
     void startupGuide.completeTarget(target).catch(() => undefined)
   }, [document, documentState, startupGuide])
-
   const createFolder = useCallback(
     async (parentId: FolderId | null, name: string) => {
       await foldersPort.createFolder({ parentId, name })
@@ -146,10 +145,11 @@ export function useLibrary(
     const request = ++noteRequest.current
     const created = await notesPort.createNote({ folderId, title })
     if (!mountedRef.current || noteRequest.current !== request) return created
+    setActiveFolderId(folderId)
     setActiveNoteId(created.id)
     setDocument(created)
     setDocumentState('ready')
-    await refreshNotes()
+    await refreshNotes(folderId)
     return created
   }, [activeFolderId, notesPort, refreshNotes])
 
@@ -171,7 +171,6 @@ export function useLibrary(
       setDocument(authoritative)
       setDocumentState('ready')
     }
-    setNotesByFolder((current) => Object.fromEntries(Object.entries(current).map(([key, cached]) => [key, cached.filter((note) => note.id !== id)])))
     await refreshNotes()
     return authoritative
   }, [activeNoteId, notesPort, refreshNotes])
@@ -214,7 +213,7 @@ export function useLibrary(
   )
 
   const deleteFolder = useCallback(
-    async (id: FolderId): Promise<string> => {
+    async (id: FolderId): Promise<string | void> => {
       const deletedFolderIds = new Set<FolderId>([id])
       let changed = true
       while (changed) {
@@ -250,7 +249,18 @@ export function useLibrary(
     noteRequest.current += 1
     noteListRequest.current += 1
     setNotes((current) => current.filter((note) => note.id !== id))
-    setNotesByFolder((current) => Object.fromEntries(Object.entries(current).map(([key, cached]) => [key, cached.filter((note) => note.id !== id)])))
+    setNotesByFolder((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const [key, items] of Object.entries(current)) {
+        const filtered = items.filter((note) => note.id !== id)
+        if (filtered.length !== items.length) {
+          next[key] = filtered
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
     if (activeNoteId !== id) return
     setActiveNoteId(null)
     setDocument(null)

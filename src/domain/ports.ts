@@ -34,8 +34,8 @@ export interface FolderPort {
   moveFolder(id: FolderId, parentId: FolderId | null): Promise<Folder>
   reorderFolders?(parentId: FolderId | null, orderedIds: FolderId[]): Promise<void>
   setFolderStarred?(id: FolderId, starred: boolean): Promise<Folder>
-  deleteEmptyFolder(id: FolderId): Promise<string>
-  deleteFolder?(id: FolderId): Promise<string>
+  deleteEmptyFolder(id: FolderId): Promise<string | void>
+  deleteFolder?(id: FolderId): Promise<string | void>
 }
 
 export interface StartupGuidePort {

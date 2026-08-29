@@ -12,20 +12,11 @@ export interface NoteHeading {
 }
 
 export function parseNoteHeadings(markdown: string): NoteHeading[] {
-  let fence: string | null = null
-  const headings: NoteHeading[] = []
-  markdown.split(/\r?\n/).forEach((line, lineIndex) => {
-    const marker = line.match(/^\s*(`{3,}|~{3,})/)
-    if (marker !== null) {
-      if (fence === null) fence = marker[1][0]
-      else if (marker[1][0] === fence) fence = null
-      return
-    }
-    if (fence !== null) return
+  return markdown.split(/\r?\n/).flatMap((line, index) => {
     const match = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
-    if (match !== null) headings.push({ line: lineIndex + 1, index: headings.length, level: match[1].length, text: match[2].trim() })
-  })
-  return headings
+    if (match === null) return []
+    return [{ line: index + 1, index: 0, level: match[1].length, text: match[2].trim() }]
+  }).map((heading, index) => ({ ...heading, index }))
 }
 
 export function NoteOutline({ markdown, onNavigate, onCollapse }: NoteOutlineProps) {

@@ -39,7 +39,7 @@ describe('Backlinks', () => {
     let finish!: (items: NoteSummary[]) => void
     const links = port(vi.fn(() => new Promise<NoteSummary[]>((done) => { finish = done })))
     render(<Backlinks noteId={noteA} links={links} onNavigate={vi.fn()} />)
-    expect(screen.getByRole('status')).toHaveTextContent('Loading backlinks')
+    expect(screen.getByRole('status')).toHaveTextContent('正在加载引用')
 
     finish([{
       ...summary(noteB, 'Calling note'),
@@ -49,7 +49,7 @@ describe('Backlinks', () => {
     expect(screen.getByText('Calling [[Target]] excerpt')).toBeVisible()
     expect(screen.queryByText(new RegExp(noteA))).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /Backlinks/ }))
+    await userEvent.click(screen.getByRole('button', { name: /引用此笔记/ }))
     expect(screen.queryByRole('button', { name: /Calling note/ })).not.toBeInTheDocument()
   })
 
@@ -57,7 +57,7 @@ describe('Backlinks', () => {
     const { rerender } = render(
       <Backlinks noteId={noteA} links={port(vi.fn().mockResolvedValue([]))} onNavigate={vi.fn()} />,
     )
-    expect(await screen.findByText('No backlinks')).toBeVisible()
+    expect(await screen.findByText('暂无引用')).toBeVisible()
 
     rerender(
       <Backlinks
@@ -66,8 +66,20 @@ describe('Backlinks', () => {
         onNavigate={vi.fn()}
       />,
     )
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load backlinks')
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法加载引用')
     expect(screen.queryByText(/private/)).not.toBeInTheDocument()
+  })
+
+  it('reloads backlinks when the refresh token changes for the same note', async () => {
+    const backlinks = vi.fn().mockResolvedValue([summary(noteB, '引用笔记')])
+    const links = port(backlinks)
+    const { rerender } = render(
+      <Backlinks noteId={noteA} links={links} onNavigate={vi.fn()} refreshToken={0} />,
+    )
+
+    expect(await screen.findByRole('button', { name: /引用笔记/ })).toBeVisible()
+    rerender(<Backlinks noteId={noteA} links={links} onNavigate={vi.fn()} refreshToken={1} />)
+    await waitFor(() => expect(backlinks).toHaveBeenCalledTimes(2))
   })
 
   it('ignores stale loads and navigates only through the provided shared barrier', async () => {

@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -12,6 +13,7 @@ import type { AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, Se
 import { TagsEditor } from '../search/TagsEditor'
 import { Backlinks } from './Backlinks'
 import { EditorActionsMenu } from './EditorActionsMenu'
+import { InternalLinkTree } from './InternalLinkTree'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
@@ -35,6 +37,7 @@ interface EditorPaneProps {
   onMoveNote?(folderId: FolderId | null): Promise<NoteDocument>
   external?: Pick<SystemPort, 'openExternal'>
   onSaveStateChange?(status: SaveState['status']): void
+  onDraftChange?(markdown: string): void
 }
 
 export interface EditorPaneHandle {
@@ -45,14 +48,15 @@ export interface EditorPaneHandle {
 }
 
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
-  { mode: 'source', label: '源码视图', icon: 'source' },
-  { mode: 'split', label: '分栏视图', icon: 'split' },
-  { mode: 'preview', label: '预览视图', icon: 'preview' },
+  { mode: 'source', label: '文档编辑', icon: 'source' },
+  { mode: 'split', label: '分栏校对', icon: 'split' },
+  { mode: 'preview', label: '阅读视图', icon: 'preview' },
 ]
 
 const minimumSplitPercent = 25
 const maximumSplitPercent = 75
 const defaultSplitPercent = 50
+const previewRefreshDelayMs = 240
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
   {
@@ -70,6 +74,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     external,
     onDocumentAdopt,
     onSaveStateChange,
+    onDraftChange,
     autosaveDelayMs,
     initialMode = 'source',
   },
@@ -90,11 +95,63 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const sourceRef = useRef<MarkdownSourceHandle>(null)
   const splitPointerRef = useRef<number | null>(null)
-  const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs })
+  const autosave = useAutosave(document, notes, { delayMs: autosaveDelayMs, publishDraftState: false })
+  const [previewMarkdown, setPreviewMarkdown] = useState(document.markdown)
+  const draftMarkdownRef = useRef(document.markdown)
+  const previewMarkdownRef = useRef(document.markdown)
+  const previewTimerRef = useRef<number | null>(null)
+  const draftReportMarkdownRef = useRef(document.markdown)
+  const draftReportTimerRef = useRef<number | null>(null)
+  const onDraftChangeRef = useRef(onDraftChange)
+  const previousModeRef = useRef(mode)
+  const modeRef = useRef(mode)
   const tagRequestRef = useRef(0)
   const hasSecondaryActions = links !== undefined || (folders !== undefined && onMoveNote !== undefined) || search !== undefined
+  const breadcrumbs = documentBreadcrumb(document, folders)
+  const displayTitle = localizedDocumentTitle(document)
+  modeRef.current = mode
+  onDraftChangeRef.current = onDraftChange
 
   useEffect(() => setImageError(null), [document.id])
+  useEffect(() => setMode(initialMode), [document.id, initialMode])
+  const schedulePreview = useCallback((markdown: string, immediate = false) => {
+    previewMarkdownRef.current = markdown
+    if (previewTimerRef.current !== null) {
+      window.clearTimeout(previewTimerRef.current)
+      previewTimerRef.current = null
+    }
+    if (modeRef.current === 'source') return
+    if (immediate) {
+      setPreviewMarkdown(markdown)
+      return
+    }
+    previewTimerRef.current = window.setTimeout(() => {
+      previewTimerRef.current = null
+      setPreviewMarkdown(previewMarkdownRef.current)
+    }, previewRefreshDelayMs)
+  }, [])
+  const scheduleDraftReport = useCallback((markdown: string) => {
+    draftReportMarkdownRef.current = markdown
+    if (draftReportTimerRef.current !== null) window.clearTimeout(draftReportTimerRef.current)
+    draftReportTimerRef.current = window.setTimeout(() => {
+      draftReportTimerRef.current = null
+      onDraftChangeRef.current?.(draftReportMarkdownRef.current)
+    }, previewRefreshDelayMs)
+  }, [])
+  useEffect(() => {
+    const modeChanged = previousModeRef.current !== mode
+    previousModeRef.current = mode
+    schedulePreview(draftMarkdownRef.current, modeChanged)
+  }, [mode, schedulePreview])
+  useEffect(() => {
+    if (autosave.markdown === draftMarkdownRef.current) return
+    draftMarkdownRef.current = autosave.markdown
+    schedulePreview(autosave.markdown, true)
+  }, [autosave.markdown, schedulePreview])
+  useEffect(() => () => {
+    if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current)
+    if (draftReportTimerRef.current !== null) window.clearTimeout(draftReportTimerRef.current)
+  }, [])
   useEffect(() => onSaveStateChange?.(autosave.state.status), [autosave.state.status, onSaveStateChange])
   useEffect(() => setTitleDraft(document.title), [document.id, document.title])
   useEffect(() => {
@@ -197,15 +254,26 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     setLinkActionError(applied ? null : '请先把光标放在要重定向的内部链接上。')
   }
 
-  const syncSourceToPreview = (scrollTop: number) => {
+  const syncSourceToPreview = useCallback((scrollTop: number) => {
     if (mode !== 'split' || previewRef.current === null || sourceScrollRef.current === null) return
     syncScrollPosition(sourceScrollRef.current, previewRef.current, scrollTop)
-  }
+  }, [mode])
 
-  const syncPreviewToSource = () => {
+  const syncPreviewToSource = useCallback(() => {
     if (mode !== 'split' || previewRef.current === null || sourceScrollRef.current === null) return
     syncScrollPosition(previewRef.current, sourceScrollRef.current, previewRef.current.scrollTop)
-  }
+  }, [mode])
+
+  const handleSourceChange = useCallback((markdown: string) => {
+    draftMarkdownRef.current = markdown
+    autosave.updateMarkdown(markdown)
+    scheduleDraftReport(markdown)
+    schedulePreview(markdown)
+  }, [autosave.updateMarkdown, scheduleDraftReport, schedulePreview])
+
+  const handleNavigateLink = useCallback((noteId: NoteId) => {
+    void onNavigateNote?.(noteId)
+  }, [onNavigateNote])
 
   const resizeFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     if (splitPointerRef.current !== event.pointerId) return
@@ -234,22 +302,14 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   return (
     <div className="editor-pane">
       <header className="editor-toolbar" role="toolbar" aria-label="编辑器视图">
-        <div className="editor-toolbar__title">
-          <span className="library-pane__eyebrow">笔记</span>
-          <h2>{document.title}</h2>
-          {onRenameNote && (
-            <form onSubmit={(event) => { event.preventDefault(); void renameNote() }}>
-              <label className="sr-only" htmlFor={`note-title-${document.id}`}>笔记标题</label>
-              <input
-                id={`note-title-${document.id}`}
-                aria-label="笔记标题"
-                value={titleDraft}
-                disabled={metadataBusy}
-                onChange={(event) => setTitleDraft(event.target.value)}
-              />
-            </form>
-          )}
-        </div>
+        <nav className="editor-breadcrumbs" aria-label="当前位置">
+          {breadcrumbs.map((label, index) => (
+            <span key={`${label}-${index}`}>
+              {index > 0 && <span className="editor-breadcrumbs__separator" aria-hidden="true">/</span>}
+              <span>{label}</span>
+            </span>
+          ))}
+        </nav>
         <div className="editor-toolbar__actions">
           <div className="editor-toolbar__primary">
             {hasSecondaryActions && (
@@ -259,18 +319,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
                     {links && (
                       <div className="editor-actions-menu__section editor-link-actions" role="group" aria-label="内部链接">
                         <span className="editor-actions-menu__heading">内部链接</span>
-                        <label>
-                          <span className="sr-only">内部链接目标</span>
-                          <select
-                            aria-label="内部链接目标"
-                            value={selectedLinkTarget}
-                            disabled={linkTargets.length === 0}
-                            onChange={(event) => setSelectedLinkTarget(event.target.value as NoteId)}
-                          >
-                            {linkTargets.length === 0 && <option value="">没有可链接的笔记</option>}
-                            {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
-                          </select>
-                        </label>
+                        {linkTargets.length === 0 ? (
+                          <p className="internal-link-tree__empty">没有可链接的笔记</p>
+                        ) : (
+                          <InternalLinkTree
+                            folders={folders ?? []}
+                            targets={linkTargets}
+                            selectedId={selectedLinkTarget}
+                            onSelect={setSelectedLinkTarget}
+                          />
+                        )}
                         <div className="editor-actions-menu__buttons">
                           <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('insert'); close() }}>插入内部链接</button>
                           <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('retarget'); close() }}>重定向内部链接</button>
@@ -330,20 +388,46 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       </div>
       <div
         className={`editor-document editor-document--${mode}`}
-        style={
-          mode === 'split'
-            ? { gridTemplateColumns: `${splitPercent}fr 8px ${100 - splitPercent}fr` }
-            : undefined
-        }
       >
-        <div className="editor-document__source" hidden={mode === 'preview'}>
+        <div className="editor-document-heading">
+          {onRenameNote ? (
+            <form onSubmit={(event) => { event.preventDefault(); void renameNote() }}>
+              <label className="sr-only" htmlFor={`note-title-${document.id}`}>笔记标题</label>
+              <h1>
+                <input
+                  id={`note-title-${document.id}`}
+                  aria-label="笔记标题"
+                  value={titleDraft}
+                  disabled={metadataBusy}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                />
+              </h1>
+            </form>
+          ) : (
+            <h1>{displayTitle}</h1>
+          )}
+          <p className="editor-document-heading__meta">
+            最后编辑于{' '}
+            <time dateTime={autosave.updatedAt}>{formatLastEdited(autosave.updatedAt)}</time>
+          </p>
+        </div>
+        <div
+          className={`editor-document__body editor-document__body--${mode}`}
+          style={
+            mode === 'split'
+              ? { gridTemplateColumns: `${splitPercent}fr 8px ${100 - splitPercent}fr` }
+              : undefined
+          }
+        >
+          <div className="editor-document__source" hidden={mode === 'preview'}>
           <MarkdownSource
             ref={sourceRef}
             markdown={autosave.markdown}
             noteId={document.id}
             assets={assets}
+            assetReader={assetReader}
             onImageError={setImageError}
-            onChange={autosave.updateMarkdown}
+            onChange={handleSourceChange}
             onScroll={syncSourceToPreview}
             onScrollElement={(element) => {
               sourceScrollRef.current = element
@@ -351,11 +435,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             readOnly={tagTransactionActive}
             links={links}
             linkCache={linkCache}
-            onNavigateLink={(noteId) => void onNavigateNote?.(noteId)}
+            onNavigateLink={handleNavigateLink}
+            presentation={mode === 'split' ? 'source' : 'document'}
+            external={external}
           />
-        </div>
-        <div
-          className="editor-split-divider"
+          </div>
+          <div
+            className="editor-split-divider"
           role="separator"
           aria-label="Resize editor split"
           aria-orientation="vertical"
@@ -376,23 +462,29 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           }}
           onDoubleClick={() => setSplitPercent(defaultSplitPercent)}
           onKeyDown={resizeFromKeyboard}
-        />
-        <div className="editor-document__preview" hidden={mode === 'source'}>
-          <MarkdownPreview
+          />
+          <div className="editor-document__preview" hidden={mode === 'source'}>
+            <MarkdownPreview
             ref={previewRef}
-            markdown={autosave.markdown}
+            markdown={previewMarkdown}
             onScroll={syncPreviewToSource}
             links={links}
             linkCache={linkCache}
-            onNavigateLink={(noteId) => void onNavigateNote?.(noteId)}
+            onNavigateLink={handleNavigateLink}
             noteId={document.id}
             assetReader={assetReader}
             external={external}
-          />
+            />
+          </div>
         </div>
       </div>
       {links && onNavigateNote && (
-        <Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} />
+        <Backlinks
+          noteId={document.id}
+          links={links}
+          onNavigate={onNavigateNote}
+          refreshToken={`${autosave.updatedAt}:${autosave.state.status}`}
+        />
       )}
     </div>
   )
@@ -419,7 +511,7 @@ function CompactSaveStatus({ state }: { state: SaveState }) {
     <span
       className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`}
       role="status"
-      aria-label={state.status === 'error' ? '保存失败' : '编辑器保存状态'}
+      aria-label={state.status === 'error' ? '保存失败' : '保存状态'}
       aria-live="polite"
     >
       {message}
@@ -435,4 +527,41 @@ function syncScrollPosition(source: HTMLElement, target: HTMLElement, sourceTop:
 
 function clampSplitPercent(value: number) {
   return Math.min(maximumSplitPercent, Math.max(minimumSplitPercent, value))
+}
+
+function formatLastEdited(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  const now = new Date()
+  return new Intl.DateTimeFormat('zh-CN', {
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+function documentBreadcrumb(document: NoteDocument, folders?: Folder[]) {
+  const labels: string[] = []
+  const byId = new Map(folders?.map((folder) => [folder.id, folder]) ?? [])
+  const visited = new Set<FolderId>()
+  let folderId = document.folderId
+  while (folderId !== null && !visited.has(folderId)) {
+    visited.add(folderId)
+    const folder = byId.get(folderId)
+    if (folder === undefined) break
+    labels.unshift(folder.name)
+    folderId = folder.parentId
+  }
+  if (labels.length === 0) labels.push('未归档')
+  labels.push(localizedDocumentTitle(document))
+  return labels
+}
+
+function localizedDocumentTitle(document: NoteDocument) {
+  return document.kind === 'temporary' && document.title === 'Temporary capture'
+    ? '临时便签'
+    : document.title
 }

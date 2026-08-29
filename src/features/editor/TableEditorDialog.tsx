@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent } from 'react'
-import { tableMarkdownFromCells } from './markdownActions'
+import { tableMarkdownFromCells, type MarkdownTableAlignment } from './markdownActions'
 
 interface TableEditorDialogProps {
   initialRows: number
   initialColumns: number
+  initialCells?: string[][]
+  initialAlignments?: readonly MarkdownTableAlignment[]
   onCancel(): void
   onInsert(markdown: string): void
 }
@@ -48,8 +50,16 @@ function parsePastedCells(value: string) {
   return value.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map((row) => row.split('\t'))
 }
 
-export function TableEditorDialog({ initialRows, initialColumns, onCancel, onInsert }: TableEditorDialogProps) {
-  const [cells, setCells] = useState(() => createCells(initialRows, initialColumns))
+export function TableEditorDialog({
+  initialRows,
+  initialColumns,
+  initialCells,
+  initialAlignments = [],
+  onCancel,
+  onInsert,
+}: TableEditorDialogProps) {
+  const editingExisting = initialCells !== undefined
+  const [cells, setCells] = useState(() => initialCells?.map((row) => [...row]) ?? createCells(initialRows, initialColumns))
   const [selection, setSelection] = useState<CellRange | null>(null)
   const draggingRef = useRef(false)
   const boundaryKeyRef = useRef<{ row: number; column: number; key: 'ArrowLeft' | 'ArrowRight'; count: number } | null>(null)
@@ -195,7 +205,7 @@ export function TableEditorDialog({ initialRows, initialColumns, onCancel, onIns
 
   return (
     <div className="table-editor-dialog" role="dialog" aria-modal="true" aria-label="编辑表格" onPointerDown={(event) => event.stopPropagation()} onKeyDown={handleKeyDown}>
-      <header><div><span className="library-pane__eyebrow">Markdown 表格</span><h3>插入表格</h3></div><button type="button" aria-label="关闭表格编辑器" onClick={onCancel}>×</button></header>
+      <header><div><span className="library-pane__eyebrow">Markdown 表格</span><h3>{editingExisting ? '编辑表格' : '插入表格'}</h3></div><button type="button" aria-label="关闭表格编辑器" onClick={onCancel}>×</button></header>
       <div className="table-editor-dialog__toolbar">
         <label>行数<input aria-label="表格行数" type="number" min={minimumRows} max={99} value={cells.length} onChange={(event) => resize(clampCount(Number(event.target.value), minimumRows), cells[0]?.length ?? minimumColumns)} /></label>
         <label>列数<input aria-label="表格列数" type="number" min={minimumColumns} max={99} value={cells[0]?.length ?? minimumColumns} onChange={(event) => resize(cells.length, clampCount(Number(event.target.value), minimumColumns))} /></label>
@@ -203,7 +213,7 @@ export function TableEditorDialog({ initialRows, initialColumns, onCancel, onIns
         <div className="table-editor-dialog__grid-wrap" onWheel={(event) => event.stopPropagation()}>
         <table ref={gridRef} className="table-editor-dialog__grid" style={{ width: `${(cells[0]?.length ?? minimumColumns) * 120}px` }} onMouseDown={handleGridMouseDown}><tbody>{cells.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, column) => <td key={column} data-row={rowIndex} data-column={column} className={rowIndex === 0 ? 'table-editor-dialog__header-cell' : undefined} aria-selected={isInRange(selection, rowIndex, column)} data-selection-edge={selectionEdge(selection, rowIndex, column)} data-selection-anchor={isSelectionAnchor(selection, rowIndex, column) ? 'true' : undefined} onMouseEnter={() => extendDrag(rowIndex, column)} onMouseMove={() => extendDrag(rowIndex, column)}><input aria-label={`${rowIndex + 1} 行 ${column + 1} 列`} value={cell} onChange={(event) => { recordHistory(); setCell(rowIndex, column, event.target.value) }} onKeyDown={(event) => handleCellKeyDown(event, rowIndex, column)} onPaste={(event) => handlePaste(event, rowIndex, column)} /></td>)}</tr>)}</tbody></table>
       </div>
-      <footer><button type="button" onClick={onCancel}>取消</button><button type="button" className="table-editor-dialog__primary" onClick={() => onInsert(tableMarkdownFromCells(cells))}>插入表格</button></footer>
+      <footer><button type="button" onClick={onCancel}>取消</button><button type="button" className="table-editor-dialog__primary" onClick={() => onInsert(tableMarkdownFromCells(cells, initialAlignments))}>{editingExisting ? '保存表格' : '插入表格'}</button></footer>
     </div>
   )
 }

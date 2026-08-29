@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, themeVariables } from './theme'
+import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeVariables } from './theme'
 
 describe('settings theme', () => {
   it('matches the canonical Rust settings defaults', () => {
@@ -21,6 +21,10 @@ describe('settings theme', () => {
     const vars = themeVariables({ ...DEFAULT_APP_SETTINGS, theme: 'forest' })
     expect(vars['--sticky-color']).toBe(vars['--theme-note-accent'])
     expect(Object.keys(vars).some((key) => key.includes('per-note'))).toBe(false)
+  })
+  it('migrates the previous system default font to the new KaiTi default', () => {
+    expect(normalizeSettings({ ...DEFAULT_APP_SETTINGS, bodyFont: 'system-ui, sans-serif' }).bodyFont).toBe('KaiTi, STKaiti, serif')
+    expect(normalizeStickySettings({ ...DEFAULT_STICKY_SETTINGS, bodyFont: 'system-ui, sans-serif' }).bodyFont).toBe('KaiTi, STKaiti, serif')
   })
 
   it('provides distinct complete forest, sand, and system palettes', () => {
