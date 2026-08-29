@@ -4,6 +4,7 @@ import type { Folder, FolderId } from '../../domain/model'
 export interface CreateNoteDraft {
   title: string
   folderId: FolderId | null
+  tags: string
 }
 
 export type CreateNoteStatus = 'idle' | 'pending' | 'error'
@@ -14,7 +15,7 @@ export interface CreateNotePopoverProps {
   status: CreateNoteStatus
   triggerRef: RefObject<HTMLButtonElement | null>
   onDraftChange(draft: CreateNoteDraft): void
-  onCreate(title: string, folderId: FolderId | null): void
+  onCreate(title: string, folderId: FolderId | null, tags: string[]): void
   onClose(): void
 }
 
@@ -57,7 +58,7 @@ export function CreateNotePopover({
     event.preventDefault()
     const normalizedTitle = draft.title.trim()
     if (busy || normalizedTitle.length === 0) return
-    onCreate(normalizedTitle, draft.folderId)
+    onCreate(normalizedTitle, draft.folderId, normalizeTagText(draft.tags))
   }
 
   const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -119,6 +120,16 @@ export function CreateNotePopover({
               .map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
           </select>
         </label>
+        <label>
+          <span>标签（可选）</span>
+          <input
+            aria-label="笔记标签"
+            readOnly={busy}
+            placeholder="例如：项目，设计"
+            value={draft.tags}
+            onChange={(event) => onDraftChange({ ...draft, tags: event.target.value })}
+          />
+        </label>
         {busy && <p role="status">正在创建笔记…</p>}
         {status === 'error' && <p role="alert">无法新建笔记，请重试。</p>}
         <div className="create-note-popover__actions">
@@ -134,4 +145,13 @@ export function CreateNotePopover({
       </form>
     </div>
   )
+}
+
+export function normalizeTagText(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(/[\s,，;；]+/u)
+      .map((tag) => tag.replace(/^#+/u, '').trim())
+      .filter((tag) => tag.length > 0),
+  ))
 }

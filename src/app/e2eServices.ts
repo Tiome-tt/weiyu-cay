@@ -158,7 +158,7 @@ export function createE2EAppServices(): AppServices {
       async createFolder() { return folders[0] },
       async renameFolder() { return folders[0] },
       async moveFolder() { return folders[0] },
-      async deleteEmptyFolder() { return },
+      async deleteEmptyFolder() { return 'e2e-folder-trash' },
     },
     system: {
       async getWindowPreference(key) { return preferences.get(key) as never },
@@ -265,6 +265,12 @@ export function createE2EAppServices(): AppServices {
         return { restored, failed: [] }
       },
       async undo() { return { restored: [], failed: [] } },
+      async purge(ids) {
+        const purged = state.trashed.filter((note) => ids.includes(note.id)).map((note) => note.id)
+        state.trashed = state.trashed.filter((note) => !ids.includes(note.id))
+        saveState(state)
+        return { purged, failed: [] }
+      },
       async purgeExpired() { return { purged: [], failed: [] } },
     },
     settings: settingsPort(),

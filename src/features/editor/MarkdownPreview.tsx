@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { forwardRef, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
 import {
@@ -27,6 +27,7 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
     }, [markdown])
     const html = useMemo(() => renderPreviewMarkdown(prepared.markdown), [prepared.markdown])
     const [resolutions, setResolutions] = useState<ReadonlyMap<NoteId, NoteSummary | null>>(new Map())
+    const [previewZoom, setPreviewZoom] = useState(1)
     const [assetState, setAssetState] = useState<{
       html: string
       urls: ReadonlyMap<string, string>
@@ -137,6 +138,14 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
       onNavigateLink?.(link.targetId)
     }
 
+    const handleZoom = (event: React.WheelEvent<HTMLElement>) => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      setPreviewZoom((value) => Math.min(2, Math.max(0.5, value + (event.deltaY < 0 ? 0.1 : -0.1))))
+    }
+
+    const previewStyle = { '--preview-zoom': previewZoom } as CSSProperties
+
     return (
       <article
         ref={(element) => {
@@ -145,8 +154,10 @@ export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
           else if (ref !== null) ref.current = element
         }}
         className="markdown-preview"
+        style={previewStyle}
         onScroll={onScroll}
         onClick={activate}
+        onWheel={handleZoom}
         dangerouslySetInnerHTML={{ __html: resolvedHtml }}
       />
     )

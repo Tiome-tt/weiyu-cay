@@ -1,0 +1,8 @@
+<WixLocalization Codepage="936" Culture="en-US" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="TauriLanguage">1033</String>
+  <String Id="TauriCodepage">936</String>
+  <String Id="LaunchApp">Launch 微屿</String>
+  <String Id="DowngradeErrorMessage">A newer version of 微屿 is already installed.</String>
+  <String Id="PathEnvVarFeature">Add the install location of the 微屿 executable to the PATH system environment variable. This allows the 微屿 executable to be called from any location.</String>
+  <String Id="InstallAppFeature">Installs 微屿.</String>
+</WixLocalization>

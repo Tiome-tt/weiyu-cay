@@ -539,7 +539,7 @@ pub fn normalize_accelerator(input: &str) -> Result<String, ShortcutError> {
         ));
     }
     let parts = input.split('+').collect::<Vec<_>>();
-    if parts.len() < 2
+    if parts.is_empty()
         || parts
             .iter()
             .any(|part| part.is_empty() || part.trim() != *part)
@@ -577,10 +577,8 @@ pub fn normalize_accelerator(input: &str) -> Result<String, ShortcutError> {
         }
         key = Some(canonical_key(part)?);
     }
-    if modifiers.is_empty() || key.is_none() {
-        return Err(ShortcutError::validation(
-            "shortcut requires modifiers and one key",
-        ));
+    if key.is_none() {
+        return Err(ShortcutError::validation("shortcut requires one key"));
     }
     if modifiers.contains("CommandOrControl")
         && (modifiers.contains("Command") || modifiers.contains("Control"))

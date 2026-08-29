@@ -80,8 +80,8 @@ export function useAutosave(
         noteId,
         promise: Promise.resolve(false),
       }
-      const promise = notesRef.current
-        .saveNote({ ...durable, markdown: content })
+      const promise = Promise.resolve()
+        .then(() => notesRef.current.saveNote({ ...durable, markdown: content }))
         .then((authoritative) => {
           if (
             generation !== generationRef.current ||
@@ -204,9 +204,9 @@ export function useAutosave(
 
 function saveErrorMessage(error: unknown): string {
   if (isConflict(error)) {
-    return 'This note changed elsewhere. Your local text is kept; retry or reload before replacing it.'
+    return '便签已在其他窗口中发生变化。当前修改已保留，请重试保存。'
   }
-  return 'The note could not be saved. Your changes are kept locally.'
+  return '无法保存，修改内容已保留在本地。'
 }
 
 function isConflict(error: unknown): boolean {

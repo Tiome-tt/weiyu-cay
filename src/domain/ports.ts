@@ -13,6 +13,7 @@ export interface NotePort {
   listNotes(folderId: FolderId | null): Promise<NoteSummary[]>
   renameNote(id: NoteId, title: string): Promise<RenameNoteResult>
   moveNote(id: NoteId, folderId: FolderId | null): Promise<NoteDocument>
+  reorderNotes?(folderId: FolderId | null, orderedIds: NoteId[]): Promise<void>
 }
 
 export interface RenameNoteResult {
@@ -31,7 +32,15 @@ export interface FolderPort {
   createFolder(input: { parentId: FolderId | null; name: string }): Promise<Folder>
   renameFolder(id: FolderId, name: string): Promise<Folder>
   moveFolder(id: FolderId, parentId: FolderId | null): Promise<Folder>
-  deleteEmptyFolder(id: FolderId): Promise<void>
+  reorderFolders?(parentId: FolderId | null, orderedIds: FolderId[]): Promise<void>
+  setFolderStarred?(id: FolderId, starred: boolean): Promise<Folder>
+  deleteEmptyFolder(id: FolderId): Promise<string>
+  deleteFolder?(id: FolderId): Promise<string>
+}
+
+export interface StartupGuidePort {
+  loadTarget(): Promise<{ folderId: FolderId; noteId: NoteId } | null>
+  completeTarget(target: { folderId: FolderId; noteId: NoteId }): Promise<void>
 }
 
 export interface AssetPort {
@@ -212,10 +221,19 @@ export interface TrashEntry {
   kind: NoteDocument['kind']
   title: string
   previousFolderId: FolderId | null
+  previousFolderName?: string | null
   previousRelativePath: string
   deletedAt: string
   assets: string[]
   operationId: string
+}
+
+export interface TrashFolderEntry {
+  folderId: FolderId
+  title: string
+  deletedAt: string
+  operationId: string
+  folderCount: number
 }
 
 export interface TrashFailure {
@@ -242,8 +260,10 @@ export interface PurgeTrashResult {
 export interface TrashPort {
   trash(ids: NoteId[]): Promise<TrashBatchResult>
   list(): Promise<TrashEntry[]>
+  listFolders?(): Promise<TrashFolderEntry[]>
   restore(ids: NoteId[]): Promise<RestoreTrashResult>
   undo(operationId: string): Promise<RestoreTrashResult>
+  purge?(ids: NoteId[]): Promise<PurgeTrashResult>
   purgeExpired(): Promise<PurgeTrashResult>
 }
 
@@ -281,13 +301,6 @@ export interface StorageInfo {
   noteBytes: number
   assetBytes: number
   trashBytes: number
-  previousStorageCleanup?: {
-    root: string
-    candidates: Array<{
-      relativePath: string
-      kind: 'notes' | 'temporary' | 'trash' | 'folder-manifest' | 'index-database' | 'index-sidecar' | 'recovery-marker'
-    }>
-  }
 }
 
 export interface SettingsPort {

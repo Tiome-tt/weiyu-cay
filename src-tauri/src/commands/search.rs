@@ -12,9 +12,13 @@ use crate::{
         },
     },
 };
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, ToSql};
 use serde::Deserialize;
-use std::{collections::HashSet, fs, io::ErrorKind};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    io::ErrorKind,
+};
 use tauri::State;
 use unicode_normalization::UnicodeNormalization;
 
@@ -115,6 +119,10 @@ impl SearchRepository {
             .map_err(database_error("could not search tags"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(database_error("could not read tag search"))?;
+        let context = load_search_context(
+            database.connection(),
+            rows.iter().map(|row| (row.0.clone(), row.2.clone())),
+        )?;
 
         rows.into_iter()
             .map(|(id, title, folder_id, rank)| {
@@ -122,11 +130,8 @@ impl SearchRepository {
                 Ok(SearchResult {
                     note_id,
                     title,
-                    folder_breadcrumb: folder_breadcrumb(
-                        database.connection(),
-                        folder_id.as_deref(),
-                    )?,
-                    tags: note_tags(database.connection(), &id)?,
+                    folder_breadcrumb: context.folder_breadcrumb(folder_id.as_deref())?,
+                    tags: context.tags_for(&id),
                     excerpt: String::new(),
                     score: 3.0 - rank as f64,
                 })
@@ -147,17 +152,18 @@ impl SearchRepository {
         } else {
             search_short(database.connection(), &query, bounded_limit)?
         };
+        let context = load_search_context(
+            database.connection(),
+            rows.iter().map(|row| (row.0.clone(), row.2.clone())),
+        )?;
         rows.into_iter()
             .map(|(id, title, folder_id, plain_text, score)| {
                 let note_id = note_id_from_blob(&id)?;
                 Ok(SearchResult {
                     note_id,
                     title,
-                    folder_breadcrumb: folder_breadcrumb(
-                        database.connection(),
-                        folder_id.as_deref(),
-                    )?,
-                    tags: note_tags(database.connection(), &id)?,
+                    folder_breadcrumb: context.folder_breadcrumb(folder_id.as_deref())?,
+                    tags: context.tags_for(&id),
                     excerpt: excerpt(&plain_text, &query, EXCERPT_LENGTH),
                     score,
                 })
@@ -369,10 +375,10 @@ fn normalize_text_query(input: &str) -> Result<String, CommandError> {
 }
 
 fn excerpt(plain_text: &str, query: &str, maximum: usize) -> String {
-    let characters = plain_text.chars().collect::<Vec<_>>();
-    if characters.len() <= maximum {
+    if plain_text.chars().nth(maximum).is_none() {
         return plain_text.to_owned();
     }
+    let characters = plain_text.chars().collect::<Vec<_>>();
     let content_limit = maximum.saturating_sub(2).max(1);
     let match_character = find_match_character(plain_text, query).unwrap_or(0);
     let query_length = query.chars().count().min(content_limit);
@@ -401,48 +407,131 @@ fn find_match_character(text: &str, query: &str) -> Option<usize> {
     Some(text[..byte].chars().count())
 }
 
-fn note_tags(
-    connection: &rusqlite::Connection,
-    note_id: &[u8],
-) -> Result<Vec<String>, CommandError> {
-    let mut statement = connection.prepare(
-        "SELECT t.display_name FROM tags t JOIN note_tags nt ON nt.tag_id = t.id WHERE nt.note_id = ?1 ORDER BY t.normalized_name, t.id",
-    ).map_err(database_error("could not prepare result tags"))?;
-    let tags = statement
-        .query_map([note_id], |row| row.get(0))
+struct FolderRecord {
+    name: String,
+    parent_id: Option<Vec<u8>>,
+}
+
+struct SearchContext {
+    folders: HashMap<Vec<u8>, FolderRecord>,
+    tags: HashMap<Vec<u8>, Vec<String>>,
+}
+
+fn load_search_context(
+    connection: &Connection,
+    rows: impl IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>,
+) -> Result<SearchContext, CommandError> {
+    let mut unique_note_ids = Vec::new();
+    let mut seen_note_ids = HashSet::new();
+    let mut unique_folder_ids = Vec::new();
+    let mut seen_folder_ids = HashSet::new();
+    for (id, folder_id) in rows {
+        if seen_note_ids.insert(id.clone()) {
+            unique_note_ids.push(id);
+        }
+        if let Some(folder_id) = folder_id {
+            if seen_folder_ids.insert(folder_id.clone()) {
+                unique_folder_ids.push(folder_id);
+            }
+        }
+    }
+    if unique_note_ids.is_empty() {
+        return Ok(SearchContext {
+            folders: HashMap::new(),
+            tags: HashMap::new(),
+        });
+    }
+
+    let tag_sql = format!(
+        "SELECT nt.note_id, t.display_name FROM tags t JOIN note_tags nt ON nt.tag_id = t.id WHERE nt.note_id IN ({}) ORDER BY t.normalized_name, t.id",
+        sql_placeholders(unique_note_ids.len()),
+    );
+    let tag_parameters = unique_note_ids
+        .iter()
+        .map(|id| id as &dyn ToSql)
+        .collect::<Vec<_>>();
+    let mut tag_statement = connection
+        .prepare(&tag_sql)
+        .map_err(database_error("could not prepare result tags"))?;
+    let tag_rows = tag_statement
+        .query_map(params_from_iter(tag_parameters), |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(database_error("could not query result tags"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error("could not read result tags"))?;
-    Ok(tags)
+    let mut tags = HashMap::new();
+    for (note_id, display_name) in tag_rows {
+        tags.entry(note_id)
+            .or_insert_with(Vec::new)
+            .push(display_name);
+    }
+
+    let mut folders = HashMap::new();
+    if !unique_folder_ids.is_empty() {
+        let folder_sql = format!(
+            "WITH RECURSIVE result_folders(id) AS ( SELECT id FROM folders WHERE id IN ({}) UNION SELECT folders.parent_id FROM folders JOIN result_folders ON folders.id = result_folders.id WHERE folders.parent_id IS NOT NULL ) SELECT folders.id, folders.name, folders.parent_id FROM folders JOIN result_folders ON result_folders.id = folders.id",
+            sql_placeholders(unique_folder_ids.len()),
+        );
+        let folder_parameters = unique_folder_ids
+            .iter()
+            .map(|id| id as &dyn ToSql)
+            .collect::<Vec<_>>();
+        let mut folder_statement = connection
+            .prepare(&folder_sql)
+            .map_err(database_error("could not prepare folder context"))?;
+        let folder_rows = folder_statement
+            .query_map(params_from_iter(folder_parameters), |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                ))
+            })
+            .map_err(database_error("could not query folder context"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error("could not read folder context"))?;
+        for (id, name, parent_id) in folder_rows {
+            folders.insert(id, FolderRecord { name, parent_id });
+        }
+    }
+
+    Ok(SearchContext { folders, tags })
 }
 
-fn folder_breadcrumb(
-    connection: &rusqlite::Connection,
-    folder_id: Option<&[u8]>,
-) -> Result<Vec<String>, CommandError> {
-    let mut current = folder_id.map(valid_folder_blob).transpose()?;
-    let mut reversed = Vec::new();
-    let mut seen = HashSet::new();
-    while let Some(id) = current {
-        if !seen.insert(id.clone()) {
-            return Err(CommandError::database(
-                "stored folder hierarchy contains a cycle",
-            ));
-        }
-        let row = connection
-            .query_row(
-                "SELECT name, parent_id FROM folders WHERE id = ?1",
-                [&id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
-            )
-            .optional()
-            .map_err(database_error("could not read folder breadcrumb"))?
-            .ok_or_else(|| CommandError::database("stored note folder is missing"))?;
-        reversed.push(row.0);
-        current = row.1.as_deref().map(valid_folder_blob).transpose()?;
+fn sql_placeholders(count: usize) -> String {
+    (0..count).map(|_| "?").collect::<Vec<_>>().join(", ")
+}
+
+impl SearchContext {
+    fn tags_for(&self, note_id: &[u8]) -> Vec<String> {
+        self.tags.get(note_id).cloned().unwrap_or_default()
     }
-    reversed.reverse();
-    Ok(reversed)
+
+    fn folder_breadcrumb(&self, folder_id: Option<&[u8]>) -> Result<Vec<String>, CommandError> {
+        let mut current = folder_id.map(valid_folder_blob).transpose()?;
+        let mut reversed = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(id) = current {
+            if !seen.insert(id.clone()) {
+                return Err(CommandError::database(
+                    "stored folder hierarchy contains a cycle",
+                ));
+            }
+            let folder = self
+                .folders
+                .get(&id)
+                .ok_or_else(|| CommandError::database("stored note folder is missing"))?;
+            reversed.push(folder.name.clone());
+            current = folder
+                .parent_id
+                .as_deref()
+                .map(valid_folder_blob)
+                .transpose()?;
+        }
+        reversed.reverse();
+        Ok(reversed)
+    }
 }
 
 fn valid_folder_blob(bytes: &[u8]) -> Result<Vec<u8>, CommandError> {
@@ -457,4 +546,24 @@ fn valid_folder_blob(bytes: &[u8]) -> Result<Vec<u8>, CommandError> {
 
 fn database_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> CommandError {
     move |source| CommandError::database(format!("{context}: {source}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{excerpt, EXCERPT_LENGTH};
+
+    #[test]
+    fn excerpt_returns_short_unicode_text_unchanged() {
+        let text = "短文本 with Unicode";
+        assert_eq!(excerpt(text, "文本", EXCERPT_LENGTH), text);
+    }
+
+    #[test]
+    fn excerpt_clips_long_unicode_text_within_the_existing_contract() {
+        let text = format!("{}匹配词{}", "前".repeat(120), "后".repeat(120));
+        let result = excerpt(&text, "匹配词", EXCERPT_LENGTH);
+        assert!(result.starts_with('…'));
+        assert!(result.ends_with('…'));
+        assert!(result.chars().count() <= EXCERPT_LENGTH + 2);
+    }
 }

@@ -3,12 +3,14 @@ import { Icon } from '../../shared/Icon'
 
 interface FolderActionMenuProps {
   enabled: boolean
+  starred?: boolean
   onRename(): void
   onMove(): void
   onDelete(): void
+  onToggleStar?(): void
 }
 
-export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: FolderActionMenuProps) {
+export function FolderActionMenu({ enabled, starred = false, onRename, onMove, onDelete, onToggleStar }: FolderActionMenuProps) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -81,9 +83,10 @@ export function FolderActionMenu({ enabled, onRename, onMove, onDelete }: Folder
   }
 
   const actions = [
+    ...(onToggleStar === undefined ? [] : [{ label: starred ? '取消星标' : '添加星标', run: onToggleStar, restoreFocus: true }]),
     { label: '重命名文件夹', run: onRename, restoreFocus: false },
     { label: '移动文件夹', run: onMove, restoreFocus: false },
-    { label: '删除空文件夹', run: onDelete, danger: true, restoreFocus: true },
+    { label: '删除文件夹', run: onDelete, danger: true, restoreFocus: true },
   ]
 
   return (

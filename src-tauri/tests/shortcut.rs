@@ -158,6 +158,14 @@ fn invalid_accelerators_never_reach_the_backend() {
 }
 
 #[test]
+fn single_key_accelerators_are_valid() {
+    let backend = ShortcutFixture::default();
+    let service = ShortcutService::new(backend.clone());
+    assert_eq!(service.register("A").unwrap(), "A");
+    assert_eq!(backend.calls(), vec!["register:A".to_owned()]);
+}
+
+#[test]
 fn initial_registration_is_idempotent_and_conflicts_are_structured() {
     let backend = ShortcutFixture::default();
     let service = ShortcutService::new(backend.clone());

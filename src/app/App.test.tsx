@@ -62,10 +62,10 @@ describe('App', () => {
 
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'changed body' } }))
 
-    expect(await screen.findByLabelText('保存状态')).toHaveTextContent('待保存')
+    expect(await screen.findByLabelText('全局保存状态')).toHaveTextContent('待保存')
   })
 
-  it('restores the actual toolbar create trigger when pointer activation did not focus it', async () => {
+  it('keeps the global toolbar focused on search and settings actions', async () => {
     render(
       <App
         services={{
@@ -78,15 +78,9 @@ describe('App', () => {
         }}
       />,
     )
-    const trigger = within(screen.getByRole('toolbar', { name: '全局应用栏' })).getByRole('button', { name: '新建笔记' })
-    screen.getByRole('button', { name: '打开设置' }).focus()
-
-    fireEvent.click(trigger)
-    expect(screen.getByRole('textbox', { name: '笔记标题' })).toHaveFocus()
-    await userEvent.setup().keyboard('{Escape}')
-
-    expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
+    const toolbar = screen.getByRole('toolbar', { name: '全局应用栏' })
+    expect(within(toolbar).queryByRole('button', { name: '新建笔记' })).not.toBeInTheDocument()
+    expect(within(toolbar).getByRole('button', { name: '打开设置' })).toBeVisible()
   })
 
   it('dismisses search before keyboard activation opens create from the empty state', async () => {
@@ -568,14 +562,14 @@ describe('App', () => {
     }} />)
 
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
     expect(exportLibrary).toHaveBeenCalledTimes(1)
     const dialog = screen.getByRole('dialog', { name: '设置' })
     const headerClose = dialog.querySelector<HTMLButtonElement>('header button')
     const footerClose = dialog.querySelector<HTMLButtonElement>('footer > button')
     expect(headerClose).toBeDisabled()
     expect(footerClose).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Exporting library…' }))
+    await user.click(screen.getByRole('button', { name: '正在导出资料库…' }))
     expect(exportLibrary).toHaveBeenCalledTimes(1)
     expect(dialog).toBeVisible()
 
@@ -589,12 +583,12 @@ describe('App', () => {
       renamedPaths: [],
       failed: [],
     })
-    expect(await screen.findByText(/Exported 2 notes and 1 asset\./)).toBeVisible()
+    expect(await screen.findByText(/已导出 2 篇笔记和 1 个附件/)).toBeVisible()
     expect(headerClose).toBeEnabled()
     await user.click(headerClose!)
     expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    expect(screen.getByText(/Exported 2 notes and 1 asset\./)).toBeVisible()
+    expect(screen.getByText(/已导出 2 篇笔记和 1 个附件/)).toBeVisible()
   })
 
   it('ignores a deferred export completion after the application unmounts', async () => {
@@ -608,7 +602,7 @@ describe('App', () => {
       exportDestinationPicker: { chooseExportDestination: vi.fn().mockResolvedValue('D:\\Portable Notes') },
     }} />)
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
     rendered.unmount()
     pending.resolve({

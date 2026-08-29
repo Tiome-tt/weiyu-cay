@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -43,6 +43,10 @@ function renderTree(overrides: { onSelect?: (id: FolderId | null) => void; onMov
 
 afterEach(cleanup)
 
+  it('keeps a visible treeitem focus target when unfiled is hidden', async () => {
+    render(<FolderTree folders={rows} activeId={null} showUnfiled={false} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} />)
+    await waitFor(() => expect(screen.getAllByRole('treeitem').some((item) => item.tabIndex === 0)).toBe(true))
+  })
 describe('FolderTree keyboard navigation', () => {
   it('keeps folder mutations inside a selected-folder more menu', async () => {
     const user = userEvent.setup()
@@ -54,6 +58,8 @@ describe('FolderTree keyboard navigation', () => {
       onRename: vi.fn().mockResolvedValue(undefined),
       onMove: vi.fn().mockResolvedValue(undefined),
       onDelete: vi.fn().mockResolvedValue(undefined),
+      onCreateNote: vi.fn(),
+      onToggleStar: vi.fn().mockResolvedValue(undefined),
     }
     const rendered = render(<FolderTree {...props} activeId={null} />)
     const more = screen.getByRole('button', { name: '文件夹更多操作' })
@@ -65,9 +71,87 @@ describe('FolderTree keyboard navigation', () => {
     await user.click(more)
     expect(screen.getByRole('menuitem', { name: '重命名文件夹' })).toBeVisible()
     expect(screen.getByRole('menuitem', { name: '移动文件夹' })).toBeVisible()
-    expect(screen.getByRole('menuitem', { name: '删除空文件夹' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: '删除文件夹' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: '添加星标' })).toBeVisible()
     await user.click(screen.getByRole('menuitem', { name: '重命名文件夹' }))
     expect(screen.getByRole('textbox', { name: '重命名文件夹' })).toHaveFocus()
+  })
+
+  it('adds a star from the folder context menu', async () => {
+    const user = userEvent.setup()
+    const onToggleStar = vi.fn().mockResolvedValue(undefined)
+    render(<FolderTree folders={rows} activeId={folderA} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} onToggleStar={onToggleStar} />)
+
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
+    await user.click(screen.getByRole('menuitem', { name: '添加星标' }))
+
+    expect(onToggleStar).toHaveBeenCalledWith(folderA, true)
+  })
+
+  it('renames a folder from its context menu', async () => {
+    const user = userEvent.setup()
+    const onRename = vi.fn().mockResolvedValue(undefined)
+    render(<FolderTree folders={rows} activeId={null} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={onRename} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} />)
+
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
+    await user.click(screen.getByRole('menuitem', { name: '重命名文件夹' }))
+    const input = screen.getByRole('textbox', { name: '重命名文件夹' })
+    await user.clear(input)
+    await user.type(input, '新名称{Enter}')
+
+    expect(onRename).toHaveBeenCalledWith(folderA, '新名称')
+  })
+
+  it('creates a note from the folder context menu in that folder', async () => {
+    const user = userEvent.setup()
+    const onCreateNote = vi.fn()
+    render(<FolderTree folders={rows} activeId={folderA} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} onCreateNote={onCreateNote} />)
+
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
+    await user.click(screen.getByRole('menuitem', { name: '新建笔记' }))
+
+    expect(onCreateNote).toHaveBeenCalledWith(folderA)
+    expect(screen.queryByRole('menu', { name: '文件夹快捷操作' })).not.toBeInTheDocument()
+  })
+
+  it('starts a new child folder from the folder context menu', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(<FolderTree folders={rows} activeId={null} state="ready" onSelect={vi.fn()} onCreate={onCreate} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} />)
+
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
+    await user.click(screen.getByRole('menuitem', { name: '新建文件夹' }))
+    await user.type(screen.getByRole('textbox', { name: '文件夹名称' }), '子文件夹{Enter}')
+
+    expect(onCreate).toHaveBeenCalledWith(folderA, '子文件夹')
+  })
+
+  it('opens the folder context menu at the pointer location', () => {
+    render(<FolderTree folders={rows} activeId={null} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} onToggleStar={vi.fn().mockResolvedValue(undefined)} />)
+
+    fireEvent.contextMenu(screen.getByRole('treeitem', { name: '项目 A' }), { clientX: 144, clientY: 88 })
+
+    expect(screen.getByRole('menu', { name: '文件夹快捷操作' })).toHaveStyle({ left: '144px', top: '88px' })
+  })
+
+  it('cancels a new folder draft when focus leaves the input', async () => {
+    const user = userEvent.setup()
+    renderTree()
+    await user.click(screen.getByRole('button', { name: '新建文件夹' }))
+    const input = screen.getByRole('textbox', { name: '文件夹名称' })
+    await user.click(screen.getByRole('treeitem', { name: '未归档笔记' }))
+    expect(input).not.toBeInTheDocument()
+  })
+
+  it('asks for confirmation before deleting a folder', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn().mockResolvedValue(undefined)
+    render(<FolderTree folders={rows} activeId={folderA} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={onDelete} />)
+    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.click(screen.getByRole('menuitem', { name: '删除文件夹' }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('文件夹及其全部笔记和子文件夹会移入回收站')
+    await user.click(screen.getByRole('button', { name: '删除文件夹' }))
+    expect(onDelete).toHaveBeenCalledWith(folderA)
   })
 
   it('offers a labelled header control that collapses only the library column', async () => {
@@ -287,7 +371,8 @@ describe('FolderTree keyboard navigation', () => {
     const more = screen.getByRole('button', { name: '文件夹更多操作' })
 
     await user.click(more)
-    await user.click(screen.getByRole('menuitem', { name: '删除空文件夹' }))
+    await user.click(screen.getByRole('menuitem', { name: '删除文件夹' }))
+    await user.click(screen.getByRole('button', { name: '删除文件夹' }))
     expect(onDelete).toHaveBeenCalledWith(folderB)
 
     await act(async () => pending.resolve())

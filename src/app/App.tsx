@@ -237,7 +237,6 @@ function MainApplication({ services }: { services: AppServices }) {
           saveState={saveState}
           updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
           onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
-          onCreateNote={(trigger) => libraryRef.current?.createNote(trigger)}
           onOpenSettings={() => {
             if (services.settings !== undefined) {
               dismissSearch()
@@ -245,7 +244,7 @@ function MainApplication({ services }: { services: AppServices }) {
             }
           }}
         />
-        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
+        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} updateController={services.updater === undefined ? undefined : { state: updateState, check: checkForUpdates, install: installUpdate, restart: restartAfterUpdate } satisfies UpdateController} />}
     </>

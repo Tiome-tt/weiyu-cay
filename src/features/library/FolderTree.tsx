@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
-import type { Folder, FolderId } from '../../domain/model'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import type { Folder, FolderId, NoteId } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
 import { FolderActionMenu } from './FolderActionMenu'
 
@@ -8,6 +8,7 @@ interface FolderTreeProps {
   activeId: FolderId | null
   temporaryInboxActive?: boolean
   trashActive?: boolean
+  showUnfiled?: boolean
   state: 'loading' | 'ready' | 'error'
   onSelect: (id: FolderId | null) => void
   onTemporaryInbox?: () => void
@@ -16,7 +17,12 @@ interface FolderTreeProps {
   onCreate: (parentId: FolderId | null, name: string) => Promise<void>
   onRename: (id: FolderId, name: string) => Promise<void>
   onMove: (id: FolderId, parentId: FolderId | null) => Promise<void>
+  onReorder?: (parentId: FolderId | null, orderedIds: FolderId[]) => Promise<void>
   onDelete: (id: FolderId) => Promise<void>
+  onCreateNote?: (folderId: FolderId) => void
+  onToggleStar?: (id: FolderId, starred: boolean) => Promise<void>
+  folderContents?: ReactNode | ((folderId: FolderId | null) => ReactNode | undefined)
+  onMoveNote?: (id: NoteId, folderId: FolderId) => Promise<void>
 }
 
 export function FolderTree(props: FolderTreeProps) {
@@ -26,15 +32,27 @@ export function FolderTree(props: FolderTreeProps) {
   const [moveTarget, setMoveTarget] = useState<FolderId | null>(null)
   const [focusedKey, setFocusedKey] = useState<TreeItemKey>('root')
   const [name, setName] = useState('')
+  const [createParent, setCreateParent] = useState<FolderId | null>(null)
   const [error, setError] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<FolderId | null>(null)
+  const [contextTarget, setContextTarget] = useState<FolderId | null>(null)
+  const [contextPosition, setContextPosition] = useState<{ x: number; y: number } | null>(null)
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<FolderId>>(new Set())
   const itemRefs = useRef(new Map<TreeItemKey, HTMLButtonElement>())
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const pointerStartRef = useRef<{ id: FolderId; x: number; y: number } | null>(null)
+  const pointerDragRef = useRef<FolderId | null>(null)
+  const suppressClickRef = useRef(false)
+  const pointerTargetRef = useRef<{ folderId?: FolderId; parentId?: string } | null>(null)
+  const [pointerDragging, setPointerDragging] = useState<FolderId | null>(null)
 
   const finishCreate = async (event: FormEvent) => {
     event.preventDefault()
     try {
-      await props.onCreate(props.activeId, name)
+      await props.onCreate(createParent, name)
       setCreating(false)
       setName('')
+      setCreateParent(null)
       setError(false)
     } catch {
       setError(true)
@@ -55,15 +73,68 @@ export function FolderTree(props: FolderTreeProps) {
   }
 
   const runDelete = async () => {
-    if (props.activeId === null) return
+    if (deleteTarget === null) return
     try {
-      await props.onDelete(props.activeId)
+      await props.onDelete(deleteTarget)
       setError(false)
+      setDeleteTarget(null)
+      setContextTarget(null)
+      setContextPosition(null)
       focusItem('root')
     } catch {
       setError(true)
     }
   }
+
+  const runToggleStar = async (id: FolderId) => {
+    if (props.onToggleStar === undefined) return
+    const folder = props.folders.find((candidate) => candidate.id === id)
+    if (folder === undefined) return
+    try {
+      await props.onToggleStar(id, folder.starred !== true)
+      setError(false)
+      setContextTarget(null)
+      setContextPosition(null)
+    } catch {
+      setError(true)
+    }
+  }
+
+  useEffect(() => {
+    if (!creating && contextTarget === null) return
+    const cancelDraft = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (creating && !document.querySelector('.folder-form')?.contains(target)) {
+        setCreating(false)
+        setName('')
+        setCreateParent(null)
+      }
+      if (contextTarget !== null && !document.querySelector('.folder-context-menu')?.contains(target)) {
+        setContextTarget(null)
+        setContextPosition(null)
+      }
+    }
+    document.addEventListener('pointerdown', cancelDraft)
+    return () => document.removeEventListener('pointerdown', cancelDraft)
+  }, [creating, contextTarget])
+
+  useEffect(() => {
+    if (deleteTarget === null) return
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setDeleteTarget(null)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [deleteTarget])
+
+  useLayoutEffect(() => {
+    if (contextTarget === null || contextPosition === null || contextMenuRef.current === null) return
+    const menu = contextMenuRef.current.getBoundingClientRect()
+    const margin = 8
+    const x = Math.max(margin, Math.min(contextPosition.x, window.innerWidth - menu.width - margin))
+    const y = Math.max(margin, Math.min(contextPosition.y, window.innerHeight - menu.height - margin))
+    if (x !== contextPosition.x || y !== contextPosition.y) setContextPosition({ x, y })
+  }, [contextTarget, contextPosition])
 
   const finishMove = async (event: FormEvent) => {
     event.preventDefault()
@@ -78,32 +149,140 @@ export function FolderTree(props: FolderTreeProps) {
     }
   }
 
-  const dropFolder = async (event: DragEvent, parentId: FolderId | null) => {
+  const dropFolder = async (event: DragEvent, targetId: FolderId | null) => {
     event.preventDefault()
+    event.stopPropagation()
+    const isNoteDrag = Array.from(event.dataTransfer.types ?? []).includes('application/x-cay-note')
+    const noteId = isNoteDrag ? event.dataTransfer.getData('application/x-cay-note') as NoteId : ''
+    if (isNoteDrag && noteId) {
+      if (targetId !== null && props.onMoveNote !== undefined) await props.onMoveNote(noteId, targetId)
+      return
+    }
     const id = event.dataTransfer.getData('text/plain') as FolderId
     if (!id) return
     try {
-      await props.onMove(id, parentId)
+      const source = props.folders.find((folder) => folder.id === id)
+      const target = targetId === null ? null : props.folders.find((folder) => folder.id === targetId)
+      if (source && target && source.parentId === target.parentId && props.onReorder) {
+        const targetBox = (event.currentTarget as HTMLElement).getBoundingClientRect()
+        // jsdom and a few embedded webviews can report a zero-sized target.
+        // Treat that as an above-target drop so reordering still has a stable
+        // result instead of being mistaken for a move-into-folder action.
+        const relativeY = targetBox.height === 0 ? 0 : (event.clientY - targetBox.top) / targetBox.height
+        if (relativeY > 0.25 && relativeY < 0.75) {
+          await props.onMove(id, target.id)
+          setError(false)
+          return
+        }
+        const siblings = props.folders
+          .filter((folder) => folder.parentId === source.parentId)
+          .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
+          .map((folder) => folder.id)
+        const withoutSource = siblings.filter((folderId) => folderId !== id)
+        const targetIndex = withoutSource.indexOf(target.id)
+        const insertAfter = event.clientY >= targetBox.top + targetBox.height / 2
+        withoutSource.splice(targetIndex < 0 ? withoutSource.length : targetIndex + (insertAfter ? 1 : 0), 0, id)
+        await props.onReorder(source.parentId, withoutSource)
+      } else {
+        await props.onMove(id, targetId)
+      }
       setError(false)
     } catch {
       setError(true)
     }
   }
 
+  const finishPointerDrop = useCallback(async (id: FolderId, x: number, y: number, targetHint?: { folderId?: FolderId; parentId?: string }) => {
+    const element = document.elementFromPoint(x, y)
+    const folderTarget = element?.closest<HTMLElement>('[data-folder-id]')
+    const listTarget = element?.closest<HTMLElement>('[data-folder-parent-id]')
+    const targetId = targetHint?.folderId ?? folderTarget?.dataset.folderId as FolderId | undefined
+    const source = props.folders.find((folder) => folder.id === id)
+    const target = targetId === undefined ? undefined : props.folders.find((folder) => folder.id === targetId)
+    if (!source || targetId === id) return
+    try {
+      if (target && target.parentId === source.parentId && props.onReorder) {
+        const targetBox = folderTarget?.getBoundingClientRect()
+        const relativeY = targetBox === undefined || targetBox.height === 0 ? 0 : (y - targetBox.top) / targetBox.height
+        if (relativeY > 0.25 && relativeY < 0.75) {
+          await props.onMove(id, target.id)
+          setError(false)
+          return
+        }
+        const siblings = props.folders.filter((folder) => folder.parentId === source.parentId).sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name)).map((folder) => folder.id)
+        const ordered = siblings.filter((folderId) => folderId !== id)
+        const targetIndex = ordered.indexOf(target.id)
+        const insertAfter = targetBox !== undefined && y >= targetBox.top + targetBox.height / 2
+        ordered.splice(targetIndex < 0 ? ordered.length : targetIndex + (insertAfter ? 1 : 0), 0, id)
+        await props.onReorder(source.parentId, ordered)
+      } else if (target) {
+        await props.onMove(id, target.id)
+      } else if (listTarget || targetHint?.parentId) {
+        const parentValue = targetHint?.parentId ?? listTarget?.dataset.folderParentId
+        await props.onMove(id, parentValue === 'root' ? null : parentValue as FolderId)
+      }
+      setError(false)
+    } catch {
+      setError(true)
+    }
+  }, [props])
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, id: FolderId) => {
+    if (event.button !== 0) return
+    pointerStartRef.current = { id, x: event.clientX, y: event.clientY }
+    pointerDragRef.current = null
+    pointerTargetRef.current = null
+    event.preventDefault()
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      const start = pointerStartRef.current
+      if (!start) return
+      if (pointerDragRef.current === null && Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y) >= 5) {
+        pointerDragRef.current = start.id
+        setPointerDragging(start.id)
+        suppressClickRef.current = true
+      }
+      if (pointerDragRef.current !== null) {
+        moveEvent.preventDefault()
+        const element = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)
+        const folderTarget = element?.closest<HTMLElement>('[data-folder-id]')
+        const listTarget = element?.closest<HTMLElement>('[data-folder-parent-id]')
+        pointerTargetRef.current = folderTarget?.dataset.folderId
+          ? { folderId: folderTarget.dataset.folderId as FolderId }
+          : listTarget?.dataset.folderParentId
+            ? { parentId: listTarget.dataset.folderParentId }
+            : null
+      }
+    }
+    const onUp = (upEvent: globalThis.PointerEvent) => {
+      const dragged = pointerDragRef.current
+      const target = pointerTargetRef.current
+      pointerStartRef.current = null
+      pointerDragRef.current = null
+      pointerTargetRef.current = null
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setPointerDragging(null)
+      if (dragged !== null) void finishPointerDrop(dragged, upEvent.clientX, upEvent.clientY, target ?? undefined)
+      window.setTimeout(() => { suppressClickRef.current = false }, 0)
+    }
+    window.addEventListener('pointermove', onMove, { passive: false })
+    window.addEventListener('pointerup', onUp, { once: true })
+  }
+
   const selected = props.folders.find((folder) => folder.id === props.activeId)
   const visibleKeys = useMemo<TreeItemKey[]>(
     () => [
-      'root',
+      ...(props.showUnfiled !== false ? ['root' as const] : []),
       ...(props.onTemporaryInbox ? ['temporary-inbox' as const] : []),
       ...(props.onTrash ? ['trash' as const] : []),
       ...flattenFolders(props.folders),
     ],
-    [props.folders, props.onTemporaryInbox, props.onTrash],
+    [props.folders, props.onTemporaryInbox, props.onTrash, props.showUnfiled],
   )
 
   useEffect(() => {
     if (!visibleKeys.includes(focusedKey)) {
-      setFocusedKey(props.activeId !== null && visibleKeys.includes(props.activeId) ? props.activeId : 'root')
+      setFocusedKey(props.activeId !== null && visibleKeys.includes(props.activeId) ? props.activeId : (visibleKeys[0] ?? 'root'))
     }
   }, [focusedKey, props.activeId, visibleKeys])
 
@@ -168,6 +347,10 @@ export function FolderTree(props: FolderTreeProps) {
       .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
       .map((folder) => {
         const hasChildren = props.folders.some((candidate) => candidate.parentId === folder.id)
+        const folderContents = typeof props.folderContents === 'function' ? props.folderContents(folder.id) : props.activeId === folder.id ? props.folderContents : undefined
+        const hasFolderContents = folderContents !== undefined
+        const expandable = hasChildren || hasFolderContents
+        const expanded = !expandable || !collapsedFolders.has(folder.id)
         return (
           <li role="none" key={folder.id}>
             {renaming === folder.id ? (
@@ -184,16 +367,41 @@ export function FolderTree(props: FolderTreeProps) {
                 ref={(node) => registerItem(folder.id, node)}
                 role="treeitem"
                 aria-selected={props.activeId === folder.id}
-                aria-expanded={hasChildren ? true : undefined}
+                aria-expanded={expandable ? expanded : undefined}
                 aria-keyshortcuts="Control+M"
                 tabIndex={focusedKey === folder.id ? 0 : -1}
-                draggable
-                className="folder-tree__item"
+                draggable={false}
+                className={`folder-tree__item${pointerDragging === folder.id ? ' folder-tree__item--dragging' : ''}`}
                 type="button"
+                data-folder-id={folder.id}
+                onPointerDown={(event) => handlePointerDown(event, folder.id)}
+                onPointerEnter={() => {
+                  if (pointerDragRef.current !== null && pointerDragRef.current !== folder.id) {
+                    pointerTargetRef.current = { folderId: folder.id }
+                  }
+                }}
                 onFocus={() => setFocusedKey(folder.id)}
                 onKeyDown={(event) => handleTreeKey(event, folder.id)}
-                onClick={() => props.onSelect(folder.id)}
-                onDragStart={(event) => event.dataTransfer.setData('text/plain', folder.id)}
+                onClick={() => {
+                  if (suppressClickRef.current) return
+                  props.onSelect(folder.id)
+                  if (expandable) setCollapsedFolders((current) => {
+                    const next = new Set(current)
+                    if (next.has(folder.id)) next.delete(folder.id)
+                    else next.add(folder.id)
+                    return next
+                  })
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setContextTarget(folder.id)
+                  setContextPosition({ x: event.clientX, y: event.clientY })
+                }}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/plain', folder.id)
+                }}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => void dropFolder(event, folder.id)}
               >
@@ -201,7 +409,8 @@ export function FolderTree(props: FolderTreeProps) {
                 <span>{folder.name}</span>
               </button>
             )}
-            {hasChildren && <ul role="group">{renderBranch(folder.id)}</ul>}
+            {hasChildren && expanded && <ul role="group" data-folder-parent-id={folder.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, folder.id)}>{renderBranch(folder.id)}</ul>}
+            {expanded && hasFolderContents && <div className="folder-tree__folder-notes">{folderContents}</div>}
           </li>
         )
       })
@@ -221,11 +430,12 @@ export function FolderTree(props: FolderTreeProps) {
               <Icon name="collapse" size={18} />
             </button>
           )}
-          <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => setCreating(true)}>
+          <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => { setCreateParent(props.activeId); setCreating(true) }}>
             <Icon name="plus" size={18} />
           </button>
           <FolderActionMenu
             enabled={selected !== undefined}
+            starred={selected?.starred === true}
             onRename={() => {
               if (!selected) return
               setRenaming(selected.id)
@@ -236,14 +446,24 @@ export function FolderTree(props: FolderTreeProps) {
               setMoving(selected.id)
               setMoveTarget(selected.parentId)
             }}
-            onDelete={() => void runDelete()}
+            onDelete={() => props.activeId !== null && setDeleteTarget(props.activeId)}
+            onToggleStar={() => { if (selected) void runToggleStar(selected.id) }}
           />
         </div>
       </header>
       {creating && (
         <form className="folder-form" onSubmit={(event) => void finishCreate(event)}>
-          <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} />
+          <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setCreating(false); setName(''); setCreateParent(null) } }} />
         </form>
+      )}
+      {contextTarget !== null && (
+        <div ref={contextMenuRef} className="folder-context-menu" role="menu" aria-label="文件夹快捷操作" style={{ left: contextPosition?.x ?? 8, top: contextPosition?.y ?? 8 }} onContextMenu={(event) => event.preventDefault()}>
+          <button type="button" role="menuitem" onClick={() => { setCreateParent(contextTarget); setCreating(true); setName(''); setContextTarget(null); setContextPosition(null) }}>新建文件夹</button>
+          {props.onCreateNote && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>新建笔记</button>}
+          <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>
+          <button type="button" role="menuitem" onClick={() => void runToggleStar(contextTarget)}>{props.folders.find((folder) => folder.id === contextTarget)?.starred === true ? '取消星标' : '添加星标'}</button>
+          <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>删除文件夹</button>
+        </div>
       )}
       {moving && (
         <form className="folder-move" onSubmit={(event) => void finishMove(event)}>
@@ -268,8 +488,8 @@ export function FolderTree(props: FolderTreeProps) {
       )}
       {props.state === 'loading' && <p className="library-status">正在加载文件夹…</p>}
       {props.state === 'error' && <p className="library-status library-status--error">无法加载文件夹。</p>}
-      <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list">
-        <li role="none">
+      <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list" data-folder-parent-id="root" onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, null)}>
+        {props.showUnfiled !== false && <li role="none">
           <button
             ref={(node) => registerItem('root', node)}
             role="treeitem"
@@ -286,7 +506,7 @@ export function FolderTree(props: FolderTreeProps) {
             <Icon name="folder" size={16} />
             <span>未归档笔记</span>
           </button>
-        </li>
+        </li>}
         {props.onTemporaryInbox && (
           <li role="none">
             <button
@@ -323,9 +543,27 @@ export function FolderTree(props: FolderTreeProps) {
             </button>
           </li>
         )}
+        {props.folders.some((folder) => folder.parentId === null) && <li role="separator" className="folder-tree__separator" aria-label="系统入口与文件夹分隔线" />}
+        {props.activeId === null && props.folderContents !== undefined && <li role="none" className="folder-tree__root-notes">{typeof props.folderContents === 'function' ? props.folderContents(null) : props.folderContents}</li>}
         {renderBranch(null)}
       </ul>
       {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
+      {deleteTarget !== null && (
+        <div className="folder-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null) }}>
+          <section className="folder-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="folder-delete-heading">
+            <div className="folder-delete-dialog__icon" aria-hidden="true"><Icon name="trash" size={20} /></div>
+            <div className="folder-delete-dialog__body">
+              <span className="folder-delete-dialog__eyebrow">删除文件夹</span>
+              <h2 id="folder-delete-heading">确定删除“{props.folders.find((folder) => folder.id === deleteTarget)?.name ?? '此文件夹'}”？</h2>
+              <p>文件夹及其全部笔记和子文件夹会移入回收站，之后仍可恢复。</p>
+            </div>
+            <div className="folder-delete-dialog__actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button type="button" className="folder-delete-dialog__confirm" onClick={() => void runDelete()}>删除文件夹</button>
+            </div>
+          </section>
+        </div>
+      )}
     </nav>
   )
 }

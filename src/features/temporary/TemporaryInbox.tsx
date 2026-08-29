@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { AssetPort, ImageReadPort, SystemPort, TemporaryPort, TemporaryWindowPort } from '../../domain/ports'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
+import { Icon } from '../../shared/Icon'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import { ConvertDialog } from './ConvertDialog'
 
@@ -225,7 +226,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   }
 
   return (
-    <section className="temporary-inbox" aria-label="临时收集箱">
+    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label="临时收集箱">
       <header className="temporary-inbox__header">
         <div>
           <span className="library-pane__eyebrow">临时捕捉</span>
@@ -255,13 +256,14 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                   <span className="sr-only">选择 {title}</span>
                 </label>
                 <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} disabled={busy !== null} onClick={() => void openCapture(item.id)}>
-                  <strong>{title}</strong>
-                  <span>{preview(item.markdown)}</span>
+                  <span className="temporary-inbox__capture-title"><Icon name="note" size={16} /><strong>{title}</strong></span>
+                  <span className="temporary-inbox__capture-preview">{preview(item.markdown)}</span>
                   <time dateTime={item.updatedAt}>{formatDate(item.updatedAt)}</time>
                 </button>
                 {windows && (
                   <button
                     type="button"
+                    className="temporary-inbox__show"
                     aria-label={`重新显示 ${title}`}
                     disabled={busy !== null}
                     onClick={() => void windows.show(item.id).then(
@@ -269,7 +271,8 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                       () => setError('无法重新显示便签窗口。'),
                     )}
                   >
-                    显示便签
+                    <Icon name="preview" size={15} />
+                    <span>显示便签</span>
                   </button>
                 )}
               </li>

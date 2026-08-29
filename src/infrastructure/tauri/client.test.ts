@@ -3,7 +3,8 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TauriClient } from './client'
 import { createTauriPorts } from './ports'
-import type { NoteId } from '../../domain/model'
+import type { FolderId, NoteId } from '../../domain/model'
+import type { StartupGuidePort } from '../../domain/ports'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: vi.fn() }))
@@ -122,6 +123,7 @@ describe('TauriClient', () => {
 
     await trash.trash([first, second])
     await trash.list()
+    await trash.listFolders?.()
     await trash.restore([second])
     await trash.undo('019c0000-0000-7000-8000-000000000099')
     await trash.purgeExpired()
@@ -129,6 +131,7 @@ describe('TauriClient', () => {
     expect(invokeMock.mock.calls).toEqual([
       ['trash_notes', { noteIds: [first, second] }],
       ['list_trash', undefined],
+      ['list_trash_folders', undefined],
       ['restore_trash', { noteIds: [second] }],
       ['undo_trash', { operationId: '019c0000-0000-7000-8000-000000000099' }],
       ['purge_expired_trash', undefined],
@@ -162,6 +165,31 @@ describe('TauriClient', () => {
     await stickySettings.load()
 
     expect(invokeMock).toHaveBeenCalledWith('load_sticky_settings', undefined)
+  })
+
+  it('loads the one-time startup guide target through a narrow command', async () => {
+    const target = {
+      folderId: '019c0000-0000-7000-8000-000000000041' as FolderId,
+      noteId: '019c0000-0000-7000-8000-000000000042' as NoteId,
+    }
+    invokeMock.mockResolvedValue(target)
+    const ports = createTauriPorts() as ReturnType<typeof createTauriPorts> & {
+      startupGuide?: StartupGuidePort
+    }
+
+    expect(ports.startupGuide).toBeDefined()
+    if (ports.startupGuide === undefined) return
+    await expect(ports.startupGuide.loadTarget()).resolves.toEqual(target)
+    const completable = ports.startupGuide as StartupGuidePort & {
+      completeTarget?: StartupGuidePort['completeTarget']
+    }
+    expect(completable.completeTarget).toBeDefined()
+    if (completable.completeTarget === undefined) return
+    await completable.completeTarget(target)
+    expect(invokeMock.mock.calls).toEqual([
+      ['startup_guide_target', undefined],
+      ['complete_startup_guide', { target }],
+    ])
   })
 
   it('maps portable export to one typed Tauri command', async () => {

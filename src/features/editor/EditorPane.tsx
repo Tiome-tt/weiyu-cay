@@ -41,6 +41,7 @@ export interface EditorPaneHandle {
   flush: () => Promise<boolean>
   beginEditBarrier: () => Promise<void>
   endEditBarrier: () => void
+  navigateToHeading: (line: number, headingIndex: number) => void
 }
 
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
@@ -122,6 +123,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     flush: autosave.flush,
     beginEditBarrier: () => sourceRef.current?.beginEditBarrier() ?? Promise.resolve(),
     endEditBarrier: () => sourceRef.current?.endEditBarrier(),
+    navigateToHeading: (line, headingIndex) => {
+      sourceRef.current?.navigateToLine(line)
+      const heading = previewRef.current?.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6').item(headingIndex)
+      heading?.scrollIntoView({ block: 'center' })
+    },
   }), [autosave.flush])
 
   const updateTags = async (tags: string[]) => {
@@ -413,7 +419,7 @@ function CompactSaveStatus({ state }: { state: SaveState }) {
     <span
       className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`}
       role="status"
-      aria-label={state.status === 'error' ? '保存失败' : '保存状态'}
+      aria-label={state.status === 'error' ? '保存失败' : '编辑器保存状态'}
       aria-live="polite"
     >
       {message}

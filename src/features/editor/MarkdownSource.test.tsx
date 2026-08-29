@@ -27,6 +27,19 @@ describe('MarkdownSource', () => {
     expect(onChange).toHaveBeenLastCalledWith('new text')
   })
 
+  it('keeps the table editor open when its controls are clicked', () => {
+    render(<MarkdownSource markdown="text" onChange={vi.fn()} />)
+    fireEvent.contextMenu(editorView().contentDOM, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '插入表格' }))
+
+    const rowCount = screen.getByRole('spinbutton', { name: '表格行数' })
+    fireEvent.pointerDown(rowCount)
+    fireEvent.change(rowCount, { target: { value: '4' } })
+
+    expect(screen.getByRole('dialog', { name: '编辑表格' })).toBeTruthy()
+    expect((rowCount as HTMLInputElement).value).toBe('4')
+  })
+
   it('applies external documents without feedback loops', () => {
     const onChange = vi.fn()
     const { rerender } = render(<MarkdownSource markdown="old" onChange={onChange} />)

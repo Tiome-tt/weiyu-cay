@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reorder-folders"
+description = "Enables the reorder_folders command without any pre-configured scope."
+commands.allow = ["reorder_folders"]
+
+[[permission]]
+identifier = "deny-reorder-folders"
+description = "Denies the reorder_folders command without any pre-configured scope."
+commands.deny = ["reorder_folders"]

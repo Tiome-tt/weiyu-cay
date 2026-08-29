@@ -15,7 +15,6 @@ const emptyReport: ExportReport = {
   renamedPaths: [],
   failed: [],
 }
-
 describe('ExportLibrary', () => {
   afterEach(cleanup)
 
@@ -24,10 +23,10 @@ describe('ExportLibrary', () => {
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue(null)} />)
 
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
     expect(exporter.exportLibrary).not.toHaveBeenCalled()
-    expect(screen.getByRole('status')).toHaveTextContent('Export cancelled. No files were changed.')
+    expect(screen.getByRole('status')).toHaveTextContent('已取消导出，未修改任何文件。')
   })
 
   it('reports successful notes, assets, and deterministic path renames', async () => {
@@ -40,12 +39,12 @@ describe('ExportLibrary', () => {
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')} />)
 
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
     expect(exporter.exportLibrary).toHaveBeenCalledWith('D:\\Portable Notes')
-    expect(await screen.findByRole('status')).toHaveTextContent('Exported 2 notes and 1 asset.')
+    expect(await screen.findByRole('status')).toHaveTextContent('已导出 2 篇笔记和 1 个附件。')
     expect(screen.getByRole('status')).toHaveTextContent('微屿导出')
-    expect(screen.getByText('1 path was renamed for portability.')).toBeVisible()
+    expect(screen.getByText('为保证可移植性，已重命名 1 个路径。')).toBeVisible()
   })
 
   it('reports a retained incomplete root when a global failure prevents publication', async () => {
@@ -59,10 +58,10 @@ describe('ExportLibrary', () => {
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')} />)
 
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('The export was not published.')
-    expect(screen.getByRole('alert')).toHaveTextContent('Incomplete files may remain at')
+    expect(await screen.findByRole('alert')).toHaveTextContent('导出未发布。')
+    expect(screen.getByRole('alert')).toHaveTextContent('不完整的文件可能仍保留在')
     expect(screen.getByRole('alert')).toHaveTextContent('.simple-notes-export-019c.partial')
     expect(screen.getByRole('alert')).toHaveTextContent('The export manifest could not be written.')
   })
@@ -78,11 +77,11 @@ describe('ExportLibrary', () => {
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\User Folder')} />)
 
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('No retained output location was available.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('没有可保留的输出位置。')
     expect(screen.getByRole('alert')).not.toHaveTextContent('D:\\User Folder')
-    expect(screen.getByRole('alert')).not.toHaveTextContent('Incomplete files may remain at')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('不完整的文件可能仍保留在')
   })
 
   it('keeps partial failures explicit by note without hiding successful counts', async () => {
@@ -94,10 +93,10 @@ describe('ExportLibrary', () => {
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')} />)
 
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Exported 1 note and 0 assets with 1 failure.')
-    expect(screen.getByRole('list', { name: 'Notes that could not be exported' })).toHaveTextContent('019c0000-0000-7000-8000-000000000401')
+    expect(await screen.findByRole('status')).toHaveTextContent('已导出 1 篇笔记和 0 个附件，但有 1 项失败。')
+    expect(screen.getByRole('list', { name: '无法导出的笔记' })).toHaveTextContent('019c0000-0000-7000-8000-000000000401')
   })
 
   it('shows an opaque command failure without promising that no staging files exist', async () => {
@@ -105,10 +104,10 @@ describe('ExportLibrary', () => {
     const user = userEvent.setup()
     render(<ExportLibrary exporter={exporter} chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')} />)
 
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'The export command failed. Check the selected parent folder for incomplete export files before retrying.',
+      '导出命令失败。重试前请检查所选父文件夹中是否存在不完整的导出文件。',
     )
     expect(screen.getByRole('alert')).not.toHaveTextContent('files were left unchanged')
     expect(exporter.exportLibrary).toHaveBeenCalledTimes(1)
@@ -125,7 +124,7 @@ describe('ExportLibrary', () => {
         chooseDestination={vi.fn().mockResolvedValue('D:\\Portable Notes')}
       />,
     )
-    await user.click(screen.getByRole('button', { name: 'Export complete library' }))
+    await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
     rendered.unmount()
     pending.resolve(emptyReport)

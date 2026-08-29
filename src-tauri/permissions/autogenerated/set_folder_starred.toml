@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-folder-starred"
+description = "Enables the set_folder_starred command without any pre-configured scope."
+commands.allow = ["set_folder_starred"]
+
+[[permission]]
+identifier = "deny-set-folder-starred"
+description = "Denies the set_folder_starred command without any pre-configured scope."
+commands.deny = ["set_folder_starred"]

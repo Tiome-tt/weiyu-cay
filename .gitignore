@@ -3,6 +3,7 @@ node_modules/
 .pnpm-store/
 dist/
 target/
+target-*/
 test-results/
 playwright-report/
 

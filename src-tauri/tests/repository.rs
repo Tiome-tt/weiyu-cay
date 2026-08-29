@@ -153,11 +153,19 @@ fn migration_creates_only_the_required_initial_tables_and_is_idempotent() {
     for table in required_tables {
         assert!(db.table_exists(table).unwrap(), "missing table {table}");
     }
-    assert_eq!(db.applied_migration_versions().unwrap(), vec![1, 2]);
+    assert_eq!(db.applied_migration_versions().unwrap(), vec![1, 2, 3, 4]);
 
     let store = TestStore::new();
     let connection = Connection::open(store.paths.database()).unwrap();
     let actual_tables = user_table_names(&connection);
+    let note_columns = connection
+        .prepare("PRAGMA table_info(notes)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(note_columns.iter().any(|column| column == "sort_order"));
     for table in required_tables {
         assert!(
             actual_tables.contains(&table.to_owned()),

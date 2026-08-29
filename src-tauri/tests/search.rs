@@ -717,7 +717,10 @@ fn version_one_migration_preserves_notes_and_backfills_search() {
 
     let database = simple_notes_lib::storage::database::Database::open(paths.database()).unwrap();
     database.migrate().unwrap();
-    assert_eq!(database.applied_migration_versions().unwrap(), vec![1, 2]);
+    assert_eq!(
+        database.applied_migration_versions().unwrap(),
+        vec![1, 2, 3, 4]
+    );
     drop(database);
     let migrated = Connection::open(paths.database()).unwrap();
     assert_eq!(
@@ -801,7 +804,7 @@ fn version_one_upgrade_rebuilds_search_from_durable_markdown_not_raw_cache() {
             .unwrap()
             .applied_migration_versions()
             .unwrap(),
-        vec![1, 2],
+        vec![1, 2, 3, 4],
     );
     assert_eq!(
         Connection::open(paths.database())
@@ -966,4 +969,67 @@ fn failing_writer(
     Err(PublishFailure::not_published(
         simple_notes_lib::error::CommandError::io("injected write failure"),
     ))
+}
+
+#[test]
+fn search_returns_complete_context_for_multiple_notes_in_different_folders() {
+    let store = seeded_store();
+    create_note_with_folder(
+        &store,
+        NOTE_A,
+        "Root context",
+        vec!["RootTag", "Shared"],
+        ROOT_FOLDER,
+        "batch context phrase",
+        "2026-07-31T08:02:00Z",
+    );
+    create_note_with_folder(
+        &store,
+        NOTE_B,
+        "Nested context",
+        vec!["NestedTag", "Shared"],
+        CHILD_FOLDER,
+        "batch context phrase",
+        "2026-07-31T08:01:00Z",
+    );
+
+    let results = SearchRepository::new(store.paths.clone())
+        .search_text("batch context", 20)
+        .unwrap();
+
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Root context", "Nested context"]
+    );
+    assert_eq!(results[0].tags, vec!["RootTag", "Shared"]);
+    assert_eq!(results[0].folder_breadcrumb, vec!["Work"]);
+    assert_eq!(results[1].tags, vec!["NestedTag", "Shared"]);
+    assert_eq!(results[1].folder_breadcrumb, vec!["Work", "Project B"]);
+}
+
+fn create_note_with_folder(
+    store: &TestStore,
+    id: &str,
+    title: &str,
+    tags: Vec<&str>,
+    folder: &str,
+    markdown: &str,
+    updated_at: &str,
+) {
+    NoteRepository::new(store.paths.clone())
+        .create(NoteDocument {
+            id: note_id(id),
+            kind: NoteKind::Formal,
+            title: title.into(),
+            folder_id: Some(folder_id(folder)),
+            tags: tags.into_iter().map(str::to_owned).collect(),
+            markdown: markdown.into(),
+            revision: 0,
+            created_at: "2026-07-31T08:00:00Z".into(),
+            updated_at: updated_at.into(),
+        })
+        .unwrap();
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-complete-startup-guide"
+description = "Enables the complete_startup_guide command without any pre-configured scope."
+commands.allow = ["complete_startup_guide"]
+
+[[permission]]
+identifier = "deny-complete-startup-guide"
+description = "Denies the complete_startup_guide command without any pre-configured scope."
+commands.deny = ["complete_startup_guide"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reorder-notes"
+description = "Enables the reorder_notes command without any pre-configured scope."
+commands.allow = ["reorder_notes"]
+
+[[permission]]
+identifier = "deny-reorder-notes"
+description = "Denies the reorder_notes command without any pre-configured scope."
+commands.deny = ["reorder_notes"]

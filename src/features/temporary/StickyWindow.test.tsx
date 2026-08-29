@@ -88,9 +88,20 @@ describe('StickyWindow', () => {
 
     expect(windows.hide).not.toHaveBeenCalled()
     expect(editor.state.doc.toString()).toBe('kept locally')
-    expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i)
+    expect(screen.getByRole('alert')).toHaveTextContent('无法保存，修改内容已保留在本地。')
     await act(async () => screen.getByRole('button', { name: '重试保存' }).click())
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+  })
+
+  it('turns a synchronous save failure into a retryable error instead of staying in saving', async () => {
+    const save = vi.fn(() => { throw new Error('native save unavailable') })
+    const { editor, windows } = setup(save)
+    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'kept locally' } })
+
+    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+
+    expect(windows.hide).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('无法保存，修改内容已保留在本地。')
   })
 
   it('updates authoritative pin state only after the native operation succeeds', async () => {

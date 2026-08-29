@@ -127,7 +127,7 @@ describe('useAutosave', () => {
     expect(autosave.result.current.markdown).toBe('local text')
     expect(autosave.result.current.state).toMatchObject({
       status: 'error',
-      message: expect.stringMatching(/changed elsewhere|reload/i),
+      message: expect.stringMatching(/其他窗口中发生变化|重试保存/),
       retry: expect.any(Function),
     })
   })

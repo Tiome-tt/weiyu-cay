@@ -286,7 +286,7 @@ describe('EditorPane', () => {
     expect(toolbar).not.toContainElement(alert)
     expect(alert.closest('.editor-notices')).not.toBeNull()
     expect(alert).not.toHaveTextContent('private storage detail')
-    expect(alert).toHaveTextContent('The note could not be saved. Your changes are kept locally.')
+    expect(alert).toHaveTextContent('无法保存，修改内容已保留在本地。')
     const retry = within(alert).getByRole('button', { name: '重试保存' })
     retry.focus()
     expect(retry).toHaveFocus()

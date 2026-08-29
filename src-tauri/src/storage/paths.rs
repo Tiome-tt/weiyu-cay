@@ -135,11 +135,13 @@ fn validate_segment(segment: &str) -> Result<(), CommandError> {
 
 fn validate_existing_path(root: &Path, path: &Path) -> Result<(), CommandError> {
     match fs::symlink_metadata(path) {
-        Ok(_) => {
-            let resolved = path.canonicalize().map_err(|_| {
-                CommandError::validation("storage path could not be resolved safely")
-            })?;
-            if !resolved.starts_with(root) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+                return Err(CommandError::validation(
+                    "storage path contains a symbolic link or reparse point",
+                ));
+            }
+            if !path.starts_with(root) {
                 return Err(CommandError::validation(
                     "storage path escapes the data root",
                 ));
@@ -153,6 +155,20 @@ fn validate_existing_path(root: &Path, path: &Path) -> Result<(), CommandError> 
         }
     }
     Ok(())
+}
+
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        false
+    }
 }
 
 fn ensure_directory(root: &Path, name: &str) -> Result<PathBuf, CommandError> {

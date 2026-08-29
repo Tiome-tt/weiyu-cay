@@ -2,7 +2,8 @@ use crate::{
     commands::storage::{StorageCommandState, StorageConsumer},
     domain::{
         FolderId, LinkRepairResult, NoteDocument, NoteId, NoteSummary, PurgeTrashResult,
-        RenameNoteResult, RestoreTrashResult, TrashBatchResult, TrashEntry,
+        RenameNoteResult, RestoreTrashResult, StartupGuideTarget, TrashBatchResult, TrashEntry,
+        TrashFolderEntry,
     },
     error::CommandError,
     storage::{
@@ -40,14 +41,143 @@ pub fn prepare_startup_repository(state: &StorageCommandState) -> Result<(), Com
     if state.readiness().ensure_ready().is_err() {
         return Ok(());
     }
+    prepare_startup_repository_after_recovery(state)
+}
+
+#[doc(hidden)]
+pub fn prepare_startup_repository_after_recovery(
+    state: &StorageCommandState,
+) -> Result<(), CommandError> {
     let paths = state.configured_paths().clone();
-    {
-        let _guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
+    let pending_startup_guide = state.take_pending_startup_guide()?;
+    let prepared = (|| {
+        let guard = crate::platform::IndexMutationLock::acquire(paths.root())?;
         let database = Database::open(paths.database())?;
         database.migrate()?;
         database.close()?;
+        if let Some(target) = pending_startup_guide {
+            let target = create_getting_started_guide(&paths, target, &guard)?;
+            state.publish_startup_guide_target(target)?;
+        }
+        Ok(())
+    })();
+    if prepared.is_err() {
+        if let Some(target) = pending_startup_guide {
+            state.restore_pending_startup_guide(target)?;
+        }
     }
-    Ok(())
+    prepared
+}
+
+const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+
+微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
+
+## 从这里开始
+
+你可以试着：
+
+- 新建一篇笔记，随手写下此刻的想法
+- 创建文件夹，整理不同主题的内容
+- 在源码、分屏和预览三种视图间切换
+- 为笔记添加标签
+- 使用 `[[笔记标题]]` 连接两篇笔记
+
+## 关于 Markdown
+
+微屿使用 Markdown 保存笔记。即使以后不再使用微屿，你仍然可以用其他文本编辑器打开这些文件。
+
+```markdown
+# 一级标题
+## 二级标题
+
+- 无序列表
+- 另一项内容
+
+**粗体**、*斜体* 和 `行内代码`
+```
+
+## 临时便笺
+
+灵感突然出现时，可以使用临时便笺快速记录。关闭便笺窗口不会删除内容，你可以稍后在主应用的临时收件箱中整理它。
+
+## 你的内容属于你
+
+笔记正文和图片会作为普通文件保存在本地。删除操作可以通过回收站或撤销恢复，不必担心一次误操作让内容永久消失。
+
+---
+
+现在，新建你的第一篇笔记吧。
+
+这篇引导笔记也可以随时删除。
+"#;
+
+fn create_getting_started_guide(
+    paths: &StoragePaths,
+    target: StartupGuideTarget,
+    guard: &crate::platform::IndexMutationLock,
+) -> Result<StartupGuideTarget, CommandError> {
+    let folder = super::folders::FolderRepository::new(paths.clone()).ensure_system_root_locked(
+        target.folder_id,
+        "开始使用",
+        guard,
+    )?;
+    let notes = NoteRepository::new(paths.clone());
+    match notes.load_locked(target.note_id, guard) {
+        Ok(note) => {
+            if note.kind != crate::domain::NoteKind::Formal || note.folder_id != Some(folder.id) {
+                return Err(CommandError::conflict(
+                    "startup guide identity belongs to another note",
+                ));
+            }
+            return Ok(target);
+        }
+        Err(error) if error.code() == crate::error::CommandErrorCode::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    notes.create_locked(
+        NoteDocument {
+            id: target.note_id,
+            kind: crate::domain::NoteKind::Formal,
+            title: "欢迎来到微屿".to_owned(),
+            folder_id: Some(folder.id),
+            tags: Vec::new(),
+            markdown: GETTING_STARTED_MARKDOWN.to_owned(),
+            revision: 0,
+            created_at: now.clone(),
+            updated_at: now,
+        },
+        guard,
+    )?;
+    Ok(target)
+}
+
+#[tauri::command]
+pub fn startup_guide_target(
+    window: tauri::Window,
+    state: State<'_, StorageCommandState>,
+) -> Result<Option<StartupGuideTarget>, CommandError> {
+    if window.label() != "main" {
+        return Err(CommandError::validation(
+            "startup guide target requires the main window",
+        ));
+    }
+    state.startup_guide_target()
+}
+
+#[tauri::command]
+pub fn complete_startup_guide(
+    window: tauri::Window,
+    state: State<'_, StorageCommandState>,
+    target: StartupGuideTarget,
+) -> Result<(), CommandError> {
+    if window.label() != "main" {
+        return Err(CommandError::validation(
+            "startup guide completion requires the main window",
+        ));
+    }
+    state.complete_startup_guide(target)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -176,6 +306,15 @@ pub fn move_note(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub fn reorder_notes(
+    state: State<'_, StorageCommandState>,
+    folder_id: Option<FolderId>,
+    ordered_ids: Vec<NoteId>,
+) -> Result<(), CommandError> {
+    repository(&state)?.reorder_notes(folder_id, ordered_ids)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub fn trash_notes(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,
@@ -195,6 +334,14 @@ pub fn list_trash(
     TrashService::new(state.paths_for(StorageConsumer::Trash)?.clone()).list()
 }
 
+#[tauri::command]
+pub fn list_trash_folders(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+) -> Result<Vec<TrashFolderEntry>, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::List, None)?;
+    TrashService::new(state.paths_for(StorageConsumer::Trash)?.clone()).list_folder_trash()
+}
 #[tauri::command(rename_all = "camelCase")]
 pub fn restore_trash(
     window: tauri::WebviewWindow,
@@ -213,6 +360,16 @@ pub fn undo_trash(
 ) -> Result<RestoreTrashResult, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::UndoDelete, None)?;
     TrashService::new(state.paths_for(StorageConsumer::Trash)?.clone()).undo(&operation_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn purge_trash(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    note_ids: Vec<NoteId>,
+) -> Result<PurgeTrashResult, CommandError> {
+    authorize_temporary_caller(window.label(), TemporaryCommandOperation::Delete, None)?;
+    TrashService::new(state.paths_for(StorageConsumer::Trash)?.clone()).purge(note_ids)
 }
 
 #[tauri::command]

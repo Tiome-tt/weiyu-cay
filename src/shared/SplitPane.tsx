@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  Fragment,
   type KeyboardEvent,
   type PointerEvent,
   type ReactElement,
@@ -14,6 +15,7 @@ import {
 } from 'react'
 
 const DIVIDER_WIDTH = 7
+const COLLAPSED_SECOND_RAIL_WIDTH = 30
 const KEYBOARD_STEP = 16
 
 export type SplitPaneSizes = readonly [first: number, second: number]
@@ -26,6 +28,7 @@ interface SplitPaneProps {
   proportions?: SplitPaneSizes
   onCommit?: (sizes: SplitPaneSizes, containerWidth: number) => void
   collapsed?: readonly [first: boolean, second: boolean]
+  collapsedSecondRail?: ReactNode
 }
 
 interface DragState {
@@ -48,6 +51,7 @@ export function SplitPane({
   proportions,
   onCommit,
   collapsed = [false, false],
+  collapsedSecondRail,
 }: SplitPaneProps) {
   const panes = Children.toArray(children)
   if (panes.length !== 3 || panes.some((pane) => !isValidElement(pane))) {
@@ -70,7 +74,7 @@ export function SplitPane({
       proportions[0] * containerWidth,
       proportions[1] * containerWidth,
     ]
-    const next = fitIntoContainer(restored, minimumSizes, containerWidth, collapsed)
+    const next = fitIntoContainer(restored, minimumSizes, containerWidth, collapsed, Boolean(collapsedSecondRail))
     sizesRef.current = next
     setSizes(next)
   }, [collapsed[0], collapsed[1], containerWidth, minimumSizes, proportions])
@@ -83,7 +87,7 @@ export function SplitPane({
       setContainerWidth(width)
       if (width <= 0) return
       setSizes((current) => {
-        const next = fitIntoContainer(current, minimumSizes, width, collapsed)
+        const next = fitIntoContainer(current, minimumSizes, width, collapsed, Boolean(collapsedSecondRail))
         sizesRef.current = next
         return next[0] === current[0] && next[1] === current[1] ? current : next
       })
@@ -102,7 +106,13 @@ export function SplitPane({
     let first = Math.max(minimumSizes[0], candidate[0])
     let second = Math.max(minimumSizes[1], candidate[1])
     if (width > 0) {
-      const available = Math.max(0, width - visibleDividerWidth(0, collapsed) - visibleDividerWidth(1, collapsed))
+      const available = Math.max(
+        0,
+        width
+          - visibleDividerWidth(0, collapsed)
+          - visibleDividerWidth(1, collapsed)
+          - (collapsed[1] && collapsedSecondRail ? COLLAPSED_SECOND_RAIL_WIDTH : 0),
+      )
       if (divider === 0) {
         first = Math.min(
           first,
@@ -184,7 +194,10 @@ export function SplitPane({
   const visibleFirst = collapsed[0] ? 0 : sizes[0]
   const visibleSecond = collapsed[1] ? 0 : sizes[1]
   const dividerWidth = visibleDividerWidth(0, collapsed) + visibleDividerWidth(1, collapsed)
-  const thirdWidth = width > 0 ? Math.max(minimumSizes[2], width - dividerWidth - visibleFirst - visibleSecond) : undefined
+  const collapsedRailWidth = collapsed[1] && collapsedSecondRail ? COLLAPSED_SECOND_RAIL_WIDTH : 0
+  const thirdWidth = width > 0
+    ? Math.max(minimumSizes[2], width - dividerWidth - collapsedRailWidth - visibleFirst - visibleSecond)
+    : undefined
   const paneWidths = [visibleFirst, visibleSecond, thirdWidth] as const
 
   return (
@@ -208,10 +221,21 @@ export function SplitPane({
           'aria-hidden': index < 2 && collapsed[index] ? true : undefined,
           inert: index < 2 && collapsed[index] ? true : undefined,
         })
-        if (index === 2) return rendered
+        if (index === 2) {
+          return (
+            <Fragment key="content">
+              {collapsed[1] && collapsedSecondRail}
+              {rendered}
+            </Fragment>
+          )
+        }
         const divider = index as 0 | 1
         const maximum = width > 0
-          ? width - dividerWidth - minimumSizes[2] - (collapsed[divider === 0 ? 1 : 0] ? 0 : sizes[divider === 0 ? 1 : 0])
+          ? width
+            - dividerWidth
+            - collapsedRailWidth
+            - minimumSizes[2]
+            - (collapsed[divider === 0 ? 1 : 0] ? 0 : sizes[divider === 0 ? 1 : 0])
           : 10000
         const dividerStyle: CSSProperties | undefined = collapsed[divider]
           ? { flex: '0 0 0px', width: '0px', pointerEvents: 'none' }
@@ -250,11 +274,14 @@ function fitIntoContainer(
   minimumSizes: readonly [first: number, second: number, third: number],
   width: number,
   collapsed: readonly [first: boolean, second: boolean],
+  hasCollapsedSecondRail: boolean,
 ): SplitPaneSizes {
   let first = Math.max(minimumSizes[0], candidate[0])
   let second = Math.max(minimumSizes[1], candidate[1])
   let overflow = (collapsed[0] ? 0 : first) + (collapsed[1] ? 0 : second) + minimumSizes[2]
-    + visibleDividerWidth(0, collapsed) + visibleDividerWidth(1, collapsed) - width
+    + visibleDividerWidth(0, collapsed) + visibleDividerWidth(1, collapsed)
+    + (collapsed[1] && hasCollapsedSecondRail ? COLLAPSED_SECOND_RAIL_WIDTH : 0)
+    - width
   if (overflow > 0 && !collapsed[1]) {
     const secondReduction = Math.min(overflow, second - minimumSizes[1])
     second -= secondReduction

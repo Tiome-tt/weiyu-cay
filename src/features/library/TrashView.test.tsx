@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
@@ -29,6 +29,7 @@ const entries: TrashEntry[] = [
     kind: 'temporary',
     title: '临时想法',
     previousFolderId: missingFolder,
+    previousFolderName: '旧项目',
     previousRelativePath: `temporary/${temporaryId}`,
     deletedAt: '2026-08-01T02:30:00Z',
     assets: ['assets/screenshot.png'],
@@ -42,14 +43,14 @@ afterEach(() => {
 })
 
 describe('TrashView', () => {
-  it('lists formal and temporary notes with their prior folder, kind, and deletion date', async () => {
+  it('groups notes by type and shows their prior folder and deletion date', async () => {
     render(<TrashView trash={fakeTrashPort()} folders={folders} />)
 
     expect(await screen.findByRole('checkbox', { name: '选择 发布清单' })).toBeVisible()
-    expect(screen.getByText('正式笔记')).toBeVisible()
+    expect(screen.getByRole('heading', { name: '笔记' })).toBeVisible()
     expect(screen.getByText('原位置：项目 A')).toBeVisible()
     expect(screen.getByRole('checkbox', { name: '选择 临时想法' })).toBeVisible()
-    expect(screen.getByText('临时捕捉')).toBeVisible()
+    expect(screen.getByRole('heading', { name: '临时便签' })).toBeVisible()
     expect(screen.getByText('原文件夹不可用，将恢复到“已恢复”')).toBeVisible()
     expect(screen.getAllByText(/2026/)).toHaveLength(2)
   })
@@ -74,28 +75,6 @@ describe('TrashView', () => {
     expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
   })
 
-  it('offers an immediate undo entry point, blocks duplicate activation, and refreshes the list', async () => {
-    let resolveUndo!: (value: Awaited<ReturnType<TrashPort['undo']>>) => void
-    const pending = new Promise<Awaited<ReturnType<TrashPort['undo']>>>((resolve) => { resolveUndo = resolve })
-    const undo = vi.fn(() => pending)
-    const list = vi.fn().mockResolvedValueOnce(entries).mockResolvedValueOnce([])
-    const onLibraryChanged = vi.fn().mockResolvedValue(undefined)
-    render(<TrashView trash={fakeTrashPort({ list, undo })} folders={folders} recentOperationId="delete-op" onLibraryChanged={onLibraryChanged} />)
-
-    const button = await screen.findByRole('button', { name: '撤销最近删除' })
-    button.click()
-    button.click()
-    expect(undo).toHaveBeenCalledOnce()
-    expect(undo).toHaveBeenCalledWith('delete-op')
-    await waitFor(() => expect(button).toBeDisabled())
-
-    resolveUndo({ restored: [restoredDocument(formalId, project)], failed: [] })
-    const feedback = await screen.findByText('已撤销最近删除，恢复 1 项。')
-    await waitFor(() => expect(feedback).toHaveFocus())
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-    expect(onLibraryChanged).toHaveBeenCalledOnce()
-  })
-
   it('invalidates an older list request before restore and refreshes the surrounding library', async () => {
     const lateList = deferred<TrashEntry[]>()
     const list = vi.fn().mockResolvedValueOnce(entries).mockReturnValueOnce(lateList.promise)
@@ -114,13 +93,20 @@ describe('TrashView', () => {
     expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
   })
 
-  it('derives the immediate undo entry point from the newest trash operation', async () => {
-    const undo = vi.fn().mockResolvedValue({ restored: [], failed: [] })
+  it('permanently deletes selected entries only after confirmation', async () => {
+    const purge = vi.fn().mockResolvedValue({ purged: [formalId], failed: [] })
     const user = userEvent.setup()
-    render(<TrashView trash={fakeTrashPort({ undo })} folders={folders} />)
+    render(<TrashView trash={fakeTrashPort({ purge })} folders={folders} />)
 
-    await user.click(await screen.findByRole('button', { name: '撤销最近删除' }))
-    expect(undo).toHaveBeenCalledWith('delete-op')
+    await user.click(await screen.findByRole('checkbox', { name: '选择 发布清单' }))
+    await user.click(screen.getByRole('button', { name: '永久删除' }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('删除后将清除笔记及其附件，之后无法恢复')
+    expect(purge).not.toHaveBeenCalled()
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '永久删除' }))
+
+    expect(purge).toHaveBeenCalledWith([formalId])
+    expect(await screen.findByText('已永久删除 1 项，之后无法恢复。')).toBeVisible()
+    expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
   })
 
   it('supports keyboard selection and preserves failed entries with an actionable error', async () => {
@@ -163,6 +149,7 @@ function fakeTrashPort(overrides: Partial<TrashPort> = {}): TrashPort {
     list: vi.fn().mockResolvedValue(entries),
     restore: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
     undo: vi.fn().mockResolvedValue({ restored: [], failed: [] }),
+    purge: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
     purgeExpired: vi.fn().mockResolvedValue({ purged: [], failed: [] }),
     ...overrides,
   }

@@ -48,6 +48,28 @@ fn create_trims_names_and_appends_a_deterministic_sort_order() {
 }
 
 #[test]
+fn starred_state_round_trips_without_changing_folder_identity() {
+    let store = TestStore::new();
+    let repo = repository(&store);
+    let folder = repo
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "重点".to_owned(),
+        })
+        .unwrap();
+    assert!(!folder.starred);
+
+    let starred = repo.set_starred(folder.id, true).unwrap();
+    assert!(starred.starred);
+    assert_eq!(starred.id, folder.id);
+    assert_eq!(repo.list().unwrap(), vec![starred.clone()]);
+
+    let unstarred = repo.set_starred(folder.id, false).unwrap();
+    assert!(!unstarred.starred);
+    assert_eq!(unstarred.id, folder.id);
+}
+
+#[test]
 fn create_rejects_blank_control_and_path_separator_names() {
     let store = TestStore::new();
     let repo = repository(&store);
@@ -104,6 +126,19 @@ fn move_updates_parent_and_reorders_both_sibling_sets() {
             .sort_order,
         0
     );
+}
+
+#[test]
+fn reorder_updates_sibling_order_and_accepts_a_partial_drag_order() {
+    let store = TestStore::new();
+    seed_folder(&store, ROOT_A, None, "项目 A", 0);
+    seed_folder(&store, ROOT_B, None, "项目 B", 1);
+    let repo = repository(&store);
+
+    repo.reorder(None, vec![folder_id(ROOT_B)]).unwrap();
+    let folders = repo.list().unwrap();
+    assert_eq!(folders[0].id, folder_id(ROOT_B));
+    assert_eq!(folders[1].id, folder_id(ROOT_A));
 }
 
 #[test]
@@ -170,6 +205,15 @@ fn delete_removes_only_an_empty_folder_and_compacts_sort_order() {
     assert_eq!(folders[0].sort_order, 0);
 }
 
+#[test]
+fn delete_returns_not_found_for_an_unknown_folder() {
+    let store = TestStore::new();
+    let repo = repository(&store);
+    let error = repo
+        .delete(folder_id("019c0000-0000-7000-8000-00000000dead"))
+        .unwrap_err();
+    assert_eq!(error.code(), CommandErrorCode::NotFound);
+}
 #[test]
 fn folder_mutations_survive_a_full_index_rebuild_with_note_associations() {
     let mut store = TestStore::new();

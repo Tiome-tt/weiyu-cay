@@ -1,6 +1,6 @@
 mod support;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use simple_notes_lib::{
     commands::folders::FolderRepository,
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
@@ -65,6 +65,86 @@ fn create_document(
         .unwrap()
 }
 
+#[test]
+fn deleting_folder_tree_restores_original_folder_ids_and_hierarchy() {
+    let store = TestStore::new();
+    let root = folder_id(FOLDER_ID);
+    let child = folder_id(THIRD_ID);
+    seed_folder(&store, FOLDER_ID, "Project");
+    Connection::open(store.paths.database())
+        .unwrap()
+        .execute(
+            "INSERT INTO folders (id, parent_id, name, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, 1, '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+            params![uuid_blob(THIRD_ID), uuid_blob(FOLDER_ID), "Nested"],
+        )
+        .unwrap();
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        Some(child),
+        "Nested note",
+    );
+
+    FolderRepository::new(store.paths.clone())
+        .delete(root)
+        .unwrap();
+    let restored = TrashService::new(store.paths.clone())
+        .restore(vec![note.id])
+        .unwrap();
+
+    assert_eq!(restored.restored[0].folder_id, Some(child));
+    let connection = Connection::open(store.paths.database()).unwrap();
+    let (parent_id, name): (Option<Vec<u8>>, String) = connection
+        .query_row(
+            "SELECT parent_id, name FROM folders WHERE id = ?1",
+            params![uuid_blob(THIRD_ID)],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(parent_id, Some(uuid_blob(FOLDER_ID)));
+    assert_eq!(name, "Nested");
+}
+
+#[test]
+fn deleting_empty_folder_creates_a_recoverable_trash_operation() {
+    let store = TestStore::new();
+    let folder = folder_id(FOLDER_ID);
+    seed_folder(&store, FOLDER_ID, "Empty project");
+
+    let operation_id = FolderRepository::new(store.paths.clone())
+        .delete(folder)
+        .unwrap();
+    assert!(Connection::open(store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT 1 FROM folders WHERE id = ?1",
+            params![uuid_blob(FOLDER_ID)],
+            |_| Ok(()),
+        )
+        .optional()
+        .unwrap()
+        .is_none());
+
+    let restored = TrashService::new(store.paths.clone())
+        .undo(&operation_id)
+        .unwrap();
+    assert!(restored.restored.is_empty());
+
+    let (name, sort_order): (String, i64) = Connection::open(store.paths.database())
+        .unwrap()
+        .query_row(
+            "SELECT name, sort_order FROM folders WHERE id = ?1",
+            params![uuid_blob(FOLDER_ID)],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(name, "Empty project");
+    assert_eq!(sort_order, 0);
+
+    let folders_manifest = fs::read_to_string(store.paths.folders_manifest()).unwrap();
+    assert!(folders_manifest.contains("\"name\": \"Empty project\""));
+}
 #[test]
 fn trash_manifest_restores_formal_note_assets_and_previous_folder() {
     let store = TestStore::new();
@@ -140,7 +220,7 @@ fn restore_uses_one_stable_recovered_folder_when_previous_folder_is_missing() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(names, vec!["已恢复"]);
+    assert_eq!(names, vec!["Removed"]);
 }
 
 #[test]
@@ -202,6 +282,66 @@ fn purge_keeps_29_day_entries_and_removes_31_day_entries() {
     assert!(retained.contains(&boundary.id));
 }
 
+#[test]
+fn purge_removes_a_manually_selected_deleted_note() {
+    let store = TestStore::new();
+    let note = create_document(
+        &store,
+        note_id(FORMAL_ID),
+        NoteKind::Formal,
+        None,
+        "Selected",
+    );
+    let service = TrashService::new(store.paths.clone());
+    service
+        .trash(vec![note.id], "2026-08-02T00:00:00Z")
+        .unwrap();
+
+    let result = service.purge(vec![note.id]).unwrap();
+
+    assert_eq!(result.purged, vec![note.id]);
+    assert!(result.failed.is_empty());
+    assert!(service.list().unwrap().is_empty());
+    assert!(NoteRepository::new(store.paths.clone())
+        .load(note.id)
+        .is_err());
+}
+
+#[test]
+fn purge_expired_removes_folder_only_trash_manifests() {
+    let store = TestStore::new();
+    let repo = FolderRepository::new(store.paths.clone());
+    let folder = repo
+        .create(simple_notes_lib::domain::CreateFolderInput {
+            parent_id: None,
+            name: "待清理".to_owned(),
+        })
+        .unwrap();
+    repo.delete_empty(folder.id).unwrap();
+
+    let listed = TrashService::new(store.paths.clone())
+        .list_folder_trash()
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].title, "待清理");
+
+    TrashService::new(store.paths.clone())
+        .purge_expired("2026-10-01T00:00:00Z")
+        .unwrap();
+
+    let remaining = fs::read_dir(store.paths.trash())
+        .unwrap()
+        .flat_map(|operation| fs::read_dir(operation.unwrap().path()).unwrap())
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".folder.json")
+        })
+        .count();
+    assert_eq!(remaining, 0);
+}
 #[test]
 fn purge_reports_one_failed_entry_and_continues_with_other_expired_entries() {
     let store = TestStore::new();

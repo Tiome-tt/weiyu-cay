@@ -1,12 +1,13 @@
 use crate::{
     commands::storage::{StorageCommandState, StorageConsumer},
-    domain::{CreateFolderInput, Folder, FolderId},
+    domain::{CreateFolderInput, Folder, FolderId, NoteId},
     error::CommandError,
     storage::{
         atomic_file::{atomic_replace_contained, PublishFailure, PublishState},
         database::Database,
         paths::StoragePaths,
         repository::folder_id_blob,
+        trash::{TrashFolderSnapshot, TrashService},
     },
 };
 use rusqlite::{params, OptionalExtension, Transaction};
@@ -29,7 +30,7 @@ impl FolderRepository {
         let mut statement = database
             .connection()
             .prepare(
-                "SELECT id, parent_id, name, sort_order FROM folders \
+                "SELECT id, parent_id, name, sort_order, starred FROM folders \
                  ORDER BY CASE WHEN parent_id IS NULL THEN 0 ELSE 1 END, parent_id, sort_order, name, id",
             )
             .map_err(database_error("could not prepare folder list"))?;
@@ -59,7 +60,7 @@ impl FolderRepository {
             .map_err(database_error("could not start system folder creation"))?;
         if let Some(existing) = transaction
             .query_row(
-                "SELECT id, parent_id, name, sort_order FROM folders WHERE id=?1",
+                "SELECT id, parent_id, name, sort_order, starred FROM folders WHERE id=?1",
                 [folder_id_blob(id)],
                 folder_from_row,
             )
@@ -107,6 +108,7 @@ impl FolderRepository {
             parent_id: None,
             name,
             sort_order,
+            starred: false,
         })
     }
     #[doc(hidden)]
@@ -145,6 +147,7 @@ impl FolderRepository {
             parent_id: input.parent_id,
             name,
             sort_order,
+            starred: false,
         })
     }
 
@@ -187,6 +190,72 @@ impl FolderRepository {
     ) -> Result<Folder, CommandError> {
         let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         self.move_folder_locked(id, parent_id, &guard)
+    }
+
+    pub fn set_starred(&self, id: FolderId, starred: bool) -> Result<Folder, CommandError> {
+        let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = self.database()?;
+        let transaction = database
+            .connection()
+            .unchecked_transaction()
+            .map_err(database_error("could not start folder star update"))?;
+        let changed = transaction
+            .execute(
+                "UPDATE folders SET starred=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id=?2",
+                params![starred, folder_id_blob(id)],
+            )
+            .map_err(database_error("could not update folder star"))?;
+        if changed == 0 {
+            return Err(CommandError::not_found("folder does not exist"));
+        }
+        let folder = find_folder(&transaction, id)?;
+        write_manifest(&transaction, &self.paths)?;
+        transaction
+            .commit()
+            .map_err(database_error("could not commit folder star update"))?;
+        drop(guard);
+        Ok(folder)
+    }
+
+    pub fn reorder(
+        &self,
+        parent_id: Option<FolderId>,
+        ordered_ids: Vec<FolderId>,
+    ) -> Result<(), CommandError> {
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = self.database()?;
+        let transaction = database
+            .connection()
+            .unchecked_transaction()
+            .map_err(database_error("could not start folder reorder"))?;
+        let mut statement = transaction
+            .prepare("SELECT id FROM folders WHERE parent_id IS ?1")
+            .map_err(database_error("could not prepare folder reorder"))?;
+        let existing = statement
+            .query_map(params![parent_id.map(folder_id_blob)], |row| {
+                let bytes: Vec<u8> = row.get(0)?;
+                folder_id_from_blob(&bytes)
+            })
+            .map_err(database_error("could not query folder reorder"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error("could not read folder reorder"))?;
+        drop(statement);
+        let mut final_order = ordered_ids
+            .into_iter()
+            .filter(|id| existing.contains(id))
+            .collect::<Vec<_>>();
+        for id in existing {
+            if !final_order.contains(&id) {
+                final_order.push(id);
+            }
+        }
+        for (index, id) in final_order.iter().enumerate() {
+            transaction.execute("UPDATE folders SET sort_order=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?2", params![i64::try_from(index).map_err(|_| CommandError::validation("folder order is too large"))?, folder_id_blob(*id)]).map_err(database_error("could not update folder order"))?;
+        }
+        write_manifest(&transaction, &self.paths)?;
+        transaction
+            .commit()
+            .map_err(database_error("could not commit folder reorder"))
     }
     #[doc(hidden)]
     pub fn move_folder_locked(
@@ -233,20 +302,116 @@ impl FolderRepository {
         Ok(Folder {
             parent_id,
             sort_order: new_order,
+            starred: current.starred,
             ..current
         })
     }
 
-    pub fn delete_empty(&self, id: FolderId) -> Result<(), CommandError> {
+    pub fn delete_empty(&self, id: FolderId) -> Result<String, CommandError> {
         let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         self.delete_empty_locked(id, &guard)
+    }
+
+    pub fn delete(&self, id: FolderId) -> Result<String, CommandError> {
+        let (note_ids, folder_snapshot) = {
+            let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+            let database = self.database()?;
+            let mut notes = database.connection().prepare("WITH RECURSIVE subtree(id) AS (SELECT ?1 UNION ALL SELECT folders.id FROM folders JOIN subtree ON folders.parent_id = subtree.id) SELECT notes.id FROM notes JOIN subtree ON notes.folder_id = subtree.id WHERE notes.deleted_at IS NULL AND notes.kind = 'formal'").map_err(database_error("could not prepare folder note deletion"))?;
+            let note_ids = notes
+                .query_map([folder_id_blob(id)], |row| {
+                    let bytes: Vec<u8> = row.get(0)?;
+                    note_id_from_blob(&bytes)
+                })
+                .map_err(database_error("could not query folder notes"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error("could not read folder notes"))?;
+            let mut folders = database.connection().prepare("WITH RECURSIVE subtree(id, depth) AS (SELECT id, 0 FROM folders WHERE id=?1 UNION ALL SELECT folders.id, subtree.depth + 1 FROM folders JOIN subtree ON folders.parent_id = subtree.id) SELECT folders.id, folders.parent_id, folders.name, folders.sort_order, folders.starred, folders.created_at, folders.updated_at FROM folders JOIN subtree ON subtree.id = folders.id ORDER BY subtree.depth ASC").map_err(database_error("could not prepare folder snapshot"))?;
+            let folder_snapshot = folders
+                .query_map([folder_id_blob(id)], |row| {
+                    let id_bytes: Vec<u8> = row.get(0)?;
+                    let parent_bytes: Option<Vec<u8>> = row.get(1)?;
+                    Ok(TrashFolderSnapshot {
+                        id: folder_id_from_blob(&id_bytes)?,
+                        parent_id: parent_bytes
+                            .as_deref()
+                            .map(folder_id_from_blob)
+                            .transpose()?,
+                        name: row.get(2)?,
+                        sort_order: row.get(3)?,
+                        starred: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                })
+                .map_err(database_error("could not query folder snapshot"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error("could not read folder snapshot"))?;
+            (note_ids, folder_snapshot)
+        };
+        if folder_snapshot.is_empty() {
+            return Err(CommandError::not_found("folder does not exist"));
+        }
+        let has_notes = !note_ids.is_empty();
+        let trash = TrashService::new(self.paths.clone());
+        let operation_id = if !has_notes {
+            trash.prepare_folder_snapshot(
+                folder_snapshot.clone(),
+                &chrono::Utc::now().to_rfc3339(),
+            )?
+        } else {
+            let result = trash.trash_with_folder_snapshot(
+                note_ids,
+                &chrono::Utc::now().to_rfc3339(),
+                folder_snapshot,
+            )?;
+            if !result.failed.is_empty() {
+                let rollback = trash.undo(&result.operation_id)?;
+                if rollback.restored.len() != result.trashed.len() {
+                    return Err(CommandError::io(
+                        "folder deletion rollback is incomplete; retry recovery",
+                    ));
+                }
+                return Err(CommandError::io(
+                    "some folder notes could not be moved to the trash",
+                ));
+            }
+            result.operation_id
+        };
+        let _guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
+        let database = self.database()?;
+        let transaction = database
+            .connection()
+            .unchecked_transaction()
+            .map_err(database_error("could not start folder deletion"))?;
+        let current = find_folder(&transaction, id)?;
+        let mut statement = transaction.prepare("WITH RECURSIVE subtree(id, depth) AS (SELECT id, 0 FROM folders WHERE id=?1 UNION ALL SELECT folders.id, subtree.depth + 1 FROM folders JOIN subtree ON folders.parent_id = subtree.id) SELECT id FROM subtree ORDER BY depth DESC").map_err(database_error("could not prepare folder tree deletion"))?;
+        let folder_ids = statement
+            .query_map([folder_id_blob(id)], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(database_error("could not query folder tree deletion"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error("could not read folder tree deletion"))?;
+        drop(statement);
+        for folder_id in folder_ids {
+            transaction
+                .execute("DELETE FROM folders WHERE id=?1", [folder_id])
+                .map_err(database_error("could not delete folder tree"))?;
+        }
+        transaction.execute("UPDATE folders SET sort_order = sort_order - 1 WHERE parent_id IS ?1 AND sort_order > ?2", params![current.parent_id.map(folder_id_blob), current.sort_order]).map_err(database_error("could not compact folder siblings"))?;
+        write_manifest(&transaction, &self.paths)?;
+        transaction
+            .commit()
+            .map_err(database_error("could not commit folder deletion"))?;
+        if !has_notes {
+            trash.mark_folder_deleted(&operation_id, id)?;
+        }
+        Ok(operation_id)
     }
     #[doc(hidden)]
     pub fn delete_empty_locked(
         &self,
         id: FolderId,
         _guard: &crate::platform::IndexMutationLock,
-    ) -> Result<(), CommandError> {
+    ) -> Result<String, CommandError> {
         let database = self.database()?;
         let transaction = database
             .connection()
@@ -271,6 +436,28 @@ impl FolderRepository {
         if child_count > 0 || note_count > 0 {
             return Err(CommandError::conflict("folder is not empty"));
         }
+        let snapshot = transaction
+            .query_row(
+                "SELECT id, parent_id, name, sort_order, starred, created_at, updated_at FROM folders WHERE id = ?1",
+                params![id_blob],
+                |row| {
+                    let folder_id: Vec<u8> = row.get(0)?;
+                    let parent_id: Option<Vec<u8>> = row.get(1)?;
+                    Ok(TrashFolderSnapshot {
+                        id: folder_id_from_blob(&folder_id)?,
+                        parent_id: parent_id.as_deref().map(folder_id_from_blob).transpose()?,
+                        name: row.get(2)?,
+                        sort_order: row.get(3)?,
+                        starred: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                },
+            )
+            .map_err(database_error("could not snapshot empty folder"))?;
+        let trash = TrashService::new(self.paths.clone());
+        let operation_id =
+            trash.prepare_folder_snapshot(vec![snapshot], &chrono::Utc::now().to_rfc3339())?;
         transaction
             .execute("DELETE FROM folders WHERE id = ?1", params![id_blob])
             .map_err(database_error("could not delete empty folder"))?;
@@ -283,9 +470,10 @@ impl FolderRepository {
         write_manifest(&transaction, &self.paths)?;
         transaction
             .commit()
-            .map_err(database_error("could not commit empty folder deletion"))
+            .map_err(database_error("could not commit empty folder deletion"))?;
+        trash.mark_folder_deleted(&operation_id, id)?;
+        Ok(operation_id)
     }
-
     fn database(&self) -> Result<Database, CommandError> {
         let database = Database::open(self.paths.database())?;
         database.migrate()?;
@@ -334,14 +522,40 @@ pub fn move_folder(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub fn reorder_folders(
+    state: State<'_, StorageCommandState>,
+    parent_id: Option<FolderId>,
+    ordered_ids: Vec<FolderId>,
+) -> Result<(), CommandError> {
+    repository(&state)?.reorder(parent_id, ordered_ids)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub fn delete_empty_folder(
     state: State<'_, StorageCommandState>,
     folder_id: FolderId,
-) -> Result<(), CommandError> {
+) -> Result<String, CommandError> {
     let guard = crate::platform::IndexMutationLock::acquire(
         state.paths_for(StorageConsumer::Folders)?.root(),
     )?;
     repository(&state)?.delete_empty_locked(folder_id, &guard)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn set_folder_starred(
+    state: State<'_, StorageCommandState>,
+    folder_id: FolderId,
+    starred: bool,
+) -> Result<Folder, CommandError> {
+    repository(&state)?.set_starred(folder_id, starred)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn delete_folder(
+    state: State<'_, StorageCommandState>,
+    folder_id: FolderId,
+) -> Result<String, CommandError> {
+    repository(&state)?.delete(folder_id)
 }
 
 fn repository(state: &StorageCommandState) -> Result<FolderRepository, CommandError> {
@@ -357,14 +571,18 @@ struct ManifestFolder {
     parent_id: Option<FolderId>,
     name: String,
     sort_order: i64,
+    starred: bool,
     created_at: String,
     updated_at: String,
 }
 
-fn write_manifest(transaction: &Transaction<'_>, paths: &StoragePaths) -> Result<(), CommandError> {
+pub(crate) fn write_manifest(
+    transaction: &Transaction<'_>,
+    paths: &StoragePaths,
+) -> Result<(), CommandError> {
     let mut statement = transaction
         .prepare(
-            "SELECT id, parent_id, name, sort_order, created_at, updated_at FROM folders \
+            "SELECT id, parent_id, name, sort_order, starred, created_at, updated_at FROM folders \
              ORDER BY CASE WHEN parent_id IS NULL THEN 0 ELSE 1 END, parent_id, sort_order, name, id",
         )
         .map_err(database_error("could not prepare folders manifest"))?;
@@ -377,8 +595,9 @@ fn write_manifest(transaction: &Transaction<'_>, paths: &StoragePaths) -> Result
                 parent_id: parent_id.as_deref().map(folder_id_from_blob).transpose()?,
                 name: row.get(2)?,
                 sort_order: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                starred: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         })
         .map_err(database_error("could not query folders manifest"))?
@@ -416,7 +635,7 @@ fn validate_name(value: &str) -> Result<String, CommandError> {
 fn find_folder(transaction: &Transaction<'_>, id: FolderId) -> Result<Folder, CommandError> {
     transaction
         .query_row(
-            "SELECT id, parent_id, name, sort_order FROM folders WHERE id = ?1",
+            "SELECT id, parent_id, name, sort_order, starred FROM folders WHERE id = ?1",
             params![folder_id_blob(id)],
             folder_from_row,
         )
@@ -516,6 +735,7 @@ fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
         parent_id: parent_id.as_deref().map(folder_id_from_blob).transpose()?,
         name: row.get(2)?,
         sort_order: row.get(3)?,
+        starred: row.get(4)?,
     })
 }
 
@@ -528,6 +748,23 @@ fn folder_id_from_blob(bytes: &[u8]) -> rusqlite::Result<FolderId> {
         )
     })?;
     FolderId::parse_str(&uuid.hyphenated().to_string()).map_err(|source| {
+        rusqlite::Error::FromSqlConversionFailure(
+            bytes.len(),
+            rusqlite::types::Type::Blob,
+            Box::new(source),
+        )
+    })
+}
+
+fn note_id_from_blob(bytes: &[u8]) -> rusqlite::Result<NoteId> {
+    let uuid = Uuid::from_slice(bytes).map_err(|source| {
+        rusqlite::Error::FromSqlConversionFailure(
+            bytes.len(),
+            rusqlite::types::Type::Blob,
+            Box::new(source),
+        )
+    })?;
+    NoteId::parse_str(&uuid.hyphenated().to_string()).map_err(|source| {
         rusqlite::Error::FromSqlConversionFailure(
             bytes.len(),
             rusqlite::types::Type::Blob,

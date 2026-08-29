@@ -1,11 +1,13 @@
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
 import { Annotation, Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { AssetPort, LinkPort } from '../../domain/ports'
 import { handleImagePaste, type ImagePasteResult } from './imagePaste'
 import { insertInternalLink, internalLinkExtension, refreshInternalLinkContext, retargetInternalLink } from './internalLinks'
+import { markdownSnippets } from './markdownActions'
+import { TableEditorDialog } from './TableEditorDialog'
 
 const pasteTokenAnnotation = Annotation.define<symbol>()
 
@@ -28,6 +30,7 @@ export interface MarkdownSourceHandle {
   endEditBarrier(): void
   insertInternalLink(target: NoteSummary): boolean
   retargetInternalLink(target: NoteSummary): boolean
+  navigateToLine(line: number): boolean
 }
 
 interface PendingPaste {
@@ -73,6 +76,11 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const linkCacheRef = useRef(linkCache)
   const onNavigateLinkRef = useRef(onNavigateLink)
   const renderedLinkContextRef = useRef({ links, linkCache })
+  const contextViewRef = useRef<EditorView | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [tableDialog, setTableDialog] = useState<{ x: number; y: number } | null>(null)
+  const [tableRows, setTableRows] = useState(3)
+  const [tableColumns, setTableColumns] = useState(3)
 
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
@@ -168,6 +176,13 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return false
       return retargetInternalLink(view, target)
     },
+    navigateToLine: (line) => {
+      const view = viewRef.current
+      if (view === null) return false
+      const target = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)))
+      view.dispatch({ selection: { anchor: target.from }, effects: EditorView.scrollIntoView(target.from, { y: 'center' }) })
+      return true
+    },
   }))
 
   useLayoutEffect(() => {
@@ -222,6 +237,16 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           }
         }),
         EditorView.domEventHandlers({
+          contextmenu: (event, contextView) => {
+            event.preventDefault()
+            const bounds = hostRef.current?.getBoundingClientRect()
+            contextViewRef.current = contextView
+            setContextMenu({
+              x: event.clientX - (bounds?.left ?? 0),
+              y: event.clientY - (bounds?.top ?? 0),
+            })
+            return true
+          },
           paste: (event, pasteView) => {
             if (readOnlyRef.current || barrierDepthRef.current > 0) {
               event.preventDefault()
@@ -300,6 +325,31 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   }, [linkCache, links])
 
   useEffect(() => {
+    if (contextMenu === null && tableDialog === null) return
+    const close = () => { setContextMenu(null); setTableDialog(null) }
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [contextMenu, tableDialog])
+
+  const insertSnippet = (snippet: string) => {
+    const view = contextViewRef.current ?? viewRef.current
+    if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
+    const selection = view.state.selection.main
+    const before = selection.from > 0 && view.state.doc.sliceString(selection.from - 1, selection.from) !== '\n' ? '\n\n' : ''
+    const after = selection.to < view.state.doc.length && view.state.doc.sliceString(selection.to, selection.to + 1) !== '\n' ? '\n\n' : ''
+    const insert = `${before}${snippet}${after}`
+    view.dispatch({ changes: { from: selection.from, to: selection.to, insert }, selection: { anchor: selection.from + insert.length } })
+    setContextMenu(null)
+  }
+
+  useEffect(() => {
     const view = viewRef.current
     if (view === null || view.state.doc.toString() === markdown) return
     const scrollTop = view.scrollDOM.scrollTop
@@ -312,7 +362,22 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     }
   }, [markdown])
 
-  return <div className="markdown-source" ref={hostRef} />
+  return (
+    <div className="markdown-source" ref={hostRef}>
+      {contextMenu && (
+        <div className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); setContextMenu(null) }}>插入表格</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.link)}>插入超链接</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.image)}>插入图片</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.code)}>插入代码块</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.quote)}>插入引用</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.task)}>插入任务项</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.divider)}>插入分隔线</button>
+        </div>
+      )}
+      {tableDialog && <TableEditorDialog initialRows={tableRows} initialColumns={tableColumns} onCancel={() => setTableDialog(null)} onInsert={(markdown) => { insertSnippet(markdown); setTableDialog(null) }} />}
+    </div>
+  )
 })
 
 function selectionsOverlap(left: Pick<PendingPaste, 'from' | 'to'>, right: Pick<PendingPaste, 'from' | 'to'>) {

@@ -2,6 +2,8 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "create_note",
+            "startup_guide_target",
+            "complete_startup_guide",
             "load_note",
             "save_note",
             "list_notes",
@@ -10,6 +12,7 @@ fn main() {
             "list_trash",
             "restore_trash",
             "undo_trash",
+            "purge_trash",
             "purge_expired_trash",
             "resolve_link",
             "backlinks",
@@ -20,6 +23,7 @@ fn main() {
             "rename_folder",
             "move_folder",
             "delete_empty_folder",
+            "delete_folder",
             "search_notes",
             "update_note_tags",
             "create_temporary",
