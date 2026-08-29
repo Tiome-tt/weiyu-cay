@@ -1,6 +1,6 @@
 import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
-import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
+import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import type { SaveState } from '../editor/useAutosave'
@@ -27,6 +27,7 @@ interface LibraryLayoutProps {
   temporary?: TemporaryPort
   temporaryWindows?: Pick<TemporaryWindowPort, 'show'>
   trash?: TrashPort
+  startupGuide?: StartupGuidePort
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
   onSaveStateChange?(status: Exclude<SaveState['status'], 'idle'> | 'hidden'): void

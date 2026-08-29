@@ -86,6 +86,11 @@ export interface RecoveryPort {
   retry(): Promise<StartupRecoveryReport>
 }
 
+export interface StartupGuidePort {
+  loadTarget(): Promise<{ folderId: FolderId; noteId: NoteId } | null>
+  completeTarget(target: { folderId: FolderId; noteId: NoteId }): Promise<void>
+}
+
 export interface AvailableUpdate {
   version: string
   notes: string | null
@@ -224,6 +229,14 @@ export interface TrashEntry {
   operationId: string
 }
 
+export interface TrashFolderEntry {
+  folderId: FolderId
+  title: string
+  deletedAt: string
+  operationId: string
+  folderCount: number
+}
+
 export interface TrashFailure {
   noteId: NoteId
   message: string
@@ -248,6 +261,7 @@ export interface PurgeTrashResult {
 export interface TrashPort {
   trash(ids: NoteId[]): Promise<TrashBatchResult>
   list(): Promise<TrashEntry[]>
+  listFolders?(): Promise<TrashFolderEntry[]>
   restore(ids: NoteId[]): Promise<RestoreTrashResult>
   undo(operationId: string): Promise<RestoreTrashResult>
   purge?(ids: NoteId[]): Promise<PurgeTrashResult>
