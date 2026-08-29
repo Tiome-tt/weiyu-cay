@@ -1,11 +1,21 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
+import type { FolderId, NoteId } from '../../domain/model'
 import { fakeFolderPort, fakeNotePort, note } from '../../test/fakes'
 import { useLibrary } from './useLibrary'
 
 const folderA = '019c0000-0000-7000-8000-000000000121' as FolderId
 const folderB = '019c0000-0000-7000-8000-000000000122' as FolderId
+const guideFolderId = '019c0000-0000-7000-8000-000000000123' as FolderId
+const guideNoteId = '019c0000-0000-7000-8000-000000000124' as NoteId
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
+}
 
 afterEach(cleanup)
 
@@ -35,38 +45,58 @@ describe('useLibrary createNote', () => {
 
     expect(createNote).toHaveBeenCalledWith({ folderId: folderA, title: '当前目录' })
   })
+})
 
-  it('switches to an explicit root target and refreshes that root note list', async () => {
-    const createNote = vi.fn().mockResolvedValue({ ...note(''), folderId: null })
-    const listNotes = vi.fn().mockResolvedValue([])
-    const notes = fakeNotePort({ createNote, listNotes })
+describe('useLibrary startup guide', () => {
+  it('opens the guide returned for a fresh installation', async () => {
+    const guide = {
+      ...note('# 欢迎来到微屿'),
+      id: guideNoteId,
+      folderId: guideFolderId,
+      title: '欢迎来到微屿',
+    }
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockImplementation(async (folderId) =>
+        folderId === guideFolderId ? [{ ...guide, excerpt: guide.markdown }] : [],
+      ),
+      loadNote: vi.fn().mockResolvedValue(guide),
+    })
+    const folders = fakeFolderPort({
+      listFolders: vi.fn().mockResolvedValue([
+        { id: guideFolderId, parentId: null, name: '开始使用', sortOrder: 0 },
+      ]),
+    })
+    const completeTarget = vi.fn().mockResolvedValue(undefined)
+    const startup = {
+      loadTarget: vi.fn().mockResolvedValue({ folderId: guideFolderId, noteId: guideNoteId }),
+      completeTarget,
+    }
+    const hook = renderHook(() => useLibrary(notes, folders, startup))
+
+    await waitFor(() => expect(hook.result.current.document?.id).toBe(guideNoteId))
+    expect(hook.result.current.activeFolderId).toBe(guideFolderId)
+    expect(hook.result.current.activeNoteId).toBe(guideNoteId)
+    expect(completeTarget).toHaveBeenCalledWith({ folderId: guideFolderId, noteId: guideNoteId })
+  })
+
+  it('does not override navigation performed before the startup target arrives', async () => {
+    const target = deferred<{ folderId: FolderId; noteId: NoteId } | null>()
+    const startup = {
+      loadTarget: vi.fn().mockReturnValue(target.promise),
+      completeTarget: vi.fn().mockResolvedValue(undefined),
+    }
+    const notes = fakeNotePort()
     const folders = fakeFolderPort()
-    const hook = renderHook(() => useLibrary(notes, folders))
+    const hook = renderHook(() => useLibrary(notes, folders, startup))
     act(() => hook.result.current.selectFolder(folderA))
     await waitFor(() => expect(hook.result.current.activeFolderId).toBe(folderA))
 
-    await act(async () => hook.result.current.createNote('根目录笔记', null))
+    await act(async () => {
+      target.resolve({ folderId: guideFolderId, noteId: guideNoteId })
+      await Promise.resolve()
+    })
 
-    expect(hook.result.current.activeFolderId).toBeNull()
-    expect(listNotes).toHaveBeenLastCalledWith(null)
-  })
-
-  it('removes a deleted note from every cached folder list', async () => {
-    const rootNote = { ...note('root'), id: '019c0000-0000-7000-8000-000000000131' as NoteId, folderId: null, title: '根目录笔记' }
-    const folderNote = { ...note('folder'), id: '019c0000-0000-7000-8000-000000000132' as NoteId, folderId: folderA, title: '文件夹笔记' }
-    const toSummary = ({ markdown, ...summary }: NoteDocument): NoteSummary => ({ ...summary, excerpt: markdown })
-    const listNotes = vi.fn(async (folderId: FolderId | null) => folderId === null ? [toSummary(rootNote)] : [toSummary(folderNote)])
-    const notes = fakeNotePort({ listNotes })
-    const folders = fakeFolderPort()
-    const hook = renderHook(() => useLibrary(notes, folders))
-
-    await waitFor(() => expect(hook.result.current.notesByFolder['__unfiled__']).toHaveLength(1))
-    act(() => hook.result.current.selectFolder(folderA))
-    await waitFor(() => expect(hook.result.current.notesByFolder[folderA]).toHaveLength(1))
-
-    act(() => hook.result.current.clearDeletedNote(folderNote.id))
-
-    expect(hook.result.current.notesByFolder[folderA]).toEqual([])
-    expect(hook.result.current.notes).toEqual([])
+    expect(hook.result.current.activeFolderId).toBe(folderA)
+    expect(hook.result.current.activeNoteId).toBeNull()
   })
 })

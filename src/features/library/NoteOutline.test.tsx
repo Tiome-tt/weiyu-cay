@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { parseNoteHeadings } from './NoteOutline'
 
+  it('ignores headings inside fenced code blocks', () => {
+    expect(parseNoteHeadings('```md\n# not a heading\n```\n## Real heading')).toEqual([
+      { line: 4, index: 0, level: 2, text: 'Real heading' },
+    ])
+  })
 describe('parseNoteHeadings', () => {
   it('keeps heading levels and source line numbers for navigation', () => {
     expect(parseNoteHeadings('# One\ntext\n## Two\n### Three')).toEqual([

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Folder, FolderId, NoteId } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
 import { FolderActionMenu } from './FolderActionMenu'
@@ -19,7 +19,7 @@ interface FolderTreeProps {
   onMove: (id: FolderId, parentId: FolderId | null) => Promise<void>
   onReorder?: (parentId: FolderId | null, orderedIds: FolderId[]) => Promise<void>
   onDelete: (id: FolderId) => Promise<void>
-  onCreateNote?: (folderId: FolderId | null) => void
+  onCreateNote?: (folderId: FolderId) => void
   onToggleStar?: (id: FolderId, starred: boolean) => Promise<void>
   folderContents?: ReactNode | ((folderId: FolderId | null) => ReactNode | undefined)
   onMoveNote?: (id: NoteId, folderId: FolderId) => Promise<void>
@@ -37,10 +37,7 @@ export function FolderTree(props: FolderTreeProps) {
   const [deleteTarget, setDeleteTarget] = useState<FolderId | null>(null)
   const [contextTarget, setContextTarget] = useState<FolderId | null>(null)
   const [contextPosition, setContextPosition] = useState<{ x: number; y: number } | null>(null)
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<FolderId>>(() => defaultCollapsedFolders(props.folders, props.folderContents, props.activeId))
-  const [mountedFolders, setMountedFolders] = useState<Set<FolderId>>(() => mountedFolderIds(props.folders, props.folderContents, props.activeId))
-  const userToggledFoldersRef = useRef(new Set<FolderId>())
-  const previousActiveIdRef = useRef<FolderId | null | undefined>(undefined)
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<FolderId>>(new Set())
   const itemRefs = useRef(new Map<TreeItemKey, HTMLButtonElement>())
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const pointerStartRef = useRef<{ id: FolderId; x: number; y: number } | null>(null)
@@ -48,53 +45,6 @@ export function FolderTree(props: FolderTreeProps) {
   const suppressClickRef = useRef(false)
   const pointerTargetRef = useRef<{ folderId?: FolderId; parentId?: string } | null>(null)
   const [pointerDragging, setPointerDragging] = useState<FolderId | null>(null)
-
-  // Folder and note data are loaded asynchronously. Seed newly expandable folders as
-  // collapsed while leaving a user's explicit expand/collapse choice untouched.
-  useEffect(() => {
-    const expandable = defaultCollapsedFolders(props.folders, props.folderContents, props.activeId)
-    const shouldCollapse = [...expandable].filter((id) => !userToggledFoldersRef.current.has(id) && !collapsedFolders.has(id))
-    if (shouldCollapse.length === 0) return
-    setCollapsedFolders((current) => {
-      const next = new Set(current)
-      for (const id of shouldCollapse) next.add(id)
-      return next
-    })
-  }, [collapsedFolders, props.activeId, props.folderContents, props.folders])
-
-  useEffect(() => {
-    const expandable = defaultCollapsedFolders(props.folders, props.folderContents, props.activeId)
-    const initiallyVisible = props.folders.filter((folder) => !expandable.has(folder.id)).map((folder) => folder.id)
-    if (initiallyVisible.length === 0) return
-    setMountedFolders((current) => {
-      const next = new Set(current)
-      initiallyVisible.forEach((id) => next.add(id))
-      return next.size === current.size ? current : next
-    })
-  }, [collapsedFolders, props.activeId, props.folderContents, props.folders])
-
-  useEffect(() => {
-    if (props.activeId === null) {
-      previousActiveIdRef.current = null
-      return
-    }
-    if (previousActiveIdRef.current === props.activeId) return
-    const folder = props.folders.find((candidate) => candidate.id === props.activeId)
-    if (folder === undefined) return
-    previousActiveIdRef.current = props.activeId
-    // A click already records the user's explicit expansion choice before the
-    // parent updates activeId. Do not undo a collapse while that selection
-    // change is being reflected in refreshed folder data.
-    if (userToggledFoldersRef.current.has(folder.id)) return
-    userToggledFoldersRef.current.add(folder.id)
-    setMountedFolders((current) => new Set(current).add(folder.id))
-    setCollapsedFolders((current) => {
-      if (!current.has(folder.id)) return current
-      const next = new Set(current)
-      next.delete(folder.id)
-      return next
-    })
-  }, [props.activeId, props.folders])
 
   const finishCreate = async (event: FormEvent) => {
     event.preventDefault()
@@ -151,7 +101,7 @@ export function FolderTree(props: FolderTreeProps) {
   }
 
   useEffect(() => {
-    if (!creating && contextPosition === null) return
+    if (!creating && contextTarget === null) return
     const cancelDraft = (event: PointerEvent) => {
       const target = event.target as Node
       if (creating && !document.querySelector('.folder-form')?.contains(target)) {
@@ -159,14 +109,14 @@ export function FolderTree(props: FolderTreeProps) {
         setName('')
         setCreateParent(null)
       }
-      if (contextPosition !== null && !document.querySelector('.folder-context-menu')?.contains(target)) {
+      if (contextTarget !== null && !document.querySelector('.folder-context-menu')?.contains(target)) {
         setContextTarget(null)
         setContextPosition(null)
       }
     }
     document.addEventListener('pointerdown', cancelDraft)
     return () => document.removeEventListener('pointerdown', cancelDraft)
-  }, [creating, contextPosition])
+  }, [creating, contextTarget])
 
   useEffect(() => {
     if (deleteTarget === null) return
@@ -178,7 +128,7 @@ export function FolderTree(props: FolderTreeProps) {
   }, [deleteTarget])
 
   useLayoutEffect(() => {
-    if (contextPosition === null || contextMenuRef.current === null) return
+    if (contextTarget === null || contextPosition === null || contextMenuRef.current === null) return
     const menu = contextMenuRef.current.getBoundingClientRect()
     const margin = 8
     const x = Math.max(margin, Math.min(contextPosition.x, window.innerWidth - menu.width - margin))
@@ -325,14 +275,14 @@ export function FolderTree(props: FolderTreeProps) {
       ...(props.showUnfiled !== false ? ['root' as const] : []),
       ...(props.onTemporaryInbox ? ['temporary-inbox' as const] : []),
       ...(props.onTrash ? ['trash' as const] : []),
-      ...flattenVisibleFolders(props.folders, collapsedFolders),
+      ...flattenFolders(props.folders),
     ],
-    [props.folders, props.onTemporaryInbox, props.onTrash, collapsedFolders],
+    [props.folders, props.onTemporaryInbox, props.onTrash, props.showUnfiled],
   )
 
   useEffect(() => {
     if (!visibleKeys.includes(focusedKey)) {
-      setFocusedKey(props.activeId !== null && visibleKeys.includes(props.activeId) ? props.activeId : 'root')
+      setFocusedKey(props.activeId !== null && visibleKeys.includes(props.activeId) ? props.activeId : (visibleKeys[0] ?? 'root'))
     }
   }, [focusedKey, props.activeId, visibleKeys])
 
@@ -370,15 +320,6 @@ export function FolderTree(props: FolderTreeProps) {
         target = key === 'root' || key === 'temporary-inbox' || key === 'trash'
           ? props.folders.find((folder) => folder.parentId === null)?.id
           : props.folders.find((folder) => folder.parentId === key)?.id
-        if (key !== 'root' && key !== 'temporary-inbox' && key !== 'trash' && target !== undefined && collapsedFolders.has(key)) {
-          userToggledFoldersRef.current.add(key)
-          setMountedFolders((current) => new Set(current).add(key))
-          setCollapsedFolders((current) => {
-            const next = new Set(current)
-            next.delete(key)
-            return next
-          })
-        }
         break
       case 'ArrowLeft':
         if (key === 'temporary-inbox' || key === 'trash') {
@@ -400,13 +341,6 @@ export function FolderTree(props: FolderTreeProps) {
     else itemRefs.current.delete(key)
   }
 
-  const openContextMenu = (event: ReactMouseEvent<HTMLElement>, target: FolderId | null) => {
-    event.preventDefault()
-    event.stopPropagation()
-    setContextTarget(target)
-    setContextPosition({ x: event.clientX, y: event.clientY })
-  }
-
   const renderBranch = (parentId: FolderId | null): React.ReactNode =>
     props.folders
       .filter((folder) => folder.parentId === parentId)
@@ -415,11 +349,7 @@ export function FolderTree(props: FolderTreeProps) {
         const hasChildren = props.folders.some((candidate) => candidate.parentId === folder.id)
         const folderContents = typeof props.folderContents === 'function' ? props.folderContents(folder.id) : props.activeId === folder.id ? props.folderContents : undefined
         const hasFolderContents = folderContents !== undefined
-        // A contents resolver means notes are lazy-loaded per folder. Treat every
-        // folder as expandable up front so the disclosure does not appear only
-        // after the first selection (which would require a second click).
-        const canContainNotes = typeof props.folderContents === 'function'
-        const expandable = hasChildren || hasFolderContents || canContainNotes
+        const expandable = hasChildren || hasFolderContents
         const expanded = !expandable || !collapsedFolders.has(folder.id)
         return (
           <li role="none" key={folder.id}>
@@ -454,8 +384,6 @@ export function FolderTree(props: FolderTreeProps) {
                 onKeyDown={(event) => handleTreeKey(event, folder.id)}
                 onClick={() => {
                   if (suppressClickRef.current) return
-                  userToggledFoldersRef.current.add(folder.id)
-                  setMountedFolders((current) => new Set(current).add(folder.id))
                   props.onSelect(folder.id)
                   if (expandable) setCollapsedFolders((current) => {
                     const next = new Set(current)
@@ -464,7 +392,12 @@ export function FolderTree(props: FolderTreeProps) {
                     return next
                   })
                 }}
-                onContextMenu={(event) => openContextMenu(event, folder.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setContextTarget(folder.id)
+                  setContextPosition({ x: event.clientX, y: event.clientY })
+                }}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = 'move'
                   event.dataTransfer.setData('text/plain', folder.id)
@@ -474,18 +407,10 @@ export function FolderTree(props: FolderTreeProps) {
               >
                 <Icon name="folder" size={16} />
                 <span>{folder.name}</span>
-                {expandable && (
-                  <span
-                    aria-hidden="true"
-                    className="folder-tree__disclosure"
-                    data-expanded={String(expanded)}
-                    data-testid={`folder-disclosure-${folder.name}`}
-                  />
-                )}
               </button>
             )}
-            {hasChildren && (expanded || mountedFolders.has(folder.id)) && <ul role="group" data-folder-parent-id={folder.id} data-collapsed={String(!expanded)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, folder.id)}>{renderBranch(folder.id)}</ul>}
-            {hasFolderContents && (expanded || mountedFolders.has(folder.id)) && <div className="folder-tree__folder-notes" data-collapsed={String(!expanded)}>{folderContents}</div>}
+            {hasChildren && expanded && <ul role="group" data-folder-parent-id={folder.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, folder.id)}>{renderBranch(folder.id)}</ul>}
+            {expanded && hasFolderContents && <div className="folder-tree__folder-notes">{folderContents}</div>}
           </li>
         )
       })
@@ -493,7 +418,7 @@ export function FolderTree(props: FolderTreeProps) {
   const excludedMoveTargets = moving === null ? new Set<FolderId>() : descendantIds(moving, props.folders)
 
   return (
-    <nav aria-label="文件夹" className="folder-tree" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }}>
+    <nav aria-label="文件夹" className="folder-tree">
       <header className="library-pane__header">
         <div>
           <span className="library-pane__eyebrow">本地笔记</span>
@@ -531,13 +456,13 @@ export function FolderTree(props: FolderTreeProps) {
           <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setCreating(false); setName(''); setCreateParent(null) } }} />
         </form>
       )}
-      {contextPosition !== null && (
+      {contextTarget !== null && (
         <div ref={contextMenuRef} className="folder-context-menu" role="menu" aria-label="文件夹快捷操作" style={{ left: contextPosition?.x ?? 8, top: contextPosition?.y ?? 8 }} onContextMenu={(event) => event.preventDefault()}>
           <button type="button" role="menuitem" onClick={() => { setCreateParent(contextTarget); setCreating(true); setName(''); setContextTarget(null); setContextPosition(null) }}>新建文件夹</button>
-          {props.onCreateNote && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>新建笔记</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => void runToggleStar(contextTarget)}>{props.folders.find((folder) => folder.id === contextTarget)?.starred === true ? '取消星标' : '添加星标'}</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>删除文件夹</button>}
+          {props.onCreateNote && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>新建笔记</button>}
+          <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>
+          <button type="button" role="menuitem" onClick={() => void runToggleStar(contextTarget)}>{props.folders.find((folder) => folder.id === contextTarget)?.starred === true ? '取消星标' : '添加星标'}</button>
+          <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>删除文件夹</button>
         </div>
       )}
       {moving && (
@@ -563,7 +488,7 @@ export function FolderTree(props: FolderTreeProps) {
       )}
       {props.state === 'loading' && <p className="library-status">正在加载文件夹…</p>}
       {props.state === 'error' && <p className="library-status library-status--error">无法加载文件夹。</p>}
-      <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list" data-folder-parent-id="root" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, null)}>
+      <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list" data-folder-parent-id="root" onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, null)}>
         {props.showUnfiled !== false && <li role="none">
           <button
             ref={(node) => registerItem('root', node)}
@@ -619,8 +544,8 @@ export function FolderTree(props: FolderTreeProps) {
           </li>
         )}
         {props.folders.some((folder) => folder.parentId === null) && <li role="separator" className="folder-tree__separator" aria-label="系统入口与文件夹分隔线" />}
-        {renderBranch(null)}
         {props.activeId === null && props.folderContents !== undefined && <li role="none" className="folder-tree__root-notes">{typeof props.folderContents === 'function' ? props.folderContents(null) : props.folderContents}</li>}
+        {renderBranch(null)}
       </ul>
       {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
       {deleteTarget !== null && (
@@ -645,37 +570,11 @@ export function FolderTree(props: FolderTreeProps) {
 
 type TreeItemKey = 'root' | 'temporary-inbox' | 'trash' | FolderId
 
-function defaultCollapsedFolders(
-  folders: Folder[],
-  folderContents: FolderTreeProps['folderContents'],
-  activeId: FolderId | null,
-): Set<FolderId> {
-  return new Set(folders.filter((folder) => {
-    const hasChildren = folders.some((candidate) => candidate.parentId === folder.id)
-    const lazyContents = typeof folderContents === 'function'
-    const contents = typeof folderContents === 'function'
-      ? folderContents(folder.id)
-      : activeId === folder.id
-        ? folderContents
-        : undefined
-    return hasChildren || lazyContents || contents !== undefined
-  }).map((folder) => folder.id))
-}
-
-function mountedFolderIds(
-  folders: Folder[],
-  folderContents: FolderTreeProps['folderContents'],
-  activeId: FolderId | null,
-): Set<FolderId> {
-  const collapsed = defaultCollapsedFolders(folders, folderContents, activeId)
-  return new Set(folders.filter((folder) => !collapsed.has(folder.id)).map((folder) => folder.id))
-}
-
-function flattenVisibleFolders(folders: Folder[], collapsed: Set<FolderId>, parentId: FolderId | null = null): FolderId[] {
+function flattenFolders(folders: Folder[], parentId: FolderId | null = null): FolderId[] {
   return folders
     .filter((folder) => folder.parentId === parentId)
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
-    .flatMap((folder) => [folder.id, ...(collapsed.has(folder.id) ? [] : flattenVisibleFolders(folders, collapsed, folder.id))])
+    .flatMap((folder) => [folder.id, ...flattenFolders(folders, folder.id)])
 }
 
 function descendantIds(id: FolderId, folders: Folder[]): Set<FolderId> {

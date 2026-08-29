@@ -149,6 +149,13 @@ pub struct Folder {
     pub starred: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupGuideTarget {
+    pub folder_id: FolderId,
+    pub note_id: NoteId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateFolderInput {
@@ -239,6 +246,16 @@ pub struct TrashEntry {
     pub deleted_at: String,
     pub assets: Vec<String>,
     pub operation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashFolderEntry {
+    pub folder_id: FolderId,
+    pub title: String,
+    pub deleted_at: String,
+    pub operation_id: String,
+    pub folder_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

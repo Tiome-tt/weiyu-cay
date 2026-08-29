@@ -39,6 +39,7 @@ describe('collapsed library rails', () => {
     render(
       <LibraryRail
         activeEntry="temporary"
+        onUnfiled={onUnfiled}
         onTemporary={onTemporary}
         onTrash={onTrash}
         onExpand={onExpand}
@@ -49,11 +50,12 @@ describe('collapsed library rails', () => {
     expect(screen.getByRole('button', { name: '临时收集箱' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: '临时收集箱' })).toContainElement(screen.getByTestId('icon-inbox'))
 
+    await user.click(screen.getByRole('button', { name: '未归档笔记' }))
     await user.click(screen.getByRole('button', { name: '临时收集箱' }))
     await user.click(screen.getByRole('button', { name: '回收站' }))
     await user.click(screen.getByRole('button', { name: '展开资料库' }))
 
-    expect(onUnfiled).toHaveBeenCalledTimes(0)
+    expect(onUnfiled).toHaveBeenCalledTimes(1)
     expect(onTemporary).toHaveBeenCalledTimes(1)
     expect(onTrash).toHaveBeenCalledTimes(1)
     expect(onExpand).toHaveBeenCalledTimes(1)

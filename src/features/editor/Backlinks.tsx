@@ -7,8 +7,6 @@ interface BacklinksProps {
   noteId: NoteId
   links: Pick<LinkPort, 'backlinks'>
   onNavigate(noteId: NoteId): void | Promise<void>
-  /** Increment after a local save so the panel reflects newly indexed references. */
-  refreshToken?: string | number
 }
 
 type BacklinkState =
@@ -16,7 +14,7 @@ type BacklinkState =
   | { status: 'ready'; items: NoteSummary[] }
   | { status: 'error' }
 
-export function Backlinks({ noteId, links, onNavigate, refreshToken = 0 }: BacklinksProps) {
+export function Backlinks({ noteId, links, onNavigate }: BacklinksProps) {
   const [expanded, setExpanded] = useState(true)
   const [state, setState] = useState<BacklinkState>({ status: 'loading' })
 
@@ -34,22 +32,22 @@ export function Backlinks({ noteId, links, onNavigate, refreshToken = 0 }: Backl
     return () => {
       current = false
     }
-  }, [links, noteId, refreshToken])
+  }, [links, noteId])
 
   const count = state.status === 'ready' ? state.items.length : null
   return (
-    <section className="backlinks" aria-label="引用此笔记">
+    <section className="backlinks" aria-label="Backlinks">
       <button
         type="button"
         className="backlinks__toggle"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
-        引用此笔记{count === null ? '' : ` (${count})`}
+        Backlinks{count === null ? '' : ` (${count})`}
       </button>
-      {expanded && state.status === 'loading' && <p role="status">正在加载引用…</p>}
-      {expanded && state.status === 'error' && <p role="alert">无法加载引用。</p>}
-      {expanded && state.status === 'ready' && state.items.length === 0 && <p>暂无引用</p>}
+      {expanded && state.status === 'loading' && <p role="status">Loading backlinks…</p>}
+      {expanded && state.status === 'error' && <p role="alert">Could not load backlinks.</p>}
+      {expanded && state.status === 'ready' && state.items.length === 0 && <p>No backlinks</p>}
       {expanded && state.status === 'ready' && state.items.length > 0 && (
         <ul className="backlinks__list">
           {state.items.map((item) => (

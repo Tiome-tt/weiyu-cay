@@ -15,29 +15,6 @@ describe('TableEditorDialog', () => {
     expect(onInsert).toHaveBeenCalledWith('| 列 1 | 列 2 |\n| --- | --- |\n| 内容 |  |')
   })
 
-  it('loads and saves an existing aligned GFM table', async () => {
-    const user = userEvent.setup()
-    const onInsert = vi.fn()
-    render(
-      <TableEditorDialog
-        initialRows={2}
-        initialColumns={2}
-        initialCells={[['Name', 'Note'], ['A', 'B']]}
-        initialAlignments={['left', 'right']}
-        onCancel={vi.fn()}
-        onInsert={onInsert}
-      />,
-    )
-
-    expect((screen.getByRole('textbox', { name: '1 行 1 列' }) as HTMLInputElement).value).toBe('Name')
-    const cell = screen.getByRole('textbox', { name: '2 行 2 列' })
-    await user.clear(cell)
-    await user.type(cell, 'C')
-    await user.click(screen.getByRole('button', { name: '保存表格' }))
-
-    expect(onInsert).toHaveBeenCalledWith('| Name | Note |\n| :--- | ---: |\n| A | C |')
-  })
-
   it('changes the table size with row and column inputs', () => {
     render(<TableEditorDialog initialRows={3} initialColumns={2} onCancel={vi.fn()} onInsert={vi.fn()} />)
     fireEvent.change(screen.getByRole('spinbutton', { name: '表格行数' }), { target: { value: '4' } })

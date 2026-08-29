@@ -1,24 +1,12 @@
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
-import { Annotation, Compartment, EditorSelection, EditorState } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
-import { GFM } from '@lezer/markdown'
+import { Annotation, Compartment, EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
+import type { AssetPort, LinkPort } from '../../domain/ports'
 import { handleImagePaste, type ImagePasteResult } from './imagePaste'
 import { insertInternalLink, internalLinkExtension, refreshInternalLinkContext, retargetInternalLink } from './internalLinks'
-import {
-  createDocumentMarkdownExtension,
-  refreshDocumentMarkdownContext,
-  type MarkdownPresentation,
-} from './documentMarkdown'
-import {
-  formatMarkdownSelection,
-  markdownSnippets,
-  tableMarkdownFromModel,
-  type MarkdownSelectionStyle,
-  type MarkdownTable,
-} from './markdownActions'
+import { markdownSnippets } from './markdownActions'
 import { TableEditorDialog } from './TableEditorDialog'
 
 const pasteTokenAnnotation = Annotation.define<symbol>()
@@ -28,7 +16,6 @@ interface MarkdownSourceProps {
   onChange(markdown: string): void
   noteId?: NoteId
   assets?: AssetPort
-  assetReader?: ImageReadPort
   onImageError?(message: string | null): void
   onScroll?(scrollTop: number): void
   onScrollElement?(element: HTMLElement | null): void
@@ -36,9 +23,6 @@ interface MarkdownSourceProps {
   links?: Pick<LinkPort, 'resolve'>
   linkCache?: ReadonlyMap<NoteId, NoteSummary>
   onNavigateLink?(noteId: NoteId): void
-  presentation?: MarkdownPresentation
-  showBlockHandle?: boolean
-  external?: Pick<SystemPort, 'openExternal'>
 }
 
 export interface MarkdownSourceHandle {
@@ -60,19 +44,11 @@ interface PendingPaste {
   outcome: ImagePasteResult | null
 }
 
-interface TableDialogState {
-  x: number
-  y: number
-  sourceRange?: { from: number; to: number }
-  table?: MarkdownTable
-}
-
 export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourceProps>(function MarkdownSource({
   markdown,
   onChange,
   noteId,
   assets,
-  assetReader,
   onImageError,
   onScroll,
   onScrollElement,
@@ -80,9 +56,6 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   links,
   linkCache,
   onNavigateLink,
-  presentation = 'document',
-  showBlockHandle = true,
-  external,
 }: MarkdownSourceProps, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -92,7 +65,6 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const reconcilingRef = useRef(false)
   const noteIdRef = useRef(noteId)
   const assetsRef = useRef(assets)
-  const assetReaderRef = useRef(assetReader)
   const onImageErrorRef = useRef(onImageError)
   const editorGenerationRef = useRef(0)
   const readOnlyRef = useRef(readOnly)
@@ -103,62 +75,27 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const linksRef = useRef(links)
   const linkCacheRef = useRef(linkCache)
   const onNavigateLinkRef = useRef(onNavigateLink)
-  const presentationRef = useRef(presentation)
-  const externalRef = useRef(external)
   const renderedLinkContextRef = useRef({ links, linkCache })
   const contextViewRef = useRef<EditorView | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
-  const [tableDialog, setTableDialog] = useState<TableDialogState | null>(null)
+  const [tableDialog, setTableDialog] = useState<{ x: number; y: number } | null>(null)
   const [tableRows, setTableRows] = useState(3)
   const [tableColumns, setTableColumns] = useState(3)
-  const [surfaceControls, setSurfaceControls] = useState({ blockTop: 12, toolbarTop: 12, toolbarLeft: 56, hasSelection: false })
 
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
     editorGenerationRef.current += 1
   }
   assetsRef.current = assets
-  assetReaderRef.current = assetReader
   onImageErrorRef.current = onImageError
   readOnlyRef.current = readOnly
   linksRef.current = links
   linkCacheRef.current = linkCache
   onNavigateLinkRef.current = onNavigateLink
-  presentationRef.current = presentation
-  externalRef.current = external
 
   onChangeRef.current = onChange
   onScrollRef.current = onScroll
   onScrollElementRef.current = onScrollElement
-
-  const syncSurfaceControls = (view: EditorView) => {
-    const selection = view.state.selection.main
-    const hostBounds = hostRef.current?.getBoundingClientRect()
-    let blockTop = 12
-    let toolbarTop = 12
-    let toolbarLeft = 56
-    try {
-      const caret = view.coordsAtPos(selection.head)
-      const start = view.coordsAtPos(selection.from)
-      const end = view.coordsAtPos(selection.to)
-      if (caret !== null && hostBounds !== undefined) blockTop = Math.max(12, caret.top - hostBounds.top)
-      if (start !== null && end !== null && hostBounds !== undefined) {
-        toolbarTop = Math.max(40, Math.min(start.top, end.top) - hostBounds.top - 8)
-        toolbarLeft = Math.max(56, (start.left + end.right) / 2 - hostBounds.left)
-      }
-    } catch {
-      // JSDOM and hidden panes do not expose layout; stable fallbacks keep controls usable.
-    }
-    const next = { blockTop, toolbarTop, toolbarLeft, hasSelection: selection.from < selection.to }
-    setSurfaceControls((current) => (
-      current.blockTop === next.blockTop &&
-      current.toolbarTop === next.toolbarTop &&
-      current.toolbarLeft === next.toolbarLeft &&
-      current.hasSelection === next.hasSelection
-        ? current
-        : next
-    ))
-  }
 
   const configureEditable = (view: EditorView | null) => {
     if (view === null) return
@@ -254,22 +191,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     const state = EditorState.create({
       doc: markdown,
       extensions: [
-        markdownLanguage({ extensions: GFM }),
-        createDocumentMarkdownExtension({
-          getPresentation: () => presentationRef.current,
-          isEditable: () => !readOnlyRef.current,
-          getImageContext: () => ({ noteId: noteIdRef.current, assetReader: assetReaderRef.current }),
-          onEditTable: ({ from, to, table }) => {
-            const view = viewRef.current
-            if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
-            const tableMarkdown = tableMarkdownFromModel(table)
-            view.dispatch({
-              changes: { from, to, insert: tableMarkdown },
-              selection: { anchor: from + tableMarkdown.length },
-            })
-            view.focus()
-          },
-        }),
+        markdownLanguage(),
         ...(links
           ? [internalLinkExtension({
               links: { resolve: (id) => linksRef.current?.resolve(id) ?? Promise.resolve(null) },
@@ -287,11 +209,6 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           EditorState.readOnly.of(readOnly),
           EditorView.editable.of(!readOnly),
           EditorView.contentAttributes.of({ 'aria-readonly': String(readOnly) }),
-        ]),
-        keymap.of([
-          { key: 'Mod-b', run: (view) => applyMarkdownStyle(view, 'bold', readOnlyRef, barrierDepthRef) },
-          { key: 'Mod-i', run: (view) => applyMarkdownStyle(view, 'italic', readOnlyRef, barrierDepthRef) },
-          { key: 'Mod-k', run: (view) => applyMarkdownStyle(view, 'link', readOnlyRef, barrierDepthRef) },
         ]),
         EditorState.transactionFilter.of((transaction) => {
           if (!transaction.docChanged) return transaction
@@ -318,29 +235,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           if (update.docChanged && !reconcilingRef.current) {
             onChangeRef.current(update.state.doc.toString())
           }
-          const movedToAnotherLine = update.docChanged && (
-            update.startState.doc.lineAt(update.startState.selection.main.head).number !==
-            update.state.doc.lineAt(update.state.selection.main.head).number
-          )
-          const selectionNeedsSync = update.selectionSet && (
-            !update.docChanged ||
-            !update.startState.selection.main.empty ||
-            !update.state.selection.main.empty
-          )
-          if (selectionNeedsSync || (!update.docChanged && (update.viewportChanged || update.geometryChanged)) || movedToAnotherLine) {
-            syncSurfaceControls(update.view)
-          }
         }),
         EditorView.domEventHandlers({
-          click: (event) => {
-            if (!event.ctrlKey && !event.metaKey) return false
-            const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.cm-live-link') : null
-            const href = target?.dataset.liveHref
-            if (href === undefined || !/^(?:https?:|mailto:)/iu.test(href)) return false
-            event.preventDefault()
-            void externalRef.current?.openExternal(href)
-            return true
-          },
           contextmenu: (event, contextView) => {
             event.preventDefault()
             const bounds = hostRef.current?.getBoundingClientRect()
@@ -397,17 +293,13 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     })
     const view = new EditorView({ state, parent })
     viewRef.current = view
-    syncSurfaceControls(view)
 
     Object.defineProperty(view.contentDOM, 'value', {
       configurable: true,
       get: () => view.state.doc.toString(),
     })
 
-    const handleScroll = () => {
-      onScrollRef.current?.(view.scrollDOM.scrollTop)
-      syncSurfaceControls(view)
-    }
+    const handleScroll = () => onScrollRef.current?.(view.scrollDOM.scrollTop)
     view.scrollDOM.addEventListener('scroll', handleScroll)
     onScrollElementRef.current?.(view.scrollDOM)
 
@@ -431,10 +323,6 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     if (previous.links === links && previous.linkCache === linkCache) return
     viewRef.current?.dispatch({ effects: refreshInternalLinkContext.of(undefined) })
   }, [linkCache, links])
-
-  useEffect(() => {
-    viewRef.current?.dispatch({ effects: refreshDocumentMarkdownContext.of(undefined) })
-  }, [assetReader, noteId, presentation])
 
   useEffect(() => {
     if (contextMenu === null && tableDialog === null) return
@@ -461,35 +349,6 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     setContextMenu(null)
   }
 
-  const openInsertionMenu = () => {
-    const view = viewRef.current
-    if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
-    contextViewRef.current = view
-    setContextMenu({ x: 38, y: surfaceControls.blockTop + 28 })
-  }
-
-  const formatSelection = (style: MarkdownSelectionStyle) => {
-    const view = viewRef.current
-    if (view !== null) applyMarkdownStyle(view, style, readOnlyRef, barrierDepthRef)
-  }
-
-  const applyTable = (tableMarkdown: string) => {
-    const sourceRange = tableDialog?.sourceRange
-    if (sourceRange === undefined) {
-      insertSnippet(tableMarkdown)
-      setTableDialog(null)
-      return
-    }
-    const view = viewRef.current
-    if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
-    view.dispatch({
-      changes: { from: sourceRange.from, to: sourceRange.to, insert: tableMarkdown },
-      selection: { anchor: sourceRange.from + tableMarkdown.length },
-    })
-    setTableDialog(null)
-    view.focus()
-  }
-
   useEffect(() => {
     const view = viewRef.current
     if (view === null || view.state.doc.toString() === markdown) return
@@ -505,34 +364,6 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   return (
     <div className="markdown-source" ref={hostRef}>
-      {!readOnly && showBlockHandle && (
-        <button
-          type="button"
-          className="markdown-block-handle"
-          aria-label="添加内容块"
-          title="添加内容块"
-          style={{ top: surfaceControls.blockTop }}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={openInsertionMenu}
-        >
-          +
-        </button>
-      )}
-      {!readOnly && surfaceControls.hasSelection && (
-        <div
-          className="markdown-inline-toolbar"
-          role="toolbar"
-          aria-label="选区格式"
-          style={{ top: surfaceControls.toolbarTop, left: surfaceControls.toolbarLeft }}
-          onPointerDown={(event) => event.preventDefault()}
-        >
-          <button type="button" aria-label="加粗" onClick={() => formatSelection('bold')}>B</button>
-          <button type="button" aria-label="斜体" onClick={() => formatSelection('italic')}><i>I</i></button>
-          <button type="button" aria-label="链接" onClick={() => formatSelection('link')}>↗</button>
-          <button type="button" aria-label="行内代码" onClick={() => formatSelection('code')}>{'</>'}</button>
-          <button type="button" aria-label="删除线" onClick={() => formatSelection('strikethrough')}><s>S</s></button>
-        </div>
-      )}
       {contextMenu && (
         <div className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); setContextMenu(null) }}>插入表格</button>
@@ -544,40 +375,10 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.divider)}>插入分隔线</button>
         </div>
       )}
-      {tableDialog && (
-        <TableEditorDialog
-          initialRows={tableDialog.table?.cells.length ?? tableRows}
-          initialColumns={tableDialog.table?.cells[0]?.length ?? tableColumns}
-          initialCells={tableDialog.table?.cells}
-          initialAlignments={tableDialog.table?.alignments}
-          onCancel={() => setTableDialog(null)}
-          onInsert={applyTable}
-        />
-      )}
+      {tableDialog && <TableEditorDialog initialRows={tableRows} initialColumns={tableColumns} onCancel={() => setTableDialog(null)} onInsert={(markdown) => { insertSnippet(markdown); setTableDialog(null) }} />}
     </div>
   )
 })
-
-function applyMarkdownStyle(
-  view: EditorView,
-  style: MarkdownSelectionStyle,
-  readOnly: Readonly<{ current: boolean }>,
-  barrierDepth: Readonly<{ current: number }>,
-) {
-  if (readOnly.current || barrierDepth.current > 0) return false
-  const selection = view.state.selection.main
-  const source = view.state.doc.toString()
-  const result = formatMarkdownSelection(source, selection.from, selection.to, style)
-  if (result.markdown === source) return false
-  const trailingLength = source.length - selection.to
-  const insert = result.markdown.slice(selection.from, result.markdown.length - trailingLength)
-  view.dispatch({
-    changes: { from: selection.from, to: selection.to, insert },
-    selection: EditorSelection.range(result.from, result.to),
-  })
-  view.focus()
-  return true
-}
 
 function selectionsOverlap(left: Pick<PendingPaste, 'from' | 'to'>, right: Pick<PendingPaste, 'from' | 'to'>) {
   const leftPoint = left.from === left.to

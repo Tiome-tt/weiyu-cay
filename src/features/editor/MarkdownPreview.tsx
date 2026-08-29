@@ -1,4 +1,4 @@
-import { forwardRef, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { forwardRef, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
 import {
@@ -6,7 +6,7 @@ import {
   resolutionClass,
   resolutionTitle,
 } from './internalLinks'
-import { applyMarkdownTableMerges, renderPreviewMarkdown } from './markdownPipeline'
+import { renderPreviewMarkdown } from './markdownPipeline'
 
 interface MarkdownPreviewProps {
   markdown: string
@@ -19,7 +19,7 @@ interface MarkdownPreviewProps {
   external?: Pick<SystemPort, 'openExternal'>
 }
 
-export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps>(
+export const MarkdownPreview = forwardRef<HTMLElement, MarkdownPreviewProps>(
   function MarkdownPreview({ markdown, onScroll, links, linkCache, onNavigateLink, noteId, assetReader, external }, ref) {
     const prepared = useMemo(() => {
       const identity = createPreviewIdentity()
@@ -122,12 +122,6 @@ export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps
       })
     }, [prepared.links, resolutions, resolvedHtml])
 
-    useEffect(() => {
-      const host = articleRef.current
-      if (host === null) return
-      applyMarkdownTableMerges(host, prepared.markdown)
-    }, [prepared.markdown, resolvedHtml])
-
     const activate = (event: MouseEvent<HTMLElement>) => {
       const element = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a') : null
       const href = element?.getAttribute('href')
@@ -164,12 +158,11 @@ export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps
         onScroll={onScroll}
         onClick={activate}
         onWheel={handleZoom}
-      >
-        <div className="markdown-preview__page" dangerouslySetInnerHTML={{ __html: resolvedHtml }} />
-      </article>
+        dangerouslySetInnerHTML={{ __html: resolvedHtml }}
+      />
     )
   },
-))
+)
 
 function createPreviewIdentity(): string {
   const random = new Uint32Array(4)

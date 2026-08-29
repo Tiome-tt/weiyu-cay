@@ -18,9 +18,6 @@
   --color-focus-soft: rgb(47 120 102 / 18%);
   --color-border: #C9D8CF;
   --color-border-soft: #DCE7E0;
-  --scrollbar-track: color-mix(in srgb, var(--color-panel-warm) 76%, transparent);
-  --scrollbar-thumb: color-mix(in srgb, var(--color-accent) 72%, var(--color-surface));
-  --scrollbar-thumb-hover: var(--color-accent-strong);
   --radius-control: 8px;
   --radius-overlay: 12px;
   --radius-panel: 12px;
@@ -30,9 +27,8 @@
   --motion-fast: 120ms;
   --theme-note-accent: #D7E9DF;
   --sticky-color: var(--theme-note-accent);
-  --body-font: "楷体", KaiTi, "STKaiti", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", ui-sans-serif, system-ui, sans-serif;
+  --body-font: "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", ui-sans-serif, system-ui, sans-serif;
   --code-font: ui-monospace, SFMono-Regular, Consolas, monospace;
   --body-font-size: 16px;
   --body-line-height: 1.6;
-  --document-measure: 780px;
 }

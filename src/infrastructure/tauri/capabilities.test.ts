@@ -27,6 +27,5 @@ describe('frameless window capabilities', () => {
     ]) {
       expect(temporaryCapability.permissions).not.toContain(permission)
     }
-    expect(temporaryCapability.permissions).toContain('allow-read-image-asset')
   })
 })

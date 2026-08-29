@@ -1,4 +1,4 @@
-use weiyu_cay_lib::{
+use simple_notes_lib::{
     commands::storage::{StorageCommandState, StorageConsumer},
     storage::{
         paths::StoragePaths,

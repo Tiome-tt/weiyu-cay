@@ -4,7 +4,6 @@ import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
 import { unified } from 'unified'
-import { isTableMetadataLine, parseMarkdownTable, type MarkdownTableMerge } from './markdownActions'
 
 interface MarkdownNode {
   type?: unknown
@@ -40,85 +39,6 @@ export function renderMarkdown(markdown: string): string {
 
 export function renderPreviewMarkdown(markdown: string): string {
   return String(previewRenderer.processSync(markdown))
-}
-
-/**
- * Applies Cay's optional table merge metadata after the sanitized Markdown
- * renderer has produced HTML. The metadata is intentionally interpreted only
- * for tables parsed from the Markdown source; it never enables raw HTML.
- */
-export function applyMarkdownTableMerges(root: HTMLElement, markdown: string): void {
-  const renderedTables = Array.from(root.querySelectorAll<HTMLTableElement>('table'))
-  if (renderedTables.length === 0) return
-  const sourceTables = collectMarkdownTables(markdown)
-  sourceTables.forEach((sourceTable, index) => {
-    const rendered = renderedTables[index]
-    if (rendered === undefined || sourceTable.merges === undefined || sourceTable.merges.length === 0) return
-    applyTableMerges(rendered, sourceTable.merges)
-  })
-}
-
-function collectMarkdownTables(markdown: string) {
-  const tables: ReturnType<typeof parseMarkdownTable>[] = []
-  collectTableNodes(parser.parse(markdown) as MarkdownNode, markdown, tables)
-  return tables.filter((table): table is NonNullable<typeof table> => table !== null)
-}
-
-function collectTableNodes(node: MarkdownNode, markdown: string, tables: Array<ReturnType<typeof parseMarkdownTable>>) {
-  if (node.type === 'table') {
-    const range = sourceRange(node)
-    if (range !== null) {
-      const end = extendTableRangeForMetadata(markdown, range.to)
-      tables.push(parseMarkdownTable(markdown.slice(range.from, end)))
-    }
-  }
-  if (!Array.isArray(node.children)) return
-  for (const child of node.children) {
-    if (typeof child === 'object' && child !== null) collectTableNodes(child as MarkdownNode, markdown, tables)
-  }
-}
-
-function extendTableRangeForMetadata(markdown: string, tableEnd: number) {
-  const lineEnd = markdown.indexOf('\n', tableEnd)
-  const nextLineStart = lineEnd < 0 ? tableEnd : lineEnd + 1
-  const nextLineEnd = markdown.indexOf('\n', nextLineStart)
-  const nextLine = markdown.slice(nextLineStart, nextLineEnd < 0 ? markdown.length : nextLineEnd)
-  return isTableMetadataLine(nextLine) ? (nextLineEnd < 0 ? markdown.length : nextLineEnd) : tableEnd
-}
-
-function applyTableMerges(table: HTMLTableElement, merges: readonly MarkdownTableMerge[]) {
-  const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>('tr'))
-  const grid: Array<Array<HTMLTableCellElement | undefined>> = []
-  rows.forEach((row, rowIndex) => {
-    const logicalRow = grid[rowIndex] ?? (grid[rowIndex] = [])
-    let column = 0
-    for (const cell of Array.from(row.cells)) {
-      while (logicalRow[column] !== undefined) column += 1
-      const rowSpan = Math.max(1, cell.rowSpan)
-      const columnSpan = Math.max(1, cell.colSpan)
-      for (let rowOffset = 0; rowOffset < rowSpan; rowOffset += 1) {
-        const targetRow = grid[rowIndex + rowOffset] ?? (grid[rowIndex + rowOffset] = [])
-        for (let columnOffset = 0; columnOffset < columnSpan; columnOffset += 1) {
-          targetRow[column + columnOffset] = cell
-        }
-      }
-      column += columnSpan
-    }
-  })
-  for (const merge of merges) {
-    const anchor = grid[merge.row]?.[merge.column]
-    if (anchor === undefined) continue
-    anchor.rowSpan = merge.rowSpan
-    anchor.colSpan = merge.columnSpan
-    const removed = new Set<HTMLTableCellElement>()
-    for (let row = merge.row; row < merge.row + merge.rowSpan; row += 1) {
-      for (let column = merge.column; column < merge.column + merge.columnSpan; column += 1) {
-        const cell = grid[row]?.[column]
-        if (cell !== undefined && cell !== anchor) removed.add(cell)
-      }
-    }
-    for (const cell of removed) cell.remove()
-  }
 }
 
 function hardenPreviewResources() {

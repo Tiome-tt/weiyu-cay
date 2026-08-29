@@ -1,5 +1,5 @@
 use serde_json::Value;
-use weiyu_cay_lib::{
+use simple_notes_lib::{
     commands::settings::{
         authorize_restart_request, authorize_settings_caller, authorize_sticky_settings_caller,
         finalize_reopened_relocation, load_bootstrap_settings, open_configured_storage,
@@ -152,7 +152,7 @@ fn sticky_read_uses_valid_persisted_appearance_without_system_or_store_mutation(
     let root = tempfile::tempdir().unwrap();
     let store = MemoryStore::default();
     let persisted = AppSettings {
-        theme: weiyu_cay_lib::commands::settings::AppTheme::Sand,
+        theme: simple_notes_lib::commands::settings::AppTheme::Sand,
         font_size: 19.0,
         ..AppSettings::default()
     };
@@ -792,7 +792,7 @@ fn storage_move_waits_for_the_global_mutation_lock() {
     let service =
         SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
     let destination = parent.path().join("serialized-move");
-    let guard = weiyu_cay_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
+    let guard = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
     let (sent, received) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
         let result = service.move_storage_root(destination);
@@ -1344,7 +1344,7 @@ fn successful_relocation_blocks_all_future_old_root_mutations_until_restart() {
     service
         .move_storage_root(parent.path().join("restart-required"))
         .unwrap();
-    let blocked = weiyu_cay_lib::platform::IndexMutationLock::acquire_with_timeout(
+    let blocked = simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
         paths.root(),
         Duration::from_millis(25),
     );

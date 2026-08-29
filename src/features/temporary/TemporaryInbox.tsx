@@ -13,7 +13,6 @@ interface TemporaryInboxProps {
   windows?: Pick<TemporaryWindowPort, 'show'>
   external?: Pick<SystemPort, 'openExternal'>
   autosaveDelayMs?: number
-  onConversionComplete?(noteId: NoteId, folderId: FolderId): Promise<void> | void
 }
 
 export interface TemporaryInboxHandle {
@@ -26,7 +25,7 @@ export interface TemporaryInboxHandle {
 type LoadState = 'loading' | 'ready' | 'error'
 
 export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxProps>(function TemporaryInbox(
-  { temporary, folders, assets, assetReader, windows, external, autosaveDelayMs, onConversionComplete },
+  { temporary, folders, assets, assetReader, windows, external, autosaveDelayMs },
   ref,
 ) {
   const [items, setItems] = useState<NoteDocument[]>([])
@@ -36,54 +35,43 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   const [activeId, setActiveId] = useState<NoteId | null>(null)
   const [document, setDocument] = useState<NoteDocument | null>(null)
   const [documentState, setDocumentState] = useState<LoadState>('ready')
-  const [busy, setBusy] = useState<'delete' | 'convert' | null>(null)
+  const [busy, setBusy] = useState<'delete' | 'convert' | 'undo' | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [undoOperationId, setUndoOperationId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const requestRef = useRef(0)
   const documentRequestRef = useRef(0)
-  const activeIdRef = useRef<NoteId | null>(null)
-  const busyRef = useRef<'delete' | 'convert' | null>(null)
+  const busyRef = useRef<'delete' | 'convert' | 'undo' | null>(null)
   const editorRef = useRef<EditorPaneHandle>(null)
 
-  const refresh = useCallback(async (options: { silent?: boolean } = {}) => {
-    const silent = options.silent === true
+  const refresh = useCallback(async () => {
     const request = ++requestRef.current
-    if (!silent) setState('loading')
+    setState('loading')
     try {
       const result = await temporary.list()
       if (request !== requestRef.current) return
       const visible = result.filter((item) => item.kind === 'temporary').sort(newestFirst)
       setItems(visible)
       setSelected((current) => new Set([...current].filter((id) => visible.some((item) => item.id === id))))
-      const currentActiveId = activeIdRef.current
-      if (currentActiveId !== null && !visible.some((item) => item.id === currentActiveId)) {
+      if (activeId !== null && !visible.some((item) => item.id === activeId)) {
         documentRequestRef.current += 1
-        activeIdRef.current = null
         setActiveId(null)
         setDocument(null)
         setDocumentState('ready')
       }
       setState('ready')
     } catch {
-      if (request === requestRef.current && !silent) setState('error')
+      if (request === requestRef.current) setState('error')
     }
-  }, [temporary])
+  }, [activeId, temporary])
 
   useEffect(() => {
     void refresh()
-    const interval = window.setInterval(() => {
-      if (busyRef.current === null) void refresh({ silent: true })
-    }, 1000)
-    return () => window.clearInterval(interval)
   }, [refresh])
 
   const visibleItems = useMemo(() => items.filter((item) => !dismissed.has(item.id)), [dismissed, items])
   const selectedIds = useMemo(() => visibleItems.filter((item) => selected.has(item.id)).map((item) => item.id), [selected, visibleItems])
-  const selectedCapture = selectedIds.length === 1 ? visibleItems.find((item) => item.id === selectedIds[0]) : undefined
-  const temporaryNotes = useMemo(() => ({
-    saveNote: (note: NoteDocument) => temporary.save(note),
-    loadNote: (noteId: NoteId) => temporary.load(noteId),
-  }), [temporary])
+  const temporaryNotes = useMemo(() => ({ saveNote: temporary.save, loadNote: temporary.load }), [temporary])
 
   const toggleSelected = (noteId: NoteId) => {
     setSelected((current) => {
@@ -108,7 +96,6 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
 
   const openCapture = async (noteId: NoteId) => {
     if (busyRef.current !== null) return
-    const listedSnapshot = items.find((item) => item.id === noteId && item.kind === 'temporary') ?? null
     const request = ++documentRequestRef.current
     const release = await acquireEditorBarrier(activeId !== null)
     try {
@@ -120,30 +107,16 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       }
       if (request !== documentRequestRef.current || busyRef.current !== null) return
       setError(null)
-      activeIdRef.current = noteId
       setActiveId(noteId)
-      setDocument(listedSnapshot)
-      setDocumentState(listedSnapshot === null ? 'loading' : 'ready')
+      setDocument(null)
+      setDocumentState('loading')
       try {
         const loaded = await temporary.load(noteId)
-        if (request !== documentRequestRef.current) return
-        if (loaded.id === noteId && loaded.kind === 'temporary') {
-          setDocument(loaded)
-          setDocumentState('ready')
-        } else if (listedSnapshot !== null) {
-          setDocument(listedSnapshot)
-          setDocumentState('ready')
-        } else {
-          setDocumentState('error')
-        }
+        if (request !== documentRequestRef.current || loaded.id !== noteId || loaded.kind !== 'temporary') return
+        setDocument(loaded)
+        setDocumentState('ready')
       } catch {
-        if (request !== documentRequestRef.current) return
-        if (listedSnapshot !== null) {
-          setDocument(listedSnapshot)
-          setDocumentState('ready')
-        } else {
-          setDocumentState('error')
-        }
+        if (request === documentRequestRef.current) setDocumentState('error')
       }
     } finally {
       release()
@@ -174,7 +147,6 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     setSelected((current) => new Set([...current].filter((id) => !successful.has(id))))
     if (activeId !== null && successful.has(activeId)) {
       documentRequestRef.current += 1
-      activeIdRef.current = null
       setActiveId(null)
       setDocument(null)
       setDocumentState('ready')
@@ -195,6 +167,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       }
       const result = await temporary.delete(ids)
       removeSuccessful(result.deleted)
+      setUndoOperationId(result.deleted.length > 0 ? result.operationId : null)
       showFailure(result.failed)
       void refresh()
     } catch {
@@ -206,7 +179,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     }
   }
 
-  const convertSelected = async (folderId: FolderId, title: string, tags: string[]) => {
+  const convertSelected = async (folderId: FolderId) => {
     if (selectedIds.length === 0 || busyRef.current !== null) return
     const ids = [...selectedIds]
     busyRef.current = 'convert'
@@ -218,23 +191,35 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
         setError('请先解决保存错误，再转换临时捕捉。')
         return
       }
-      const input = {
-        ids,
-        folderId,
-        ...(title ? { title } : {}),
-        ...(tags.length > 0 ? { tags } : {}),
-      }
-      const result = await temporary.convert(input)
+      const result = await temporary.convert({ ids, folderId })
       removeSuccessful(result.converted.map((item) => item.temporaryId))
       showFailure(result.failed)
       setDialogOpen(false)
-      const firstConverted = result.converted[0]
-      if (firstConverted !== undefined) await onConversionComplete?.(firstConverted.noteId, folderId)
       void refresh()
     } catch {
       setError('无法转换临时捕捉。')
     } finally {
       release()
+      busyRef.current = null
+      setBusy(null)
+    }
+  }
+
+  const undoDelete = async () => {
+    if (undoOperationId === null || busyRef.current !== null) return
+    busyRef.current = 'undo'
+    setBusy('undo')
+    setError(null)
+    try {
+      const result = await temporary.undoDelete(undoOperationId)
+      const restored = new Set(result.restored)
+      setDismissed((current) => new Set([...current].filter((id) => !restored.has(id))))
+      setUndoOperationId(result.failed.length === 0 ? null : undoOperationId)
+      showFailure(result.failed)
+      await refresh()
+    } catch {
+      setError('无法撤销删除。')
+    } finally {
       busyRef.current = null
       setBusy(null)
     }
@@ -247,12 +232,14 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
           <span className="library-pane__eyebrow">临时捕捉</span>
           <h2>临时收集箱</h2>
         </div>
+        <button type="button" aria-label="刷新临时收集箱" disabled={busy !== null} onClick={() => void refresh()}>刷新</button>
       </header>
       <div className="temporary-inbox__actions" aria-label="临时收集箱操作">
         <button type="button" disabled={busy !== null || visibleItems.length === 0} onClick={() => setSelected(new Set(visibleItems.map((item) => item.id)))}>全选</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setDialogOpen(true)}>转为笔记</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void deleteSelected()}>{busy === 'delete' ? '正在删除…' : '删除所选'}</button>
+        {undoOperationId && <button type="button" disabled={busy !== null} onClick={() => void undoDelete()}>{busy === 'undo' ? '正在恢复…' : '撤销删除'}</button>}
       </div>
       {error && <p role="alert" className="library-status library-status--error">{error}</p>}
       {state === 'loading' && <p role="status" className="library-status">正在加载临时捕捉…</p>}
@@ -301,14 +288,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
           setItems((current) => current.map((item) => item.id === authoritative.id ? authoritative : item))
         }} />}
       </div>
-      <ConvertDialog
-        folders={folders}
-        open={dialogOpen}
-        busy={busy === 'convert'}
-        initialTitle={selectedCapture === undefined ? '' : safeTitle(selectedCapture)}
-        onCancel={() => setDialogOpen(false)}
-        onConfirm={(folderId, title, tags) => void convertSelected(folderId, title, tags)}
-      />
+      <ConvertDialog folders={folders} open={dialogOpen} busy={busy === 'convert'} onCancel={() => setDialogOpen(false)} onConfirm={(folderId) => void convertSelected(folderId)} />
     </section>
   )
 })

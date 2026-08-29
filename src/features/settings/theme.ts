@@ -3,7 +3,6 @@ import type { AppSettings, StickySettings } from '../../domain/ports'
 import settingsDefaults from '../../shared/settings-defaults.json'
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = settingsDefaults as AppSettings
-const LEGACY_DEFAULT_BODY_FONT = 'system-ui, sans-serif'
 export const DEFAULT_STICKY_SETTINGS: Readonly<StickySettings> = {
   theme: DEFAULT_APP_SETTINGS.theme,
   stickyColorMode: DEFAULT_APP_SETTINGS.stickyColorMode,
@@ -122,7 +121,6 @@ export type ThemeVariables = Record<string, string>
 export function normalizeSettings(value: AppSettings): AppSettings {
   return {
     ...value,
-    bodyFont: normalizeBodyFont(value.bodyFont),
     stickyColorMode: 'follow-theme',
     fontSize: clamp(value.fontSize, 12, 28),
     lineHeight: clamp(value.lineHeight, 1.2, 2.2),
@@ -133,7 +131,6 @@ export function normalizeSettings(value: AppSettings): AppSettings {
 export function normalizeStickySettings(value: StickySettings): StickySettings {
   return {
     ...value,
-    bodyFont: normalizeBodyFont(value.bodyFont),
     stickyColorMode: 'follow-theme',
     fontSize: clamp(value.fontSize, 12, 28),
     lineHeight: clamp(value.lineHeight, 1.2, 2.2),
@@ -163,8 +160,4 @@ const systemDarkPalette = palettes.night
 function clamp(value: number, minimum: number, maximum: number) {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, value))
-}
-
-function normalizeBodyFont(value: string) {
-  return value === LEGACY_DEFAULT_BODY_FONT ? DEFAULT_APP_SETTINGS.bodyFont : value
 }

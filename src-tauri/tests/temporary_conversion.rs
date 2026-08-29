@@ -1,11 +1,10 @@
 mod support;
 
 use rusqlite::Connection;
-use weiyu_cay_lib::{
+use simple_notes_lib::{
     commands::folders::FolderRepository,
     domain::{ConvertTemporaryInput, CreateFolderInput, NoteKind, TemporaryWindowState},
-    error::{CommandError, CommandErrorCode},
-    platform::IndexMutationLock,
+    error::CommandErrorCode,
     storage::{
         atomic_file::{PublishFailure, PublishResult},
         rebuild::rebuild_index,
@@ -17,91 +16,12 @@ use weiyu_cay_lib::{
         authorize_asset_caller, authorize_temporary_caller, clamp_to_available_monitors,
         close_event_target, physical_bounds_for_restore, reduce_shutdown_lifecycle,
         AppLifecycleEvent, InMemoryTemporaryWindowBackend, MonitorGeometry, PhysicalWindowBounds,
-        TemporaryCommandOperation, TemporaryRepository, TemporaryWindowBackend,
-        TemporaryWindowService,
+        TemporaryCommandOperation, TemporaryRepository, TemporaryWindowService,
         DEFAULT_WINDOW_STATE,
     },
 };
 use std::fs;
-use std::path::PathBuf;
-use std::sync::mpsc;
-use std::time::Duration;
 use support::TestStore;
-
-#[derive(Clone)]
-struct LockProbeBackend {
-    inner: InMemoryTemporaryWindowBackend,
-    root: PathBuf,
-}
-
-impl LockProbeBackend {
-    fn new(root: PathBuf) -> Self {
-        Self {
-            inner: InMemoryTemporaryWindowBackend::default(),
-            root,
-        }
-    }
-
-    fn assert_lock_is_available(&self) -> Result<(), CommandError> {
-        let root = self.root.clone();
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = IndexMutationLock::acquire(&root).map(|_| ());
-            let _ = sender.send(result);
-        });
-        match receiver.recv_timeout(Duration::from_millis(250)) {
-            Ok(result) => result,
-            Err(_) => Err(CommandError::io(
-                "native window callback observed a held index lock",
-            )),
-        }
-    }
-}
-
-impl TemporaryWindowBackend for LockProbeBackend {
-    fn ensure_window(
-        &self,
-        label: &str,
-        note_id: weiyu_cay_lib::domain::NoteId,
-        state: TemporaryWindowState,
-    ) -> Result<(), CommandError> {
-        self.assert_lock_is_available()?;
-        self.inner.ensure_window(label, note_id, state)
-    }
-
-    fn show_and_focus(&self, label: &str) -> Result<(), CommandError> {
-        self.inner.show_and_focus(label)
-    }
-
-    fn notify_shown(
-        &self,
-        label: &str,
-        note_id: weiyu_cay_lib::domain::NoteId,
-    ) -> Result<(), CommandError> {
-        self.inner.notify_shown(label, note_id)
-    }
-
-    fn hide(&self, label: &str) -> Result<(), CommandError> {
-        self.inner.hide(label)
-    }
-
-    fn set_always_on_top(&self, label: &str, always_on_top: bool) -> Result<(), CommandError> {
-        self.inner.set_always_on_top(label, always_on_top)
-    }
-
-    fn apply_state(
-        &self,
-        label: &str,
-        state: TemporaryWindowState,
-    ) -> Result<TemporaryWindowState, CommandError> {
-        self.inner.apply_state(label, state)
-    }
-
-    fn retire(&self, label: &str) -> Result<(), CommandError> {
-        self.assert_lock_is_available()?;
-        self.inner.retire(label)
-    }
-}
 
 #[test]
 fn derives_conversion_titles_with_explicit_unicode_scalar_rules() {
@@ -972,7 +892,7 @@ fn committed_conversion_survives_native_retire_failure_and_retries_retirement_fr
         NoteKind::Formal
     );
     assert!(
-        weiyu_cay_lib::platform::SafeDirectory::open(store.paths.root(), &[], false)
+        simple_notes_lib::platform::SafeDirectory::open(store.paths.root(), &[], false)
             .unwrap()
             .entry_names()
             .unwrap()
@@ -1140,7 +1060,7 @@ fn conversion_and_rebuild_are_serialized_by_the_shared_mutation_lock() {
         .unwrap();
     let capture = temporary.create().unwrap();
     store.close_database();
-    let guard = weiyu_cay_lib::platform::IndexMutationLock::acquire(store.paths.root()).unwrap();
+    let guard = simple_notes_lib::platform::IndexMutationLock::acquire(store.paths.root()).unwrap();
     let convert_paths = store.paths.clone();
     let rebuild_paths = store.paths.clone();
     let converter = std::thread::spawn(move || {
@@ -1312,7 +1232,6 @@ fn show_reuses_a_canonical_window_and_publishes_visibility_after_native_success(
         vec![format!("temporary-{}", capture.id)]
     );
     assert_eq!(backend.show_count(), 2);
-    assert_eq!(backend.shown_notification_count(), 2);
     assert!(service.load_state(capture.id).unwrap().visible);
 
     backend.fail_next();
@@ -1325,98 +1244,6 @@ fn show_reuses_a_canonical_window_and_publishes_visibility_after_native_success(
             .markdown,
         ""
     );
-}
-
-#[test]
-fn conversion_accepts_custom_title_and_tags() {
-    let store = TestStore::new();
-    let folder = FolderRepository::new(store.paths.clone())
-        .create(CreateFolderInput {
-            parent_id: None,
-            name: "发布".into(),
-        })
-        .unwrap();
-    let capture = TemporaryRepository::new(store.paths.clone()).create().unwrap();
-    let result = TemporaryInboxService::new(
-        store.paths.clone(),
-        InMemoryTemporaryWindowBackend::default(),
-    )
-    .convert_with_metadata(
-        vec![capture.id],
-        folder.id,
-        Some("发布前检查".into()),
-        vec!["工作".into(), "发布".into()],
-        "2026-08-02T12:34:56+08:00",
-    );
-
-    assert_eq!(result.failed.len(), 0);
-    let formal = NoteRepository::new(store.paths.clone()).load(capture.id).unwrap();
-    assert_eq!(formal.kind, NoteKind::Formal);
-    assert_eq!(formal.folder_id, Some(folder.id));
-    assert_eq!(formal.title, "发布前检查");
-    assert_eq!(formal.tags, vec!["工作", "发布"]);
-}
-
-#[test]
-fn conversion_does_not_hold_the_index_lock_while_retiring_the_native_window() {
-    let store = TestStore::new();
-    let temporary = TemporaryRepository::new(store.paths.clone());
-    let capture = temporary.create().unwrap();
-    let folder = FolderRepository::new(store.paths.clone())
-        .create(CreateFolderInput {
-            parent_id: None,
-            name: "项目 C".into(),
-        })
-        .unwrap();
-    let backend = LockProbeBackend::new(store.paths.root().to_path_buf());
-    let result = TemporaryInboxService::new(store.paths.clone(), backend).convert(
-        ConvertTemporaryInput {
-            ids: vec![capture.id],
-            folder_id: folder.id,
-        },
-        "2026-08-02T12:34:56+08:00",
-    );
-
-    assert_eq!(result.converted.len(), 1);
-    assert!(result.failed.is_empty());
-}
-
-#[test]
-fn deletion_does_not_hold_the_index_lock_while_retiring_the_native_window() {
-    let store = TestStore::new();
-    let capture = TemporaryRepository::new(store.paths.clone()).create().unwrap();
-    let backend = LockProbeBackend::new(store.paths.root().to_path_buf());
-    let result = TemporaryInboxService::new(store.paths.clone(), backend).delete(vec![capture.id]);
-
-    assert_eq!(result.deleted, vec![capture.id]);
-    assert!(result.failed.is_empty());
-}
-
-#[test]
-fn shown_notification_failure_does_not_prevent_the_window_from_being_visible() {
-    let store = TestStore::new();
-    let repository = TemporaryRepository::new(store.paths.clone());
-    let capture = repository.create().unwrap();
-    let backend = InMemoryTemporaryWindowBackend::default();
-    // ensure, apply, and show must succeed; notifying the already-visible
-    // renderer is best effort because a newly created webview may not be ready.
-    backend.fail_on_operation(4);
-    let service = TemporaryWindowService::new(store.paths.clone(), backend.clone());
-
-    service.show(capture.id).unwrap();
-
-    assert_eq!(backend.show_count(), 1);
-    assert!(service.load_state(capture.id).unwrap().visible);
-}
-
-#[test]
-fn show_does_not_hold_the_index_lock_while_creating_the_native_window() {
-    let store = TestStore::new();
-    let capture = TemporaryRepository::new(store.paths.clone()).create().unwrap();
-    let backend = LockProbeBackend::new(store.paths.root().to_path_buf());
-    let service = TemporaryWindowService::new(store.paths.clone(), backend);
-
-    service.show(capture.id).unwrap();
 }
 
 #[test]
@@ -1481,13 +1308,13 @@ fn close_interception_keeps_retry_path_visible_but_shutdown_allows_native_close(
 }
 
 fn fail_before_publish(
-    _paths: &weiyu_cay_lib::storage::paths::StoragePaths,
-    _id: weiyu_cay_lib::domain::NoteId,
+    _paths: &simple_notes_lib::storage::paths::StoragePaths,
+    _id: simple_notes_lib::domain::NoteId,
     _kind: NoteKind,
     _bytes: &[u8],
 ) -> PublishResult {
     Err(PublishFailure::not_published(
-        weiyu_cay_lib::error::CommandError::io("injected temporary write failure"),
+        simple_notes_lib::error::CommandError::io("injected temporary write failure"),
     ))
 }
 
@@ -1642,7 +1469,7 @@ fn stale_window_rows_are_dropped_without_deleting_temporary_content() {
 
 #[test]
 fn labels_and_non_finite_or_non_positive_bounds_are_rejected() {
-    use weiyu_cay_lib::windows::sticky::parse_temporary_window_label;
+    use simple_notes_lib::windows::sticky::parse_temporary_window_label;
     assert!(parse_temporary_window_label("main").is_err());
     assert!(parse_temporary_window_label("temporary-not-a-uuid").is_err());
     let store = TestStore::new();
@@ -1805,10 +1632,10 @@ fn general_state_update_cannot_forge_visibility() {
 
 #[test]
 fn close_events_have_one_canonical_window_target() {
-    let first = weiyu_cay_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000071")
+    let first = simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000071")
         .unwrap();
     let second =
-        weiyu_cay_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000072")
+        simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000072")
             .unwrap();
     assert_eq!(
         close_event_target(first, &format!("temporary-{first}")).unwrap(),
@@ -1819,9 +1646,9 @@ fn close_events_have_one_canonical_window_target() {
 
 #[test]
 fn command_authorization_is_scoped_to_main_or_the_matching_sticky() {
-    let note = weiyu_cay_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000073")
+    let note = simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000073")
         .unwrap();
-    let other = weiyu_cay_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000074")
+    let other = simple_notes_lib::domain::NoteId::parse_str("019c0000-0000-7000-8000-000000000074")
         .unwrap();
     assert!(authorize_temporary_caller("main", TemporaryCommandOperation::Create, None).is_ok());
     assert!(authorize_temporary_caller(
@@ -2041,7 +1868,6 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-hide-temporary-window",
             "allow-set-temporary-always-on-top",
             "allow-save-image",
-            "allow-read-image-asset",
             "allow-load-sticky-settings"
         ])
     );

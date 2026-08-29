@@ -12,8 +12,7 @@ use crate::{
         paths::StoragePaths,
         repository::{
             folder_id_blob, is_application_whitespace, note_id_blob, parse_document,
-            normalized_note_title, normalized_tags, persist_document_in_transaction,
-            serialize_document, NoteRepository,
+            persist_document_in_transaction, serialize_document, NoteRepository,
         },
     },
     windows::sticky::{temporary_window_label, TemporaryWindowBackend},
@@ -198,38 +197,16 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
     }
 
     pub fn recover_pending(&self) -> Result<(), CommandError> {
-        let mut retire_labels = Vec::new();
-        {
-            let guard = IndexMutationLock::acquire(self.paths.root())?;
-            self.recover_conversions_locked(&guard, &mut retire_labels)?;
-            self.recover_deletions_locked(&guard, &mut retire_labels)?;
-        }
-        for (label, conversion_id) in retire_labels {
-            if self.backend.retire(&label).is_ok() {
-                if let Some(conversion_id) = conversion_id {
-                    remove_conversion_journal(&self.paths, conversion_id)?;
-                }
-            }
-        }
-        Ok(())
+        let guard = IndexMutationLock::acquire(self.paths.root())?;
+        self.recover_conversions_locked(&guard)?;
+        self.recover_deletions_locked(&guard)
     }
 
     pub fn convert(&self, input: ConvertTemporaryInput, timestamp: &str) -> BatchConversionResult {
-        self.convert_with_metadata(input.ids, input.folder_id, None, Vec::new(), timestamp)
-    }
-
-    pub fn convert_with_metadata(
-        &self,
-        ids: Vec<NoteId>,
-        folder_id: FolderId,
-        title: Option<String>,
-        tags: Vec<String>,
-        timestamp: &str,
-    ) -> BatchConversionResult {
         let mut converted = Vec::new();
         let mut failed = Vec::new();
-        for id in unique_ids(ids) {
-            match self.convert_one(id, folder_id, title.as_deref(), &tags, timestamp) {
+        for id in unique_ids(input.ids) {
+            match self.convert_one(id, input.folder_id, timestamp) {
                 Ok(()) => converted.push(ConvertedTemporaryNote {
                     temporary_id: id,
                     note_id: id,
@@ -319,73 +296,61 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         &self,
         id: NoteId,
         folder_id: FolderId,
-        title: Option<&str>,
-        tags: &[String],
         timestamp: &str,
     ) -> Result<(), CommandError> {
-        {
-            let guard = IndexMutationLock::acquire(self.paths.root())?;
-            let database = open_database(&self.paths)?;
-            validate_folder(database.connection(), folder_id)?;
-            let original = NoteRepository::new(self.paths.clone()).load_locked(id, &guard)?;
-            if original.kind != NoteKind::Temporary || original.folder_id.is_some() {
-                return Err(CommandError::validation("capture is no longer temporary"));
-            }
-            let mut formal = original.clone();
-            formal.kind = NoteKind::Formal;
-            formal.folder_id = Some(folder_id);
-            formal.title = match title.map(str::trim).filter(|value| !value.is_empty()) {
-                Some(value) => normalized_note_title(value)?,
-                None => derive_temporary_title(&original.markdown, timestamp)?,
-            };
-            normalized_tags(tags)?;
-            formal.tags = tags.to_vec();
-            formal.updated_at = timestamp.to_owned();
-            let journal = ConversionJournal {
-                version: 2,
-                phase: ConversionPhase::Prepared,
-                original: original.clone(),
-                formal: formal.clone(),
-            };
-            self.fail(TemporaryFailurePoint::BeforeJournal)?;
-            write_conversion_journal(&self.paths, &journal)?;
-            self.fail(TemporaryFailurePoint::BeforeMove)?;
-            match move_note_directory(&self.paths, NoteKind::Temporary, NoteKind::Formal, id) {
-                DirectoryMoveOutcome::Published => {}
-                DirectoryMoveOutcome::NotPublished(error) => return Err(error),
-                DirectoryMoveOutcome::PublishedButSyncFailed(error)
-                | DirectoryMoveOutcome::PublishedUntrusted(error) => {
-                    self.rollback_conversion(id, &original, &guard)?;
-                    return Err(error);
-                }
-            }
-            self.fail(TemporaryFailurePoint::CrashAfterMove)?;
-            self.fail(TemporaryFailurePoint::AfterMove)
-                .or_else(|error| {
-                    self.rollback_conversion(id, &original, &guard)?;
-                    Err(error)
-                })?;
-            if let Err(error) = write_note_document(&self.paths, &formal) {
-                self.rollback_conversion(id, &original, &guard)?;
-                return Err(error);
-            }
-            if let Err(error) = self
-                .fail(TemporaryFailurePoint::BeforeDatabase)
-                .and_then(|()| persist_formal_and_retire_state(database.connection(), &formal))
-            {
-                self.rollback_conversion(id, &original, &guard)?;
-                return Err(error);
-            }
-            let mut committed = journal;
-            committed.phase = ConversionPhase::Committed;
-            if let Err(error) = write_conversion_journal(&self.paths, &committed) {
+        let guard = IndexMutationLock::acquire(self.paths.root())?;
+        let database = open_database(&self.paths)?;
+        validate_folder(database.connection(), folder_id)?;
+        let original = NoteRepository::new(self.paths.clone()).load_locked(id, &guard)?;
+        if original.kind != NoteKind::Temporary || original.folder_id.is_some() {
+            return Err(CommandError::validation("capture is no longer temporary"));
+        }
+        let mut formal = original.clone();
+        formal.kind = NoteKind::Formal;
+        formal.folder_id = Some(folder_id);
+        formal.title = derive_temporary_title(&original.markdown, timestamp)?;
+        formal.updated_at = timestamp.to_owned();
+        let journal = ConversionJournal {
+            version: 2,
+            phase: ConversionPhase::Prepared,
+            original: original.clone(),
+            formal: formal.clone(),
+        };
+        self.fail(TemporaryFailurePoint::BeforeJournal)?;
+        write_conversion_journal(&self.paths, &journal)?;
+        self.fail(TemporaryFailurePoint::BeforeMove)?;
+        match move_note_directory(&self.paths, NoteKind::Temporary, NoteKind::Formal, id) {
+            DirectoryMoveOutcome::Published => {}
+            DirectoryMoveOutcome::NotPublished(error) => return Err(error),
+            DirectoryMoveOutcome::PublishedButSyncFailed(error)
+            | DirectoryMoveOutcome::PublishedUntrusted(error) => {
                 self.rollback_conversion(id, &original, &guard)?;
                 return Err(error);
             }
         }
-        // Destroying a native window can synchronously invoke its close
-        // callback. Keep that callback out of the index transaction: it
-        // validates the capture and acquires the same lock.
+        self.fail(TemporaryFailurePoint::CrashAfterMove)?;
+        self.fail(TemporaryFailurePoint::AfterMove)
+            .or_else(|error| {
+                self.rollback_conversion(id, &original, &guard)?;
+                Err(error)
+            })?;
+        if let Err(error) = write_note_document(&self.paths, &formal) {
+            self.rollback_conversion(id, &original, &guard)?;
+            return Err(error);
+        }
+        if let Err(error) = self
+            .fail(TemporaryFailurePoint::BeforeDatabase)
+            .and_then(|()| persist_formal_and_retire_state(database.connection(), &formal))
+        {
+            self.rollback_conversion(id, &original, &guard)?;
+            return Err(error);
+        }
+        let mut committed = journal;
+        committed.phase = ConversionPhase::Committed;
+        if let Err(error) = write_conversion_journal(&self.paths, &committed) {
+            self.rollback_conversion(id, &original, &guard)?;
+            return Err(error);
+        }
         if self.backend.retire(&temporary_window_label(id)).is_ok() {
             let _ = remove_conversion_journal(&self.paths, id);
         }
@@ -439,76 +404,70 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         descriptor: &mut DeleteDescriptor,
         id: NoteId,
     ) -> Result<(), CommandError> {
-        {
-            let guard = IndexMutationLock::acquire(self.paths.root())?;
-            let document = NoteRepository::new(self.paths.clone()).load_locked(id, &guard)?;
-            if document.kind != NoteKind::Temporary {
-                return Err(CommandError::validation("capture is no longer temporary"));
-            }
-            let database = open_database(&self.paths)?;
-            let window_state = load_temporary_window_state(database.connection(), id)?;
-            descriptor.items.push(DeleteDescriptorItem {
-                temporary_id: id,
-                original: document.clone(),
-                original_kind: NoteKind::Temporary,
-                original_location: DeleteOriginalLocation::Temporary,
-                window_state,
-                state: DeleteItemState::Prepared,
-            });
-            write_delete_descriptor(&self.paths, descriptor)?;
-            self.fail(TemporaryFailurePoint::BeforeMove)?;
-            match move_temporary_to_trash(&self.paths, &descriptor.operation_id, id) {
-                DirectoryMoveOutcome::Published => {}
-                DirectoryMoveOutcome::NotPublished(error) => {
-                    descriptor.items.retain(|item| item.temporary_id != id);
-                    write_delete_descriptor(&self.paths, descriptor)?;
-                    return Err(error);
-                }
-                DirectoryMoveOutcome::PublishedButSyncFailed(error)
-                | DirectoryMoveOutcome::PublishedUntrusted(error) => {
-                    self.rollback_delete_move(descriptor, id)?;
-                    return Err(error);
-                }
-            }
-            if let Err(error) = crate::storage::trash::catalog_moved_temporary(
-                &self.paths,
-                &descriptor.operation_id,
-                &document,
-                &descriptor.deleted_at,
-            ) {
-                self.rollback_delete_move(descriptor, id)?;
+        let guard = IndexMutationLock::acquire(self.paths.root())?;
+        let document = NoteRepository::new(self.paths.clone()).load_locked(id, &guard)?;
+        if document.kind != NoteKind::Temporary {
+            return Err(CommandError::validation("capture is no longer temporary"));
+        }
+        let database = open_database(&self.paths)?;
+        let window_state = load_temporary_window_state(database.connection(), id)?;
+        descriptor.items.push(DeleteDescriptorItem {
+            temporary_id: id,
+            original: document.clone(),
+            original_kind: NoteKind::Temporary,
+            original_location: DeleteOriginalLocation::Temporary,
+            window_state,
+            state: DeleteItemState::Prepared,
+        });
+        write_delete_descriptor(&self.paths, descriptor)?;
+        self.fail(TemporaryFailurePoint::BeforeMove)?;
+        match move_temporary_to_trash(&self.paths, &descriptor.operation_id, id) {
+            DirectoryMoveOutcome::Published => {}
+            DirectoryMoveOutcome::NotPublished(error) => {
+                descriptor.items.retain(|item| item.temporary_id != id);
+                write_delete_descriptor(&self.paths, descriptor)?;
                 return Err(error);
             }
-            self.fail(TemporaryFailurePoint::CrashAfterMove)?;
-            if let Err(error) = self
-                .fail(TemporaryFailurePoint::AfterMove)
-                .and_then(|()| mark_deleted(&self.paths, id, &descriptor.deleted_at))
-            {
-                self.fail(TemporaryFailurePoint::BeforeRollback)?;
-                self.rollback_delete_move(descriptor, id)?;
-                return Err(error);
-            }
-            if let Err(error) = crate::storage::trash::mark_catalog_deleted(
-                &self.paths,
-                &descriptor.operation_id,
-                id,
-            ) {
-                self.rollback_delete_move(descriptor, id)?;
-                return Err(error);
-            }
-            descriptor
-                .items
-                .iter_mut()
-                .find(|item| item.temporary_id == id)
-                .expect("enrolled delete item")
-                .state = DeleteItemState::Deleted;
-            if let Err(error) = write_delete_descriptor(&self.paths, descriptor) {
+            DirectoryMoveOutcome::PublishedButSyncFailed(error)
+            | DirectoryMoveOutcome::PublishedUntrusted(error) => {
                 self.rollback_delete_move(descriptor, id)?;
                 return Err(error);
             }
         }
-        // Destroying the native sticky may synchronously run its close
-        // callback, which validates the capture through the index lock.
+        if let Err(error) = crate::storage::trash::catalog_moved_temporary(
+            &self.paths,
+            &descriptor.operation_id,
+            &document,
+            &descriptor.deleted_at,
+        ) {
+            self.rollback_delete_move(descriptor, id)?;
+            return Err(error);
+        }
+        self.fail(TemporaryFailurePoint::CrashAfterMove)?;
+        if let Err(error) = self
+            .fail(TemporaryFailurePoint::AfterMove)
+            .and_then(|()| mark_deleted(&self.paths, id, &descriptor.deleted_at))
+        {
+            self.fail(TemporaryFailurePoint::BeforeRollback)?;
+            self.rollback_delete_move(descriptor, id)?;
+            return Err(error);
+        }
+        if let Err(error) =
+            crate::storage::trash::mark_catalog_deleted(&self.paths, &descriptor.operation_id, id)
+        {
+            self.rollback_delete_move(descriptor, id)?;
+            return Err(error);
+        }
+        descriptor
+            .items
+            .iter_mut()
+            .find(|item| item.temporary_id == id)
+            .expect("enrolled delete item")
+            .state = DeleteItemState::Deleted;
+        if let Err(error) = write_delete_descriptor(&self.paths, descriptor) {
+            self.rollback_delete_move(descriptor, id)?;
+            return Err(error);
+        }
         let _ = self.backend.retire(&temporary_window_label(id));
         Ok(())
     }
@@ -648,11 +607,7 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         }
     }
 
-    fn recover_conversions_locked(
-        &self,
-        _guard: &IndexMutationLock,
-        retire_labels: &mut Vec<(String, Option<NoteId>)>,
-    ) -> Result<(), CommandError> {
+    fn recover_conversions_locked(&self, _guard: &IndexMutationLock) -> Result<(), CommandError> {
         let root = SafeDirectory::open(self.paths.root(), &[], false)?;
         let mut names = root.entry_names()?;
         names.sort();
@@ -675,7 +630,7 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
                     continue;
                 }
             };
-            self.recover_conversion_entry(&journal, _guard, retire_labels)?;
+            self.recover_conversion_entry(&journal, _guard)?;
         }
         Ok(())
     }
@@ -684,7 +639,6 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         &self,
         journal: &ConversionJournal,
         _guard: &IndexMutationLock,
-        retire_labels: &mut Vec<(String, Option<NoteId>)>,
     ) -> Result<(), CommandError> {
         let id = journal.formal.id;
         let temporary = contained_directory_exists(&self.paths, "temporary", &id.to_string())?;
@@ -700,7 +654,9 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
                     write_note_document(&self.paths, &journal.formal)?;
                     let database = open_database(&self.paths)?;
                     persist_formal_and_retire_state(database.connection(), &journal.formal)?;
-                    retire_labels.push((temporary_window_label(id), Some(id)));
+                    if self.backend.retire(&temporary_window_label(id)).is_ok() {
+                        remove_conversion_journal(&self.paths, id)?;
+                    }
                     Ok(())
                 }
                 (true, true) => Err(CommandError::conflict(
@@ -735,11 +691,7 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         }
     }
 
-    fn recover_deletions_locked(
-        &self,
-        _guard: &IndexMutationLock,
-        retire_labels: &mut Vec<(String, Option<NoteId>)>,
-    ) -> Result<(), CommandError> {
+    fn recover_deletions_locked(&self, _guard: &IndexMutationLock) -> Result<(), CommandError> {
         let trash = SafeDirectory::open(self.paths.root(), &["trash"], false)?;
         let mut names = trash.entry_names()?;
         names.sort();
@@ -766,7 +718,7 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
                     continue;
                 }
             };
-            self.recover_delete_operation(&name, descriptor, _guard, retire_labels)?;
+            self.recover_delete_operation(&name, descriptor, _guard)?;
         }
         Ok(())
     }
@@ -776,17 +728,11 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         operation_id: &str,
         mut descriptor: DeleteDescriptor,
         _guard: &IndexMutationLock,
-        retire_labels: &mut Vec<(String, Option<NoteId>)>,
     ) -> Result<(), CommandError> {
         let mut retain = Vec::with_capacity(descriptor.items.len());
         for item in descriptor.items.clone() {
             let original = item.clone();
-            match self.recover_delete_item(
-                operation_id,
-                &descriptor.deleted_at,
-                item,
-                retire_labels,
-            ) {
+            match self.recover_delete_item(operation_id, &descriptor.deleted_at, item) {
                 Ok(Some(item)) => retain.push(item),
                 Ok(None) => {}
                 Err(_) => retain.push(original),
@@ -801,7 +747,6 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
         operation_id: &str,
         deleted_at: &str,
         mut item: DeleteDescriptorItem,
-        retire_labels: &mut Vec<(String, Option<NoteId>)>,
     ) -> Result<Option<DeleteDescriptorItem>, CommandError> {
         let id = item.temporary_id;
         let temporary = contained_directory_exists(&self.paths, "temporary", &id.to_string())?;
@@ -836,7 +781,7 @@ impl<B: TemporaryWindowBackend> TemporaryInboxService<B> {
                 )?;
                 mark_deleted(&self.paths, id, deleted_at)?;
                 crate::storage::trash::mark_catalog_deleted(&self.paths, operation_id, id)?;
-                retire_labels.push((temporary_window_label(id), None));
+                let _ = self.backend.retire(&temporary_window_label(id));
             }
             (DeleteItemState::Restored, true, false) => {
                 validate_temporary_document(&self.paths, &item)?;

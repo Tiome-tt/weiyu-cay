@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use weiyu_cay_lib::storage::{
+use simple_notes_lib::storage::{
     database::Database, paths::StoragePaths, rebuild::rebuild_index_strict,
 };
 use std::{path::Path, process::Command};

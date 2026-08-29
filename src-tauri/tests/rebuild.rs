@@ -2,7 +2,7 @@ mod support;
 
 use rusqlite::Connection;
 use serde_json::json;
-use weiyu_cay_lib::{
+use simple_notes_lib::{
     commands::{folders::FolderRepository, search::SearchRepository},
     domain::{FolderId, NoteDocument, NoteId, NoteKind},
     error::CommandError,
@@ -30,7 +30,7 @@ type PauseHook = (mpsc::Sender<()>, mpsc::Receiver<()>);
 static SAVE_PAUSE: OnceLock<Mutex<Option<PauseHook>>> = OnceLock::new();
 
 fn pausing_writer(
-    paths: &weiyu_cay_lib::storage::paths::StoragePaths,
+    paths: &simple_notes_lib::storage::paths::StoragePaths,
     id: NoteId,
     kind: NoteKind,
     bytes: &[u8],
@@ -93,7 +93,7 @@ fn rebuild_serializes_a_save_after_its_scan_and_indexes_the_new_revision() {
     let save_paths = store.paths.clone();
     let save = thread::spawn(move || {
         let guard =
-            weiyu_cay_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
+            simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
         let repository = NoteRepository::new(save_paths);
         let mut document = repository
             .load_locked(NoteId::parse_str(NOTE_ID).unwrap(), &guard)
@@ -210,7 +210,7 @@ fn strict_validation_failure_never_publishes_or_mutates_the_active_index() {
 
         assert_eq!(
             error.code(),
-            weiyu_cay_lib::error::CommandErrorCode::Database
+            simple_notes_lib::error::CommandErrorCode::Database
         );
         assert_eq!(fs::read(store.paths.database()).unwrap(), active_before);
         assert_eq!(fs::read(&wal).unwrap(), b"retained wal evidence");
@@ -246,7 +246,7 @@ fn preconstructed_folder_repository_does_not_hold_the_live_index_open_during_reb
     paused_rx.recv().unwrap();
 
     let create = thread::spawn(move || {
-        repository.create(weiyu_cay_lib::domain::CreateFolderInput {
+        repository.create(simple_notes_lib::domain::CreateFolderInput {
             parent_id: None,
             name: "After rebuild".into(),
         })
@@ -351,7 +351,7 @@ fn failed_index_save_marker_survives_until_locked_rebuild_indexes_durable_conten
     let save_paths = store.paths.clone();
     let save = thread::spawn(move || {
         let guard =
-            weiyu_cay_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
+            simple_notes_lib::platform::IndexMutationLock::acquire(save_paths.root()).unwrap();
         let repository = NoteRepository::new_with_writer(save_paths, pausing_writer);
         let mut document = repository
             .load_locked(NoteId::parse_str(NOTE_ID).unwrap(), &guard)
@@ -634,7 +634,7 @@ fn rebuild_rejects_a_folders_manifest_symlink() {
 
     assert_eq!(
         error.code(),
-        weiyu_cay_lib::error::CommandErrorCode::Validation
+        simple_notes_lib::error::CommandErrorCode::Validation
     );
     assert_eq!(fs::read(outside.path()).unwrap(), b"[]");
 }
@@ -657,7 +657,7 @@ fn rebuild_rejects_a_live_database_symlink_without_reading_outside() {
 
     assert_eq!(
         error.code(),
-        weiyu_cay_lib::error::CommandErrorCode::Validation
+        simple_notes_lib::error::CommandErrorCode::Validation
     );
     assert_eq!(
         fs::read(outside.path()).unwrap(),
@@ -682,7 +682,7 @@ fn rebuild_rejects_a_sidecar_symlink_without_reading_outside() {
 
     assert_eq!(
         error.code(),
-        weiyu_cay_lib::error::CommandErrorCode::Validation
+        simple_notes_lib::error::CommandErrorCode::Validation
     );
     assert_eq!(
         fs::read(outside.path()).unwrap(),
@@ -704,7 +704,7 @@ fn rebuild_rejects_a_live_database_junction_without_touching_outside() {
 
     assert_eq!(
         error.code(),
-        weiyu_cay_lib::error::CommandErrorCode::Validation
+        simple_notes_lib::error::CommandErrorCode::Validation
     );
     assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
 }
@@ -722,7 +722,7 @@ fn rebuild_rejects_a_sidecar_junction_without_touching_outside() {
 
     assert_eq!(
         error.code(),
-        weiyu_cay_lib::error::CommandErrorCode::Validation
+        simple_notes_lib::error::CommandErrorCode::Validation
     );
     assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
 }

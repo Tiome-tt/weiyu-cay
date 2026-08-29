@@ -1,5 +1,5 @@
-use weiyu_cay_lib::error::CommandError;
-use weiyu_cay_lib::windows::main::{
+use simple_notes_lib::error::CommandError;
+use simple_notes_lib::windows::main::{
     mark_close_listener_ready_with_emit, CloseCompletion, CloseRequestDecision,
     MainWindowCloseCoordinator,
 };
@@ -15,7 +15,7 @@ fn startup_close_waits_until_the_renderer_listener_is_ready() {
     );
     assert_eq!(
         coordinator.renderer_ready(token),
-        weiyu_cay_lib::windows::main::ListenerRegistrationDecision::Accepted {
+        simple_notes_lib::windows::main::ListenerRegistrationDecision::Accepted {
             pending_generation: Some(1)
         }
     );
@@ -88,7 +88,7 @@ fn pending_close_is_reissued_when_the_renderer_listener_remounts() {
     let token_2 = coordinator.begin_renderer_registration().unwrap();
     assert_eq!(
         coordinator.renderer_ready(token_2),
-        weiyu_cay_lib::windows::main::ListenerRegistrationDecision::Accepted {
+        simple_notes_lib::windows::main::ListenerRegistrationDecision::Accepted {
             pending_generation: Some(1)
         }
     );
@@ -127,7 +127,7 @@ fn delayed_old_ready_and_cleanup_cannot_replace_the_newer_listener() {
     // A unmounts. Neither stale operation may replace or clear live B.
     assert_eq!(
         coordinator.renderer_ready(token_a),
-        weiyu_cay_lib::windows::main::ListenerRegistrationDecision::Stale
+        simple_notes_lib::windows::main::ListenerRegistrationDecision::Stale
     );
     coordinator.renderer_not_ready(token_a);
 

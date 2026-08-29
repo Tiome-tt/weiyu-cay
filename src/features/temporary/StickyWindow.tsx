@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
-import type { AssetPort, ImageReadPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState } from '../../domain/ports'
+import type { AssetPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState } from '../../domain/ports'
 import { MarkdownSource, type MarkdownSourceHandle } from '../editor/MarkdownSource'
 import { useAutosave, type SaveState } from '../editor/useAutosave'
 import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
-import { Icon } from '../../shared/Icon'
 
 interface StickyWindowProps {
   note: NoteDocument
   temporary: Pick<TemporaryPort, 'save'>
   windows: Pick<TemporaryWindowPort, 'hide' | 'setAlwaysOnTop' | 'startDragging' | 'onCloseRequested'>
   assets?: AssetPort
-  assetReader?: ImageReadPort
   autosaveDelayMs?: number
   initialWindowState?: TemporaryWindowState
 }
@@ -31,13 +29,10 @@ export function StickyWindow({
   temporary,
   windows,
   assets,
-  assetReader,
   autosaveDelayMs,
   initialWindowState,
 }: StickyWindowProps) {
-  // Keep class-backed ports bound to their client when the autosave hook invokes
-  // the callback asynchronously.
-  const autosave = useAutosave(note, { saveNote: (document) => temporary.save(document) }, { delayMs: autosaveDelayMs })
+  const autosave = useAutosave(note, { saveNote: temporary.save }, { delayMs: autosaveDelayMs })
   const [windowState, setWindowState] = useState(initialWindowState ?? defaultState(note))
   const [windowError, setWindowError] = useState<string | null>(null)
   const sourceRef = useRef<MarkdownSourceHandle>(null)
@@ -45,13 +40,11 @@ export function StickyWindow({
   const hideAfterFlush = useCallback(async () => {
     setWindowError(null)
     await sourceRef.current?.beginEditBarrier()
+    if (!(await autosave.flush())) {
+      sourceRef.current?.endEditBarrier()
+      return
+    }
     try {
-      const saved = await autosave.flush()
-      if (!saved) {
-        // Hiding a sticky window is reversible and must not strand the user when
-        // the disk is temporarily unavailable. The dirty draft remains mounted
-        // in the hidden window and the inbox can retry it when shown again.
-      }
       await windows.hide(note.id)
     } catch {
       setWindowError('便签无法隐藏，请重试。')
@@ -64,12 +57,12 @@ export function StickyWindow({
     if (windows.onCloseRequested === undefined) return
     let unlisten: (() => void) | undefined
     let disposed = false
-    void Promise.resolve().then(() => windows.onCloseRequested!((payload) => {
+    void windows.onCloseRequested((payload) => {
       if (shouldHandleTemporaryClose(note.id, { payload })) void hideAfterFlush()
-    })).then((stop) => {
+    }).then((stop) => {
       if (disposed) stop()
       else unlisten = stop
-    }).catch(() => undefined)
+    })
     return () => {
       disposed = true
       unlisten?.()
@@ -99,7 +92,7 @@ export function StickyWindow({
           aria-label="拖动便签"
           onPointerDown={() => void windows.startDragging()}
         >
-          <Icon name="note" size={15} />
+          <span aria-hidden="true">⋮⋮</span>
           <span>临时便签</span>
         </button>
         <div className="sticky-window__actions">
@@ -112,7 +105,7 @@ export function StickyWindow({
             <span aria-hidden="true">⌖</span>
           </button>
           <button type="button" aria-label="关闭便签" onClick={() => void hideAfterFlush()}>
-            <Icon name="close" size={15} />
+            <span aria-hidden="true">×</span>
           </button>
         </div>
       </header>
@@ -123,17 +116,13 @@ export function StickyWindow({
           onChange={autosave.updateMarkdown}
           noteId={note.id}
           assets={assets}
-          assetReader={assetReader}
-          showBlockHandle={false}
           onImageError={(message) => setWindowError(message)}
         />
       </section>
-      {(autosave.state.status !== 'idle' || windowError !== null) && (
-        <footer className="sticky-window__status">
-          {autosave.state.status !== 'idle' && <StickySaveStatus state={autosave.state} />}
-          {windowError && <span role="alert">{windowError}</span>}
-        </footer>
-      )}
+      <footer className="sticky-window__status">
+        <StickySaveStatus state={autosave.state} />
+        {windowError && <span role="alert">{windowError}</span>}
+      </footer>
     </main>
   )
 }

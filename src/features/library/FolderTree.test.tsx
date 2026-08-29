@@ -43,204 +43,11 @@ function renderTree(overrides: { onSelect?: (id: FolderId | null) => void; onMov
 
 afterEach(cleanup)
 
+  it('keeps a visible treeitem focus target when unfiled is hidden', async () => {
+    render(<FolderTree folders={rows} activeId={null} showUnfiled={false} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} />)
+    await waitFor(() => expect(screen.getAllByRole('treeitem').some((item) => item.tabIndex === 0)).toBe(true))
+  })
 describe('FolderTree keyboard navigation', () => {
-  it('keeps nested folders collapsed on initial render', async () => {
-    const user = userEvent.setup()
-    renderTree()
-
-    const project = screen.getByRole('treeitem', { name: '项目 A' })
-    const disclosure = screen.getByTestId('folder-disclosure-项目 A')
-    expect(project).toHaveAttribute('aria-expanded', 'false')
-    expect(disclosure).toHaveAttribute('data-expanded', 'false')
-    expect(screen.queryByRole('treeitem', { name: '子项目' })).not.toBeInTheDocument()
-
-    await user.click(project)
-    expect(project).toHaveAttribute('aria-expanded', 'true')
-    expect(disclosure).toHaveAttribute('data-expanded', 'true')
-    expect(screen.getByRole('treeitem', { name: '子项目' })).toBeVisible()
-  })
-
-  it('shows a disclosure before lazy folder notes are loaded', () => {
-    const leafFolder: Folder = { id: folderA, parentId: null, name: '按需加载', sortOrder: 0 }
-    render(
-      <FolderTree
-        folders={[leafFolder]}
-        activeId={null}
-        state="ready"
-        onSelect={vi.fn()}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onRename={vi.fn().mockResolvedValue(undefined)}
-        onMove={vi.fn().mockResolvedValue(undefined)}
-        onDelete={vi.fn().mockResolvedValue(undefined)}
-        folderContents={() => undefined}
-      />,
-    )
-
-    expect(screen.getByTestId('folder-disclosure-按需加载')).toHaveAttribute('data-expanded', 'false')
-  })
-
-  it('keeps the child branch mounted while toggling a collapse animation state', async () => {
-    const user = userEvent.setup()
-    renderTree()
-
-    const project = screen.getByRole('treeitem', { name: '项目 A' })
-    await user.click(project)
-    const group = project.parentElement?.querySelector<HTMLElement>('[data-folder-parent-id="019c0000-0000-7000-8000-000000000041"]')
-    if (group === null || group === undefined) throw new Error('child folder group not found')
-    expect(group).toHaveAttribute('data-collapsed', 'false')
-
-    await user.click(project)
-    expect(group).toHaveAttribute('data-collapsed', 'true')
-  })
-
-  it('keeps a selected folder collapsed after one click while its notes refresh', async () => {
-    const user = userEvent.setup()
-    function ControlledTree() {
-      const [activeId, setActiveId] = useState<FolderId | null>(folderA)
-      const [folders, setFolders] = useState(rows)
-      return (
-        <FolderTree
-          folders={folders}
-          activeId={activeId}
-          state="ready"
-          onSelect={(id) => {
-            setActiveId(id)
-            setFolders([...rows])
-          }}
-          onCreate={vi.fn().mockResolvedValue(undefined)}
-          onRename={vi.fn().mockResolvedValue(undefined)}
-          onMove={vi.fn().mockResolvedValue(undefined)}
-          onDelete={vi.fn().mockResolvedValue(undefined)}
-          folderContents={() => undefined}
-        />
-      )
-    }
-
-    render(<ControlledTree />)
-    const project = screen.getByRole('treeitem', { name: '项目 A' })
-    expect(project).toHaveAttribute('aria-expanded', 'true')
-    await user.click(project)
-
-    await waitFor(() => expect(project).toHaveAttribute('aria-expanded', 'false'))
-  })
-
-  it('does not reopen an expanded folder when selecting it to collapse', async () => {
-    const user = userEvent.setup()
-    function ControlledTree() {
-      const [activeId, setActiveId] = useState<FolderId | null>(null)
-      return (
-        <FolderTree
-          folders={rows}
-          activeId={activeId}
-          state="ready"
-          onSelect={setActiveId}
-          onCreate={vi.fn().mockResolvedValue(undefined)}
-          onRename={vi.fn().mockResolvedValue(undefined)}
-          onMove={vi.fn().mockResolvedValue(undefined)}
-          onDelete={vi.fn().mockResolvedValue(undefined)}
-        />
-      )
-    }
-
-    render(<ControlledTree />)
-    const projectA = screen.getByRole('treeitem', { name: '项目 A' })
-    await user.click(projectA)
-    expect(projectA).toHaveAttribute('aria-expanded', 'true')
-
-    await user.click(screen.getByRole('treeitem', { name: '项目 B' }))
-    await user.click(projectA)
-
-    await waitFor(() => expect(projectA).toHaveAttribute('aria-expanded', 'false'))
-  })
-
-  it('seeds the collapsed state when folders arrive after the loading render', async () => {
-    const props = {
-      state: 'ready' as const,
-      activeId: null,
-      onSelect: vi.fn(),
-      onCreate: vi.fn().mockResolvedValue(undefined),
-      onRename: vi.fn().mockResolvedValue(undefined),
-      onMove: vi.fn().mockResolvedValue(undefined),
-      onDelete: vi.fn().mockResolvedValue(undefined),
-    }
-    const rendered = render(<FolderTree folders={[]} {...props} />)
-    rendered.rerender(<FolderTree folders={rows} {...props} />)
-
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '项目 A' })).toHaveAttribute('aria-expanded', 'false'))
-    expect(screen.queryByRole('treeitem', { name: '子项目' })).not.toBeInTheDocument()
-  })
-
-  it('keeps root-level notes visible beside collapsed root folders', () => {
-    render(
-      <FolderTree
-        folders={rows}
-        activeId={null}
-        state="ready"
-        onSelect={vi.fn()}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onRename={vi.fn().mockResolvedValue(undefined)}
-        onMove={vi.fn().mockResolvedValue(undefined)}
-        onDelete={vi.fn().mockResolvedValue(undefined)}
-        folderContents={(folderId) => folderId === null ? <span>根目录笔记</span> : folderId === folderA ? <span>项目笔记</span> : undefined}
-      />,
-    )
-
-    expect(screen.getByText('根目录笔记')).toBeVisible()
-    expect(screen.queryByText('项目笔记')).not.toBeInTheDocument()
-  })
-
-  it('also collapses a root folder whose notes arrive without child folders', () => {
-    const leafFolder: Folder = { id: folderA, parentId: null, name: '项目笔记夹', sortOrder: 0 }
-    render(
-      <FolderTree
-        folders={[leafFolder]}
-        activeId={null}
-        state="ready"
-        onSelect={vi.fn()}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onRename={vi.fn().mockResolvedValue(undefined)}
-        onMove={vi.fn().mockResolvedValue(undefined)}
-        onDelete={vi.fn().mockResolvedValue(undefined)}
-        folderContents={(folderId) => folderId === null ? <span>根目录笔记</span> : <span>项目笔记</span>}
-      />,
-    )
-
-    expect(screen.getByRole('treeitem', { name: '项目笔记夹' })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.getByText('根目录笔记')).toBeVisible()
-    expect(screen.queryByText('项目笔记')).not.toBeInTheDocument()
-  })
-
-  it('opens a folder selected from an external navigation rail', async () => {
-    const rendered = render(
-      <FolderTree
-        folders={rows}
-        activeId={null}
-        state="ready"
-        onSelect={vi.fn()}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onRename={vi.fn().mockResolvedValue(undefined)}
-        onMove={vi.fn().mockResolvedValue(undefined)}
-        onDelete={vi.fn().mockResolvedValue(undefined)}
-      />,
-    )
-
-    rendered.rerender(
-      <FolderTree
-        folders={rows}
-        activeId={folderA}
-        state="ready"
-        onSelect={vi.fn()}
-        onCreate={vi.fn().mockResolvedValue(undefined)}
-        onRename={vi.fn().mockResolvedValue(undefined)}
-        onMove={vi.fn().mockResolvedValue(undefined)}
-        onDelete={vi.fn().mockResolvedValue(undefined)}
-      />,
-    )
-
-    await waitFor(() => expect(screen.getByRole('treeitem', { name: '项目 A' })).toHaveAttribute('aria-expanded', 'true'))
-    expect(screen.getByRole('treeitem', { name: '子项目' })).toBeVisible()
-  })
-
   it('keeps folder mutations inside a selected-folder more menu', async () => {
     const user = userEvent.setup()
     const props = {
@@ -325,23 +132,6 @@ describe('FolderTree keyboard navigation', () => {
     fireEvent.contextMenu(screen.getByRole('treeitem', { name: '项目 A' }), { clientX: 144, clientY: 88 })
 
     expect(screen.getByRole('menu', { name: '文件夹快捷操作' })).toHaveStyle({ left: '144px', top: '88px' })
-  })
-
-  it('opens the root context menu from blank tree space and creates a top-level folder', async () => {
-    const user = userEvent.setup()
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(<FolderTree folders={rows} activeId={null} state="ready" onSelect={vi.fn()} onCreate={onCreate} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} onCreateNote={vi.fn()} />)
-    const tree = screen.getByRole('tree', { name: '笔记文件夹' })
-
-    fireEvent.contextMenu(tree, { clientX: 210, clientY: 420 })
-
-    expect(screen.getByRole('menu', { name: '文件夹快捷操作' })).toBeVisible()
-    expect(screen.queryByRole('menuitem', { name: '重命名文件夹' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: '新建笔记' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitem', { name: '新建文件夹' }))
-    await user.type(screen.getByRole('textbox', { name: '文件夹名称' }), '根目录文件夹{Enter}')
-
-    expect(onCreate).toHaveBeenCalledWith(null, '根目录文件夹')
   })
 
   it('cancels a new folder draft when focus leaves the input', async () => {
@@ -462,14 +252,14 @@ describe('FolderTree keyboard navigation', () => {
     renderTree()
     const root = screen.getByRole('treeitem', { name: '未归档笔记' })
     const project = screen.getByRole('treeitem', { name: '项目 A' })
+    const child = screen.getByRole('treeitem', { name: '子项目' })
     const last = screen.getByRole('treeitem', { name: '项目 B' })
 
-    expect(screen.getAllByRole('treeitem').map((item) => item.tabIndex)).toEqual([0, -1, -1])
+    expect(screen.getAllByRole('treeitem').map((item) => item.tabIndex)).toEqual([0, -1, -1, -1])
     root.focus()
     await user.keyboard('{ArrowDown}')
     expect(project).toHaveFocus()
     await user.keyboard('{ArrowRight}')
-    const child = screen.getByRole('treeitem', { name: '子项目' })
     expect(child).toHaveFocus()
     await user.keyboard('{ArrowLeft}')
     expect(project).toHaveFocus()

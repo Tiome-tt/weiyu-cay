@@ -8,7 +8,6 @@ export type SaveState =
 
 interface AutosaveOptions {
   delayMs?: number
-  publishDraftState?: boolean
 }
 
 interface SaveRequest {
@@ -21,12 +20,11 @@ export const DEFAULT_AUTOSAVE_DELAY_MS = 600
 
 export function useAutosave(
   document: NoteDocument,
-  notes: Pick<NotePort, 'saveNote'> & Partial<Pick<NotePort, 'loadNote'>>,
-  { delayMs = DEFAULT_AUTOSAVE_DELAY_MS, publishDraftState = true }: AutosaveOptions = {},
+  notes: Pick<NotePort, 'saveNote'>,
+  { delayMs = DEFAULT_AUTOSAVE_DELAY_MS }: AutosaveOptions = {},
 ) {
   const [markdown, setMarkdown] = useState(document.markdown)
   const [state, setState] = useState<SaveState>({ status: 'idle' })
-  const [updatedAt, setUpdatedAt] = useState(document.updatedAt)
   const mountedRef = useRef(true)
   const generationRef = useRef(0)
   const activeIdRef = useRef(document.id)
@@ -37,8 +35,6 @@ export function useAutosave(
   const timerRef = useRef<number | null>(null)
   const inFlightRef = useRef<SaveRequest | null>(null)
   const queuedRef = useRef(false)
-  const conflictRecoveryVersionRef = useRef<number | null>(null)
-  const conflictRecoveryPendingRef = useRef(false)
   const notesRef = useRef(notes)
   const delayRef = useRef(delayMs)
   const flushRef = useRef<() => Promise<boolean>>(async () => true)
@@ -48,11 +44,7 @@ export function useAutosave(
   delayRef.current = delayMs
 
   const publish = useCallback((nextState: SaveState, generation = generationRef.current) => {
-    if (!mountedRef.current || generation !== generationRef.current) return
-    setState((current) => {
-      if (current.status === nextState.status && nextState.status !== 'error') return current
-      return nextState
-    })
+    if (mountedRef.current && generation === generationRef.current) setState(nextState)
   }, [])
 
   const clearTimer = useCallback(() => {
@@ -99,47 +91,13 @@ export function useAutosave(
             return false
           }
           durableRef.current = authoritative
-          conflictRecoveryVersionRef.current = null
           persistedMarkdownRef.current = content
-          setUpdatedAt(authoritative.updatedAt)
           const hasNewerText = editVersionRef.current !== editVersion || markdownRef.current !== content
           publish({ status: hasNewerText ? 'dirty' : 'saved' }, generation)
           return true
         })
-        .catch(async (error: unknown) => {
+        .catch((error: unknown) => {
           if (generation !== generationRef.current || noteId !== activeIdRef.current) return false
-          if (
-            isConflict(error) &&
-            conflictRecoveryVersionRef.current !== editVersion &&
-            notesRef.current.loadNote !== undefined
-          ) {
-            conflictRecoveryVersionRef.current = editVersion
-            try {
-              const authoritative = await notesRef.current.loadNote(noteId)
-              if (
-                generation === generationRef.current &&
-                noteId === activeIdRef.current &&
-                authoritative.markdown === persistedMarkdownRef.current
-              ) {
-                durableRef.current = authoritative
-                conflictRecoveryPendingRef.current = true
-                return false
-              }
-              if (
-                generation === generationRef.current &&
-                noteId === activeIdRef.current &&
-                authoritative.markdown === markdownRef.current
-              ) {
-                durableRef.current = authoritative
-                persistedMarkdownRef.current = authoritative.markdown
-                setUpdatedAt(authoritative.updatedAt)
-                publish({ status: 'saved' }, generation)
-                return true
-              }
-            } catch {
-              // Keep the original conflict guidance when the recovery load fails.
-            }
-          }
           publish(
             {
               status: 'error',
@@ -157,16 +115,6 @@ export function useAutosave(
       request.promise = promise
       inFlightRef.current = request
       const succeeded = await promise
-
-      if (
-        !succeeded &&
-        conflictRecoveryPendingRef.current &&
-        generation === generationRef.current &&
-        noteId === activeIdRef.current
-      ) {
-        conflictRecoveryPendingRef.current = false
-        return runSave(generation)
-      }
 
       if (
         succeeded &&
@@ -207,7 +155,7 @@ export function useAutosave(
       if (nextMarkdown === markdownRef.current) return
       markdownRef.current = nextMarkdown
       editVersionRef.current += 1
-      if (publishDraftState) setMarkdown(nextMarkdown)
+      setMarkdown(nextMarkdown)
 
       if (nextMarkdown === persistedMarkdownRef.current && inFlightRef.current === null) {
         clearTimer()
@@ -221,25 +169,11 @@ export function useAutosave(
       publish({ status: 'dirty' })
       scheduleSave()
     },
-    [clearTimer, publish, publishDraftState, scheduleSave],
+    [clearTimer, publish, scheduleSave],
   )
 
   useEffect(() => {
-    if (activeIdRef.current === document.id) {
-      const durable = durableRef.current
-      if (document.revision >= durable.revision || isLaterTimestamp(document.updatedAt, durable.updatedAt)) {
-        const hasLocalEdits = markdownRef.current !== persistedMarkdownRef.current
-        durableRef.current = hasLocalEdits ? { ...document, markdown: markdownRef.current } : document
-        if (!hasLocalEdits && document.markdown !== markdownRef.current) {
-          markdownRef.current = document.markdown
-          persistedMarkdownRef.current = document.markdown
-          setMarkdown(document.markdown)
-          setState({ status: 'idle' })
-        }
-      }
-      setUpdatedAt((current) => isLaterTimestamp(document.updatedAt, current) ? document.updatedAt : current)
-      return
-    }
+    if (activeIdRef.current === document.id) return
     clearTimer()
     generationRef.current += 1
     activeIdRef.current = document.id
@@ -249,10 +183,7 @@ export function useAutosave(
     editVersionRef.current = 0
     inFlightRef.current = null
     queuedRef.current = false
-    conflictRecoveryVersionRef.current = null
-    conflictRecoveryPendingRef.current = false
     setMarkdown(document.markdown)
-    setUpdatedAt(document.updatedAt)
     setState({ status: 'idle' })
   }, [clearTimer, document])
 
@@ -268,7 +199,7 @@ export function useAutosave(
     }
   }, [clearTimer])
 
-  return { state, markdown, updatedAt, updateMarkdown, flush, retry }
+  return { state, markdown, updateMarkdown, flush, retry }
 }
 
 function saveErrorMessage(error: unknown): string {
@@ -280,10 +211,4 @@ function saveErrorMessage(error: unknown): string {
 
 function isConflict(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'conflict'
-}
-
-function isLaterTimestamp(candidate: string, current: string) {
-  const candidateTime = Date.parse(candidate)
-  const currentTime = Date.parse(current)
-  return Number.isFinite(candidateTime) && (!Number.isFinite(currentTime) || candidateTime > currentTime)
 }

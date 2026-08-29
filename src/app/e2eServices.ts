@@ -22,8 +22,8 @@ function initialState(): E2EState {
   return {
     notes: [document(authenticationId, 'formal', '用户认证', '# 用户认证\n\n身份验证入口。', folderId)],
     temporary: [
-      document('019c0000-0000-7000-8000-000000000703' as NoteId, 'temporary', '临时便签', '发布前检查', null),
-      document('019c0000-0000-7000-8000-000000000704' as NoteId, 'temporary', '临时便签', '接口异常处理', null),
+      document('019c0000-0000-7000-8000-000000000703' as NoteId, 'temporary', 'Temporary capture', '发布前检查', null),
+      document('019c0000-0000-7000-8000-000000000704' as NoteId, 'temporary', 'Temporary capture', '接口异常处理', null),
     ],
     deletedTemporary: [],
     trashed: [],
@@ -158,7 +158,7 @@ export function createE2EAppServices(): AppServices {
       async createFolder() { return folders[0] },
       async renameFolder() { return folders[0] },
       async moveFolder() { return folders[0] },
-      async deleteEmptyFolder() { return },
+      async deleteEmptyFolder() { return 'e2e-folder-trash' },
     },
     system: {
       async getWindowPreference(key) { return preferences.get(key) as never },

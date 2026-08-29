@@ -1,7 +1,7 @@
 {
   "theme": "forest",
   "stickyColorMode": "follow-theme",
-  "bodyFont": "KaiTi, STKaiti, serif",
+  "bodyFont": "system-ui, sans-serif",
   "codeFont": "ui-monospace, SFMono-Regular, Consolas, monospace",
   "fontSize": 16.0,
   "lineHeight": 1.6,

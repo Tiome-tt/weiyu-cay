@@ -48,60 +48,6 @@ describe('useAutosave', () => {
     expect(autosave.result.current.state.status).toBe('saved')
   })
 
-  it('does not republish the same dirty status for every character', () => {
-    const autosave = renderHook(() => useAutosave(note('old'), fakeNotePort(), { delayMs: 400 }))
-
-    act(() => autosave.result.current.updateMarkdown('a'))
-    const dirtyState = autosave.result.current.state
-    act(() => autosave.result.current.updateMarkdown('ab'))
-
-    expect(autosave.result.current.state).toBe(dirtyState)
-  })
-
-  it('publishes the authoritative updated time after a durable save', async () => {
-    const saveNote = vi.fn(async (document: NoteDocument) => ({
-      ...document,
-      revision: 2,
-      updatedAt: '2026-08-24T08:10:00Z',
-    }))
-    const autosave = renderHook(() =>
-      useAutosave(note('old'), fakeNotePort({ saveNote }), { delayMs: 400 }),
-    )
-
-    expect(autosave.result.current.updatedAt).toBe('2026-07-30T15:30:00+08:00')
-    act(() => autosave.result.current.updateMarkdown('new'))
-    await act(async () => autosave.result.current.flush())
-
-    expect(autosave.result.current.updatedAt).toBe('2026-08-24T08:10:00Z')
-  })
-
-  it('adopts newer metadata for the same open note without resetting its body', async () => {
-    const saveNote = vi.fn(async (document: NoteDocument) => ({
-      ...document,
-      revision: 3,
-      updatedAt: '2026-08-24T08:12:00Z',
-    }))
-    const port = fakeNotePort({ saveNote })
-    const autosave = renderHook(
-      ({ document }) => useAutosave(document, port, { delayMs: 400 }),
-      { initialProps: { document: note('body') } },
-    )
-
-    autosave.rerender({
-      document: { ...note('body'), title: '新标题', updatedAt: '2026-08-24T08:10:00Z' },
-    })
-
-    expect(autosave.result.current.updatedAt).toBe('2026-08-24T08:10:00Z')
-    expect(autosave.result.current.markdown).toBe('body')
-    act(() => autosave.result.current.updateMarkdown('body updated'))
-    await act(async () => autosave.result.current.flush())
-    expect(saveNote).toHaveBeenCalledWith(expect.objectContaining({
-      title: '新标题',
-      updatedAt: '2026-08-24T08:10:00Z',
-      markdown: 'body updated',
-    }))
-  })
-
   it('flushes a dirty note when the editor loses focus', async () => {
     const saveNote = vi.fn(async (document: NoteDocument) => saved(document, 2))
     const autosave = renderHook(() =>
@@ -181,45 +127,9 @@ describe('useAutosave', () => {
     expect(autosave.result.current.markdown).toBe('local text')
     expect(autosave.result.current.state).toMatchObject({
       status: 'error',
-      message: expect.stringMatching(/其他窗口|重新加载|重试/),
+      message: expect.stringMatching(/其他窗口中发生变化|重试保存/),
       retry: expect.any(Function),
     })
-  })
-
-  it('reloads a newer matching revision and retries the local draft automatically', async () => {
-    const initial = note('old')
-    const loadNote = vi.fn().mockResolvedValue(saved(initial, 2))
-    const saveNote = vi
-      .fn<(document: NoteDocument) => Promise<NoteDocument>>()
-      .mockRejectedValueOnce(commandError('conflict'))
-      .mockImplementationOnce(async (document) => saved(document, 3))
-    const autosave = renderHook(() =>
-      useAutosave(initial, fakeNotePort({ saveNote, loadNote }), { delayMs: 400 }),
-    )
-
-    act(() => autosave.result.current.updateMarkdown('local draft'))
-    await act(async () => autosave.result.current.flush())
-
-    expect(loadNote).toHaveBeenCalledWith(initial.id)
-    expect(saveNote).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'local draft', revision: 2 }))
-    await waitFor(() => expect(autosave.result.current.state.status).toBe('saved'))
-  })
-
-  it('accepts a conflict recovery when the durable Markdown already equals the local draft', async () => {
-    const initial = note('old')
-    const authoritative = saved(note('local draft'), 2)
-    const saveNote = vi.fn().mockRejectedValue(commandError('conflict'))
-    const loadNote = vi.fn().mockResolvedValue(authoritative)
-    const autosave = renderHook(() =>
-      useAutosave(initial, fakeNotePort({ saveNote, loadNote }), { delayMs: 400 }),
-    )
-
-    act(() => autosave.result.current.updateMarkdown('local draft'))
-    await act(async () => autosave.result.current.flush())
-
-    await waitFor(() => expect(autosave.result.current.state.status).toBe('saved'))
-    expect(saveNote).toHaveBeenCalledOnce()
-    expect(loadNote).toHaveBeenCalledWith(initial.id)
   })
 
   it('serializes in-flight edits onto the returned authoritative revision', async () => {
@@ -260,27 +170,6 @@ describe('useAutosave', () => {
 
     expect(saveNote.mock.calls[0][0]).toMatchObject({ markdown: 'first', revision: 1 })
     expect(saveNote.mock.calls[1][0]).toMatchObject({ markdown: 'second', revision: 4 })
-  })
-
-  it('keeps the authoritative revision when draft publication is disabled and the parent rerenders', async () => {
-    const saveNote = vi
-      .fn<(document: NoteDocument) => Promise<NoteDocument>>()
-      .mockImplementationOnce(async (document) => saved(document, 2))
-      .mockImplementationOnce(async (document) => saved(document, 3))
-    const initial = note('old')
-    const autosave = renderHook(
-      ({ document }) => useAutosave(document, fakeNotePort({ saveNote }), { delayMs: 400, publishDraftState: false }),
-      { initialProps: { document: initial } },
-    )
-
-    act(() => autosave.result.current.updateMarkdown('first'))
-    await act(async () => autosave.result.current.flush())
-    autosave.rerender({ document: initial })
-    act(() => autosave.result.current.updateMarkdown('second'))
-    await act(async () => autosave.result.current.flush())
-
-    expect(saveNote.mock.calls[0][0]).toMatchObject({ markdown: 'first', revision: 1 })
-    expect(saveNote.mock.calls[1][0]).toMatchObject({ markdown: 'second', revision: 2 })
   })
 
   it('ignores an old note response after the selected document changes', async () => {
