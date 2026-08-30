@@ -443,7 +443,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       onUndoDelete={() => void undoFormalDelete()}
       onDismissFeedback={() => setTrashFeedback(null)}
       folderId={folderId}
-      showEmptyState
+      showEmptyState={folderId !== null}
       onReorder={library.reorderNotes}
       onMoveToFolder={async (noteId, targetFolderId) => { await navigateAfterSave(() => library.moveNote(noteId, targetFolderId)) }}
     />
@@ -535,7 +535,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         <FolderTree
           folders={library.folders}
           activeId={activeView === 'library' ? library.activeFolderId : null}
-          showUnfiled
+          showUnfiled={false}
           temporaryInboxActive={activeView === 'temporary'}
           trashActive={activeView === 'trash'}
           state={library.folderState}
@@ -568,9 +568,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
         {activeView === 'temporary' ? (
-          <section className="note-list" aria-label="临时收集箱导航">
+          <section className="note-list" aria-label="临时便签导航">
             <header className="library-pane__header library-pane__header--compact">
-              <div><span className="library-pane__eyebrow">临时捕捉</span><h2>收集箱</h2></div>
+              <div><span className="library-pane__eyebrow">临时捕捉</span><h2>临时便签</h2></div>
               <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
             <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>

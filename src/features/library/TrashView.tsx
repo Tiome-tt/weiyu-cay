@@ -241,7 +241,7 @@ function isMissingFolder(entry: TrashEntry, folders: Folder[]) {
 }
 
 function folderName(entry: TrashEntry, folders: Folder[]) {
-  if (entry.kind === 'temporary') return '临时收集箱'
+  if (entry.kind === 'temporary') return '临时便签'
   if (entry.previousFolderId === null) return '未归档笔记'
   return folders.find((folder) => folder.id === entry.previousFolderId)?.name ?? '已恢复'
 }

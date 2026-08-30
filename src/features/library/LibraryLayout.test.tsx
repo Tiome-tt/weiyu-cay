@@ -411,7 +411,7 @@ describe('LibraryLayout', () => {
 
     expect(await screen.findByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
     expect(screen.queryByRole('button', { name: '未归档笔记' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '临时收集箱' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '临时便签' })).toBeVisible()
     expect(screen.getByRole('button', { name: '回收站' })).toBeVisible()
     expect(system.setWindowPreference).not.toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
   })
@@ -532,8 +532,8 @@ describe('LibraryLayout', () => {
       />,
     )
 
-    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
-    await screen.findByRole('region', { name: '临时收集箱' })
+    await user.click(await screen.findByRole('treeitem', { name: '临时便签' }))
+    await screen.findByRole('region', { name: '临时便签' })
     await user.click(screen.getByRole('button', { name: '折叠目录' }))
     expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent('目录')
 
@@ -853,8 +853,8 @@ describe('LibraryLayout', () => {
       />,
     )
 
-    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
-    expect(await screen.findByRole('region', { name: '临时收集箱' })).toBeVisible()
+    await user.click(await screen.findByRole('treeitem', { name: '临时便签' }))
+    expect(await screen.findByRole('region', { name: '临时便签' })).toBeVisible()
     expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
     expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '190px' })
   })
@@ -870,7 +870,7 @@ describe('LibraryLayout', () => {
     const ref = createRef<LibraryLayoutHandle>()
     const user = userEvent.setup()
     render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={temporary} autosaveDelayMs={2000} />)
-    await user.click(await screen.findByRole('treeitem', { name: '临时收集箱' }))
+    await user.click(await screen.findByRole('treeitem', { name: '临时便签' }))
     await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
@@ -1450,7 +1450,7 @@ describe('LibraryLayout', () => {
     expect(screen.getByText('每个念头，都是一座小岛。')).toBeVisible()
     expect(screen.getByText('正在加载笔记…')).toBeVisible()
     pending.resolve([])
-    expect(await screen.findByText('此文件夹中还没有笔记。')).toBeVisible()
+    expect(screen.queryByText('此文件夹中还没有笔记。')).not.toBeInTheDocument()
     unmount()
 
     render(
@@ -1469,6 +1469,14 @@ describe('LibraryLayout', () => {
     expect(screen.queryByText(/C:\\Users/)).not.toBeInTheDocument()
   })
 
+  it('shows the empty state for an actual folder but not for the root directory', async () => {
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) })} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />)
+
+    expect(screen.queryByText('此文件夹中还没有笔记。')).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
+    expect(await screen.findByText('此文件夹中还没有笔记。')).toBeVisible()
+  })
   it('creates, renames, moves, and deletes folders through the folder port', async () => {
     const user = userEvent.setup()
     const createdFolder: Folder = {

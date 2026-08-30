@@ -207,7 +207,7 @@ describe('TemporaryInbox', () => {
     const { unmount } = render(
       <TemporaryInbox temporary={{ ...fakeTemporaryPort([]) }} folders={folderRows} />,
     )
-    expect(await screen.findByText('临时收集箱为空。')).toBeVisible()
+    expect(await screen.findByText('临时便签为空。')).toBeVisible()
     unmount()
 
     render(
@@ -404,7 +404,7 @@ describe('TemporaryInbox', () => {
 
     await act(async () => { await Promise.resolve() })
     expect(screen.getByRole('checkbox', { name: '选择 发布前检查' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: '刷新临时收集箱' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '刷新临时便签' })).not.toBeInTheDocument()
 
     const initialCalls = list.mock.calls.length
     await act(async () => vi.advanceTimersByTimeAsync(1500))

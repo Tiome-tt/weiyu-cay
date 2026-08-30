@@ -467,7 +467,7 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toBeVisible()
     await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(1))
-    await userEvent.setup().click(screen.getAllByRole('treeitem')[1])
+    await userEvent.setup().click(screen.getByRole('treeitem', { name: '临时便签' }))
     await waitFor(() => expect(listTemporary).toHaveBeenCalledTimes(1))
 
     await userEvent.setup().click(screen.getAllByRole('alert')[0].querySelector('button')!)
@@ -484,7 +484,7 @@ describe('App', () => {
     expect((await screen.findAllByText('durable temporary truth')).length).toBeGreaterThan(0)
     expect(screen.getByText('Recovered folder')).toBeVisible()
 
-    await userEvent.setup().click(screen.getAllByRole('treeitem')[0])
+    await userEvent.setup().click(screen.getByRole('treeitem', { name: 'Recovered folder' }))
     expect(await screen.findByText('Recovered formal note')).toBeVisible()
   })
 

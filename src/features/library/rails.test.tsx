@@ -46,10 +46,10 @@ describe('collapsed library rails', () => {
     )
 
     expect(screen.getByRole('navigation', { name: '折叠的资料库' })).toHaveStyle({ width: '42px' })
-    expect(screen.getByRole('button', { name: '临时收集箱' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('button', { name: '临时收集箱' })).toContainElement(screen.getByTestId('icon-inbox'))
+    expect(screen.getByRole('button', { name: '临时便签' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: '临时便签' })).toContainElement(screen.getByTestId('icon-inbox'))
 
-    await user.click(screen.getByRole('button', { name: '临时收集箱' }))
+    await user.click(screen.getByRole('button', { name: '临时便签' }))
     await user.click(screen.getByRole('button', { name: '回收站' }))
     await user.click(screen.getByRole('button', { name: '展开资料库' }))
 

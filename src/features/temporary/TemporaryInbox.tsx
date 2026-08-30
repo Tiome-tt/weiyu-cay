@@ -241,14 +241,14 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   }
 
   return (
-    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label="临时收集箱">
+    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label="临时便签">
       <header className="temporary-inbox__header">
         <div>
           <span className="library-pane__eyebrow">临时捕捉</span>
-          <h2>临时收集箱</h2>
+          <h2>临时便签</h2>
         </div>
       </header>
-      <div className="temporary-inbox__actions" aria-label="临时收集箱操作">
+      <div className="temporary-inbox__actions" aria-label="临时便签操作">
         <button type="button" disabled={busy !== null || visibleItems.length === 0} onClick={() => setSelected(new Set(visibleItems.map((item) => item.id)))}>全选</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setDialogOpen(true)}>转为笔记</button>
@@ -257,7 +257,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       {error && <p role="alert" className="library-status library-status--error">{error}</p>}
       {state === 'loading' && <p role="status" className="library-status">正在加载临时捕捉…</p>}
       {state === 'error' && <p role="alert" className="library-status library-status--error">无法加载临时捕捉。</p>}
-      {state === 'ready' && visibleItems.length === 0 && <p className="library-status">临时收集箱为空。</p>}
+      {state === 'ready' && visibleItems.length === 0 && <p className="library-status">临时便签为空。</p>}
       {state === 'ready' && visibleItems.length > 0 && (
         <ul className="temporary-inbox__list" aria-label="临时捕捉列表">
           {visibleItems.map((item) => {
