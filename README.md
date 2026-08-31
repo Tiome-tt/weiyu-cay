@@ -20,12 +20,6 @@
 - `weiyu-cay_1.0.0_x64-setup.exe`：普通用户推荐，双击即可安装。
 - `weiyu-cay_1.0.0_x64_en-US.msi`：适合 Windows Installer、企业部署或静默安装。
 
-两个安装包安装的是同一个 Cay（微屿）1.0.0 Windows 版本，请选择一个即可，不需要同时安装。当前安装包未进行商业代码签名，首次运行时 Windows SmartScreen 可能提示未知发布者。
-
-### SHA256
-
-- EXE：`C856433D2FEEB9D97F630D0D417081B11893FE335C1A9A0E90BF6F7A54AAAB25`
-- MSI：`A7A71DA0A13E7B903AA86F77E369A97CE5067B0FD84B728CFBF9435D7647E084`
 
 ## 从源码运行
 
