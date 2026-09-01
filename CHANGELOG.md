@@ -37,7 +37,7 @@
 
 ### 1.0.1 · Windows · 预发布
 日期：2026-09-01
-提交：待提交（构建后补齐）
+提交：`b95f1be`
 
 #### 新增
 - 在编辑区右键菜单和“＋”菜单中增加可搜索的内部链接弹窗。
@@ -65,8 +65,8 @@
 - 安装包为未签名版本，首次运行可能触发 Windows SmartScreen 提示；macOS 平台验证待完成。
 
 #### 安装包
-- `weiyu-cay_1.0.1_x64-setup.exe` — SHA256: 待上传后补齐
-- `weiyu-cay_1.0.1_x64_en-US.msi` — SHA256: 待上传后补齐
+- `weiyu-cay_1.0.1_x64-setup.exe` — SHA256: `9614C9438E13D3C7EA916EB91DF0A515BD502CA0C40334EE63B2306B6D5277B6`
+- `weiyu-cay_1.0.1_x64_en-US.msi` — SHA256: `6902C03D8C4BA44377513E886E68C50AE9C6339F745C394FE36472E3E173D837`
 
 ### 1.0.0 · Windows · 预发布
 日期：2026-08-31
