@@ -68,10 +68,10 @@
 - `weiyu-cay_1.0.1_x64-setup.exe` — SHA256: `9614C9438E13D3C7EA916EB91DF0A515BD502CA0C40334EE63B2306B6D5277B6`
 - `weiyu-cay_1.0.1_x64_en-US.msi` — SHA256: `6902C03D8C4BA44377513E886E68C50AE9C6339F745C394FE36472E3E173D837`
 
-### 1.0.0 · Windows · 预发布
+### 1.0.0 · Windows · 撤回
 日期：2026-08-31
 提交：`0d165e3`
-发布页：[Windows v1.0.0](https://github.com/Tiome-tt/weiyu-cay/releases/tag/windows-v1.0.0)
+旧 Release 已删除；源码标签仍保留：[`windows-v1.0.0`](https://github.com/Tiome-tt/weiyu-cay/tree/windows-v1.0.0)
 
 #### 新增
 - 首次启动创建“开始使用”文件夹和“欢迎来到微屿”教学笔记。
