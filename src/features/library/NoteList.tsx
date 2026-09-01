@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { FolderId, NoteId, NoteSummary } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
@@ -22,6 +23,7 @@ interface NoteListProps {
 }
 export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onDismissFeedback, folderId = null, onReorder, onMoveToFolder, showEmptyState = true }: NoteListProps) {
   const feedbackRef = useRef<HTMLParagraphElement>(null)
+  const contextTriggerRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ id: NoteId; x: number; y: number } | null>(null)
   const pointerDragRef = useRef<NoteId | null>(null)
   const pointerTargetRef = useRef<{ noteId?: NoteId; folderId?: FolderId } | null>(null)
@@ -113,14 +115,14 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingI
 
   return (
     <section aria-label="笔记列表" className="note-list">
-      {deleteFeedback && (
+      {deleteFeedback && createPortal(
         <div className="note-list__mutation-status">
-          <p ref={feedbackRef} role="status" tabIndex={-1}>{deleteFeedback}</p>
+          <span className="note-list__mutation-icon" aria-hidden="true"><Icon name="note" size={18} /></span><p ref={feedbackRef} role="status" tabIndex={-1} title={deleteFeedback}>{deleteFeedback}</p>
           <div className="note-list__mutation-actions">
             {undoAvailable && onUndoDelete && <button type="button" disabled={undoBusy || deletingId !== null} onClick={onUndoDelete}>{undoBusy ? '正在撤销…' : '撤销删除'}</button>}
-            {onDismissFeedback && <button type="button" aria-label="关闭提示" onClick={onDismissFeedback}>关闭</button>}
+            {onDismissFeedback && <button type="button" aria-label="关闭提示" onClick={onDismissFeedback}><Icon name="close" size={15} /></button>}
           </div>
-        </div>
+        </div>, document.querySelector('.main-window') ?? document.body
       )}
       {deleteError && <p role="alert" className="library-status library-status--error">{deleteError}</p>}
       {state === 'loading' && <p className="library-status">正在加载笔记…</p>}
@@ -150,32 +152,42 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, deletingI
                 onContextMenu={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
+                  contextTriggerRef.current = event.currentTarget
                   setContextTarget(note)
                   setContextPosition({ x: event.clientX, y: event.clientY })
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && contextTarget !== null) {
+                    event.preventDefault()
+                    setContextTarget(null)
+                    setContextPosition(null)
+                    return
+                  }
+                  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+                  event.preventDefault()
+                  const bounds = event.currentTarget.getBoundingClientRect()
+                  contextTriggerRef.current = event.currentTarget
+                  setContextTarget(note)
+                  setContextPosition({ x: bounds.left, y: bounds.bottom })
                 }}
                 onClick={() => { if (!suppressClickRef.current) onSelect(note.id) }}
               >
                 <strong className="note-card__title"><Icon name="note" size={14} />{note.title}</strong>
                 {note.tags.length > 0 && <span className="note-card__tags">{note.tags.map((tag) => `#${tag}`).join(' ')}</span>}
               </button>
-              {onDelete && (
-                <button
-                  type="button"
-                  className="note-list__delete"
-                  aria-label={`删除 ${note.title}`}
-                  disabled={deletingId !== null || undoBusy}
-                  onClick={() => onDelete(note.id, note.title)}
-                >
-                  {deletingId === note.id ? '…' : <Icon name="close" size={14} />}
-                </button>
-              )}
             </li>
           ))}
         </ul>
       )}
       {contextTarget !== null && contextPosition !== null && (
-        <div className="note-context-menu" role="menu" aria-label="笔记快捷操作" style={{ left: contextPosition.x, top: contextPosition.y }} onContextMenu={(event) => event.preventDefault()}>
-          <button type="button" role="menuitem" disabled={onDelete === undefined} onClick={() => {
+        <div className="note-context-menu" role="menu" aria-label="笔记快捷操作" style={{ left: contextPosition.x, top: contextPosition.y }} onKeyDown={(event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          setContextTarget(null)
+          setContextPosition(null)
+          contextTriggerRef.current?.focus()
+        }} onContextMenu={(event) => event.preventDefault()}>
+          <button type="button" role="menuitem" autoFocus disabled={onDelete === undefined || deletingId !== null || undoBusy} onClick={() => {
             if (onDelete !== undefined) onDelete(contextTarget.id, contextTarget.title)
             setContextTarget(null)
             setContextPosition(null)

@@ -86,6 +86,21 @@ describe('TemporaryInbox', () => {
     pendingLoad.resolve(capture)
   })
 
+  it('shows pending feedback and prevents repeated clicks while a sticky opens', async () => {
+    const capture = twoCaptures()[0]
+    const pending = deferred<Awaited<ReturnType<TemporaryWindowPort['show']>>>()
+    const windows = { show: vi.fn(() => pending.promise) }
+    render(<TemporaryInbox temporary={fakeTemporaryPort([capture])} folders={folderRows} windows={windows} />)
+    const button = await screen.findByRole('button', { name: /重新显示/ })
+    fireEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('正在显示…')
+    fireEvent.click(button)
+    expect(windows.show).toHaveBeenCalledTimes(1)
+    await act(async () => pending.resolve({ noteId: capture.id, visible: true, x: 0, y: 0, width: 360, height: 420, alwaysOnTop: false }))
+    expect(button).toBeEnabled()
+    expect(button).toHaveTextContent('显示便笺')
+  })
   it('reopens a hidden sticky window from the main temporary inbox', async () => {
     const captures = twoCaptures()
     const windows = {
@@ -207,7 +222,7 @@ describe('TemporaryInbox', () => {
     const { unmount } = render(
       <TemporaryInbox temporary={{ ...fakeTemporaryPort([]) }} folders={folderRows} />,
     )
-    expect(await screen.findByText('临时便签为空。')).toBeVisible()
+    expect(await screen.findByText('临时便笺为空。')).toBeVisible()
     unmount()
 
     render(
@@ -404,7 +419,7 @@ describe('TemporaryInbox', () => {
 
     await act(async () => { await Promise.resolve() })
     expect(screen.getByRole('checkbox', { name: '选择 发布前检查' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: '刷新临时便签' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '刷新临时便笺' })).not.toBeInTheDocument()
 
     const initialCalls = list.mock.calls.length
     await act(async () => vi.advanceTimersByTimeAsync(1500))

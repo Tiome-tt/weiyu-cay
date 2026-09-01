@@ -39,6 +39,7 @@ interface MarkdownSourceProps {
   presentation?: MarkdownPresentation
   showBlockHandle?: boolean
   external?: Pick<SystemPort, 'openExternal'>
+  onInsertInternalLinkRequest?(): void
 }
 
 export interface MarkdownSourceHandle {
@@ -83,6 +84,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   presentation = 'document',
   showBlockHandle = true,
   external,
+  onInsertInternalLinkRequest,
 }: MarkdownSourceProps, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -526,16 +528,17 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           style={{ top: surfaceControls.toolbarTop, left: surfaceControls.toolbarLeft }}
           onPointerDown={(event) => event.preventDefault()}
         >
-          <button type="button" aria-label="加粗" onClick={() => formatSelection('bold')}>B</button>
-          <button type="button" aria-label="斜体" onClick={() => formatSelection('italic')}><i>I</i></button>
-          <button type="button" aria-label="链接" onClick={() => formatSelection('link')}>↗</button>
-          <button type="button" aria-label="行内代码" onClick={() => formatSelection('code')}>{'</>'}</button>
-          <button type="button" aria-label="删除线" onClick={() => formatSelection('strikethrough')}><s>S</s></button>
+          <button type="button" aria-label="加粗" title="加粗" onClick={() => formatSelection('bold')}>B</button>
+          <button type="button" aria-label="斜体" title="斜体" onClick={() => formatSelection('italic')}><i>I</i></button>
+          <button type="button" aria-label="链接" title="链接" onClick={() => formatSelection('link')}>↗</button>
+          <button type="button" aria-label="行内代码" title="行内代码" onClick={() => formatSelection('code')}>{'</>'}</button>
+          <button type="button" aria-label="删除线" title="删除线" onClick={() => formatSelection('strikethrough')}><s>S</s></button>
         </div>
       )}
       {contextMenu && (
         <div className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); setContextMenu(null) }}>插入表格</button>
+          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onInsertInternalLinkRequest() }}>插入内部链接</button>}
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.link)}>插入超链接</button>
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.image)}>插入图片</button>
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.code)}>插入代码块</button>

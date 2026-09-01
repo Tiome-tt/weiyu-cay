@@ -19,6 +19,18 @@ describe('markdown insertion actions', () => {
     expect(tableMarkdown(3, 2)).toBe('| 列 1 | 列 2 |\n| --- | --- |\n| 内容 1-1 | 内容 1-2 |\n| 内容 2-1 | 内容 2-2 |')
   })
 
+  it('assigns unused default names when inserting between numbered columns', () => {
+    const original = parseMarkdownTable('| 列 1 | 列 2 | 列 3 |\n| --- | --- | --- |\n| A | B | C |')!
+    const once = tableMarkdownFromModel(tableWithInsertedColumn(original, 1))
+    expect(once).toBe('| 列 1 | 列 4 | 列 2 | 列 3 |\n| --- | --- | --- | --- |\n| A |  | B | C |')
+    const twice = tableMarkdownFromModel(tableWithInsertedColumn(parseMarkdownTable(once)!, 1))
+    expect(parseMarkdownTable(twice)!.cells[0]).toEqual(['列 1', '列 5', '列 4', '列 2', '列 3'])
+    expect(original.cells[0]).toEqual(['列 1', '列 2', '列 3'])
+  })
+
+  it('keeps custom headers and allocates distinct names for multiple empty headers', () => {
+    expect(tableMarkdownFromCells([['公司', '', '列 2', '', '状态']])).toBe('| 公司 | 列 3 | 列 2 | 列 4 | 状态 |\n| --- | --- | --- | --- | --- |')
+  })
   it('keeps common insertion snippets stable', () => {
     expect(markdownSnippets.link).toContain('https://')
     expect(markdownSnippets.task).toBe('- [ ] 待办事项')

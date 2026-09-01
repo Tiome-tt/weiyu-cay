@@ -602,6 +602,15 @@ describe('MarkdownSource', () => {
     expect(onChange).toHaveBeenLastCalledWith('**潮汐**来信')
   })
 
+  it('labels every inline formatting control with a hover tooltip', () => {
+    render(<MarkdownSource markdown="潮汐来信" onChange={vi.fn()} />)
+    const view = editorView()
+    act(() => view.dispatch({ selection: EditorSelection.range(0, 2) }))
+
+    for (const label of ['加粗', '斜体', '链接', '行内代码', '删除线']) {
+      expect(screen.getByRole('button', { name: label })).toHaveAttribute('title', label)
+    }
+  })
   it('publishes user transactions from the CodeMirror document', () => {
     const onChange = vi.fn()
     render(<MarkdownSource markdown="old" onChange={onChange} />)

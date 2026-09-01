@@ -364,10 +364,14 @@ impl<B: TemporaryWindowBackend> TemporaryWindowService<B> {
     }
 
     pub fn show(&self, note_id: NoteId) -> Result<TemporaryWindowState, CommandError> {
-        let guard = IndexMutationLock::acquire(self.paths.root())?;
-        ensure_temporary(&self.paths, note_id, &guard)?;
+        // Native window operations may synchronously deliver move/resize events.
+        // Their persistence must never wait for a lock held by this caller.
+        let previous = {
+            let guard = IndexMutationLock::acquire(self.paths.root())?;
+            ensure_temporary(&self.paths, note_id, &guard)?;
+            self.load_state_locked(note_id, &guard)?
+        };
         let label = temporary_window_label(note_id);
-        let previous = self.load_state_locked(note_id, &guard)?;
         self.backend.ensure_window(&label, note_id, previous)?;
         let applied = self.backend.apply_state(&label, previous)?;
         if let Err(error) = self.backend.show_and_focus(&label) {
@@ -378,7 +382,12 @@ impl<B: TemporaryWindowBackend> TemporaryWindowService<B> {
             visible: true,
             ..applied
         };
-        let publication = self.persist_state_locked(next, &guard);
+        let publication = (|| {
+            let guard = IndexMutationLock::acquire(self.paths.root())?;
+            // Conversion/deletion may finish while native calls are in flight.
+            ensure_temporary(&self.paths, note_id, &guard)?;
+            self.persist_state_locked(next, &guard)
+        })();
         if let Err(error) = publication {
             let _ = self.backend.hide(&label);
             return Err(error);

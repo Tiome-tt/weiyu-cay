@@ -31,6 +31,29 @@ describe('TauriClient', () => {
     }
   })
 
+  it('coalesces pending shows per capture and allows retry after failure', async () => {
+    const id = '019c0000-0000-7000-8000-000000000011' as NoteId
+    const otherId = '019c0000-0000-7000-8000-000000000012' as NoteId
+    let reject!: (reason: unknown) => void
+    invokeMock.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail }))
+    const { temporaryWindows } = createTauriPorts()
+    const first = temporaryWindows.show(id)
+    const duplicate = temporaryWindows.show(id)
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    const outcome = Promise.allSettled([first, duplicate])
+    reject({ code: 'io', message: 'Could not open window' })
+    expect((await outcome).map((result) => result.status)).toEqual(['rejected', 'rejected'])
+    const state = { noteId: id, visible: true, x: 0, y: 0, width: 360, height: 420, alwaysOnTop: false }
+    invokeMock.mockResolvedValue(state)
+    await expect(temporaryWindows.show(id)).resolves.toEqual(state)
+    await temporaryWindows.show(id)
+    expect(invokeMock).toHaveBeenCalledTimes(3)
+    const pending = new Promise<never>(() => undefined)
+    invokeMock.mockReturnValue(pending)
+    void temporaryWindows.show(id)
+    void temporaryWindows.show(otherId)
+    expect(invokeMock).toHaveBeenCalledTimes(5)
+  })
   it('routes main-window chrome through the current Tauri webview window', async () => {
     const { windowChrome } = createTauriPorts()
 

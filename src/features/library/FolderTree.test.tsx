@@ -428,7 +428,7 @@ describe('FolderTree keyboard navigation', () => {
       />,
     )
 
-    const inbox = screen.getByRole('treeitem', { name: '临时便签' })
+    const inbox = screen.getByRole('treeitem', { name: '临时便笺' })
     expect(inbox).toHaveAttribute('aria-selected', 'true')
     expect(inbox).toContainElement(screen.getByTestId('icon-inbox'))
     await user.click(inbox)
@@ -453,7 +453,7 @@ describe('FolderTree keyboard navigation', () => {
 
     expect(screen.getByRole('treeitem', { name: '未归档笔记' })).toContainElement(screen.getAllByTestId('icon-folder')[0])
     expect(screen.getByRole('treeitem', { name: '项目 A' })).toContainElement(screen.getAllByTestId('icon-folder')[1])
-    expect(screen.getByRole('treeitem', { name: '临时便签' })).toContainElement(screen.getByTestId('icon-inbox'))
+    expect(screen.getByRole('treeitem', { name: '临时便笺' })).toContainElement(screen.getByTestId('icon-inbox'))
     expect(screen.getByRole('treeitem', { name: '回收站' })).toContainElement(screen.getByTestId('icon-trash'))
   })
 

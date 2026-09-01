@@ -1,23 +1,12 @@
+import { extractMarkdownHeadings } from '../editor/markdownPipeline'
+
 interface NoteOutlineProps {
   markdown: string
   onNavigate(line: number, headingIndex: number): void
   onCollapse?(): void
 }
 
-export interface NoteHeading {
-  line: number
-  index: number
-  level: number
-  text: string
-}
-
-export function parseNoteHeadings(markdown: string): NoteHeading[] {
-  return markdown.split(/\r?\n/).flatMap((line, index) => {
-    const match = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
-    if (match === null) return []
-    return [{ line: index + 1, index: 0, level: match[1].length, text: match[2].trim() }]
-  }).map((heading, index) => ({ ...heading, index }))
-}
+export const parseNoteHeadings = extractMarkdownHeadings
 
 export function NoteOutline({ markdown, onNavigate, onCollapse }: NoteOutlineProps) {
   const headings = parseNoteHeadings(markdown)

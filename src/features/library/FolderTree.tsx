@@ -608,7 +608,7 @@ export function FolderTree(props: FolderTreeProps) {
               onClick={props.onTemporaryInbox}
             >
               <Icon name="inbox" size={16} />
-              <span>临时便签</span>
+              <span>临时便笺</span>
             </button>
           </li>
         )}

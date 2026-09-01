@@ -323,7 +323,6 @@
 
 .main-window .create-note-popover__actions button,
 .main-window .folder-move button,
-.main-window .note-list__mutation-status button,
 .main-window .editor-save button,
 .main-window .editor-save-notice button {
   min-height: 30px;
@@ -551,7 +550,7 @@
 .main-window .folder-tree__list { padding-bottom: 48px; }
 .main-window .folder-tree__list ul[data-folder-parent-id] {
   padding-left: 13px;
-  max-height: 1600px;
+  max-height: none;
   overflow: hidden;
   opacity: 1;
   visibility: visible;
@@ -686,7 +685,7 @@
   /* Notes are the direct children of their folder, so use one child indent
      regardless of how deeply the folder itself is nested. */
   padding: 0 0 2px 16px;
-  max-height: 340px;
+  max-height: none;
   overflow: hidden;
   opacity: 1;
   visibility: visible;
@@ -702,8 +701,10 @@
   content: "";
   background: var(--color-border-soft);
 }
-.main-window .folder-tree__folder-notes .note-list { min-height: 0; }
-.main-window .folder-tree__folder-notes .note-list__items { max-height: 260px; overflow: auto; padding-bottom: 2px; }
+.main-window .folder-tree__folder-notes .note-list,
+.main-window .folder-tree__root-notes .note-list { height: auto; min-height: 0; }
+.main-window .folder-tree__folder-notes .note-list__items,
+.main-window .folder-tree__root-notes .note-list__items { max-height: none; overflow: visible; padding-bottom: 2px; }
 .main-window .folder-tree__folder-notes .note-list__row::before {
   position: absolute;
   top: 16px;
@@ -860,22 +861,6 @@
 .main-window .note-card span { color: var(--color-muted); font-size: .76rem; }
 .main-window .note-card time { color: var(--color-muted); font-size: .68rem; }
 
-.main-window .note-list__delete {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 26px;
-  height: 26px;
-  color: var(--color-muted);
-  background: var(--color-panel-warm);
-  border: 1px solid var(--color-border-soft);
-  border-radius: 7px;
-  cursor: pointer;
-}
-
-.main-window .note-list__delete:hover:not(:disabled) { color: var(--color-error); background: var(--color-surface); }
-.main-window .note-list__delete:disabled { opacity: .5; cursor: default; }
-
 .main-window .note-outline {
   display: flex;
   height: 100%;
@@ -897,10 +882,6 @@
 .main-window .note-card__title { display: flex; align-items: center; gap: 7px; }
 .main-window .note-card__title svg { flex: 0 0 auto; color: var(--color-accent-strong); }
 .main-window .note-card__tags { display: block; overflow: hidden; color: var(--color-muted); font-size: .78em; text-overflow: ellipsis; white-space: nowrap; }
-.main-window .note-list__mutation-status { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; padding: 3px 4px; }
-.main-window .note-list__mutation-status p { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.main-window .note-list__mutation-actions { display: flex; justify-content: flex-end; gap: 5px; min-width: 0; }
-.main-window .note-list__mutation-status button { min-width: 0; padding: 4px 6px; color: var(--color-text); font-size: .74rem; white-space: nowrap; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 6px; cursor: pointer; }
 .main-window .folder-tree__folder-notes .note-card {
   min-height: 30px;
   margin: 0;
@@ -910,43 +891,70 @@
 }
 .main-window .folder-tree__folder-notes .note-card strong { font-size: .82rem; }
 .main-window .folder-tree__folder-notes .note-card span { font-size: .7rem; }
-.main-window .folder-tree__folder-notes .note-list__delete,
-.main-window .folder-tree__root-notes .note-list__delete {
-  display: block;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 140ms ease, color 140ms ease, background-color 140ms ease;
-}
-.main-window .folder-tree__folder-notes .note-list__row:hover > .note-list__delete,
-.main-window .folder-tree__folder-notes .note-list__row:focus-within > .note-list__delete,
-.main-window .folder-tree__root-notes .note-list__row:hover > .note-list__delete,
-.main-window .folder-tree__root-notes .note-list__row:focus-within > .note-list__delete {
-  opacity: 1;
-  pointer-events: auto;
-}
+
 .main-window .folder-tree__root-notes {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--color-border-soft);
 }
 
+/* Feedback floats above the workspace instead of moving the folder's note rows. */
 .main-window .note-list__mutation-status {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 5px;
-  margin: 5px 2px 8px;
-  padding: 7px 8px;
-  color: var(--color-heading);
-  background: var(--color-accent-soft);
-  border-left: 3px solid var(--color-accent);
-  border-radius: 7px;
+  position: fixed;
+  z-index: 120;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: min(520px, calc(100vw - 40px));
+  padding: 12px 14px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgb(20 45 35 / 14%), 0 2px 6px rgb(20 45 35 / 6%);
+  font-family: "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
 }
-
-.main-window .note-list__mutation-status p { min-width: 0; margin: 0; overflow: hidden; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
-.main-window .note-list__mutation-actions { display: flex; justify-content: flex-end; gap: 5px; }
-.main-window .note-list__mutation-status button { min-width: 0; padding: 4px 6px; font-size: .74rem; white-space: nowrap; }
+.main-window .note-list__mutation-icon {
+  display: grid;
+  flex: 0 0 32px;
+  height: 32px;
+  place-items: center;
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+  border-radius: 10px;
+}
+.main-window .note-list__mutation-status p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.main-window .note-list__mutation-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.main-window .note-list__mutation-status button {
+  padding: 6px 9px;
+  color: var(--color-accent-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.main-window .note-list__mutation-status button:hover:not(:disabled) { background: var(--color-accent-soft); }
+.main-window .note-list__mutation-status button[aria-label="关闭提示"] { display: grid; padding: 6px; color: var(--color-muted); place-items: center; }
 .main-window .note-list__mutation-status button:disabled { opacity: .55; cursor: default; }
-
+.main-window .note-list__mutation-status :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
 .main-window .library-status {
   margin: 8px 5px;
   color: var(--color-muted);
@@ -1968,3 +1976,83 @@
     transition-duration: .01ms !important;
   }
 }
+
+.main-window .editor-document-heading__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+}
+
+.main-window .editor-document-heading__tags {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  gap: 5px;
+  list-style: none;
+}
+
+.main-window .editor-document-heading__tags li {
+  padding: 2px 7px;
+  color: var(--color-accent-strong);
+  font-size: .68rem;
+  font-weight: 650;
+  background: color-mix(in srgb, var(--color-accent-soft) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-border) 70%, transparent);
+  border-radius: 999px;
+}
+
+.main-window .internal-link-dialog__backdrop {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  background: rgb(28 45 39 / 20%);
+  backdrop-filter: blur(2px);
+  place-items: center;
+}
+
+.main-window .internal-link-dialog {
+  display: grid;
+  width: min(440px, 100%);
+  max-height: min(560px, calc(100vh - 100px));
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  box-shadow: 0 22px 60px rgb(31 55 47 / 24%);
+  animation: main-window-overlay-in var(--motion-fast) ease-out;
+}
+
+.main-window .internal-link-dialog header,
+.main-window .internal-link-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  gap: 10px;
+}
+
+.main-window .internal-link-dialog header { border-bottom: 1px solid var(--color-border-soft); }
+.main-window .internal-link-dialog footer { justify-content: flex-end; border-top: 1px solid var(--color-border-soft); }
+.main-window .internal-link-dialog h2 { margin: 2px 0 0; color: var(--color-heading); font-size: 1.05rem; }
+.main-window .internal-link-dialog header > button { border: 0; color: var(--color-muted); background: transparent; font-size: 1.35rem; cursor: pointer; }
+.main-window .internal-link-dialog__body { display: grid; min-height: 0; padding: 14px 16px; gap: 10px; }
+.main-window .internal-link-dialog__body input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 11px;
+  color: var(--color-text);
+  font: inherit;
+  font-size: .82rem;
+  background: var(--color-panel-warm);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 9px;
+}
+.main-window .internal-link-dialog__body input:focus { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.main-window .internal-link-dialog .internal-link-tree { max-height: 330px; }
+.main-window .internal-link-dialog footer button { padding: 7px 12px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: 8px; cursor: pointer; }
+.main-window .internal-link-dialog footer button:disabled { opacity: .45; cursor: default; }
+.main-window .internal-link-dialog footer .internal-link-dialog__primary { color: var(--color-on-accent); background: var(--color-accent); border-color: var(--color-accent); }

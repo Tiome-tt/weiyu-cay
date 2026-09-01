@@ -295,10 +295,17 @@ class TauriTemporaryPort implements TemporaryPort {
 }
 
 class TauriTemporaryWindowPort implements TemporaryWindowPort {
+  private readonly pendingShows = new Map<NoteId, Promise<TemporaryWindowState>>()
+
   constructor(private readonly client: TauriClient) {}
 
   show(noteId: NoteId) {
-    return this.client.invoke<TemporaryWindowState>('show_temporary_window', { noteId })
+    const pending = this.pendingShows.get(noteId)
+    if (pending !== undefined) return pending
+    const request = this.client.invoke<TemporaryWindowState>('show_temporary_window', { noteId })
+      .finally(() => { this.pendingShows.delete(noteId) })
+    this.pendingShows.set(noteId, request)
+    return request
   }
 
   hide(noteId: NoteId) {

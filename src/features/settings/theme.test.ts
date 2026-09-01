@@ -10,7 +10,7 @@ describe('settings theme', () => {
       codeFont: 'ui-monospace, SFMono-Regular, Consolas, monospace',
       fontSize: 16,
       lineHeight: 1.6,
-      shortcut: 'CommandOrControl+Shift+Space',
+      shortcut: 'CommandOrControl+Shift+D',
       launchAtStartup: false,
       defaultEditorMode: 'source',
       autosaveDelayMs: 500,

@@ -14,7 +14,7 @@ afterEach(() => {
 const capture: NoteDocument = {
   id: '019c0000-0000-7000-8000-000000000031' as NoteId,
   kind: 'temporary',
-  title: '临时便签',
+  title: '临时便笺',
   folderId: null,
   tags: [],
   markdown: 'old',
@@ -59,7 +59,7 @@ describe('StickyWindow', () => {
     expect(screen.queryByRole('button', { name: /删除|搜索|转为笔记|颜色/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '添加内容块' })).not.toBeInTheDocument()
     expect(screen.queryByText('已就绪')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '关闭便签' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '关闭便笺' })).toBeVisible()
     expect(screen.getByRole('button', { name: '钉在桌面上' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('sticky-window')).not.toHaveAttribute('style')
 
@@ -75,7 +75,7 @@ describe('StickyWindow', () => {
     await act(async () => vi.advanceTimersByTimeAsync(400))
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ markdown: 'new capture', revision: 0 }))
 
-    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+    await act(async () => screen.getByRole('button', { name: '关闭便笺' }).click())
     expect(windows.hide).toHaveBeenCalledWith(capture.id)
   })
 
@@ -99,7 +99,7 @@ describe('StickyWindow', () => {
     if (editor === null) throw new Error('CodeMirror view not found')
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'receiver safe' } })
 
-    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+    await act(async () => screen.getByRole('button', { name: '关闭便笺' }).click())
 
     expect(saveThroughClient).toHaveBeenCalledWith(expect.objectContaining({ markdown: 'receiver safe' }))
   })
@@ -111,7 +111,7 @@ describe('StickyWindow', () => {
     const { editor, windows } = setup(save)
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'kept locally' } })
 
-    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+    await act(async () => screen.getByRole('button', { name: '关闭便笺' }).click())
 
     expect(windows.hide).toHaveBeenCalledWith(capture.id)
     expect(editor.state.doc.toString()).toBe('kept locally')
@@ -125,7 +125,7 @@ describe('StickyWindow', () => {
     const { editor, windows } = setup(save)
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'kept locally' } })
 
-    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+    await act(async () => screen.getByRole('button', { name: '关闭便笺' }).click())
 
     expect(windows.hide).toHaveBeenCalledWith(capture.id)
     expect(screen.getByRole('alert')).toHaveTextContent('无法保存，修改内容已保留在本地。')
@@ -208,7 +208,7 @@ describe('StickyWindow', () => {
       },
     })
     await vi.waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
-    await act(async () => screen.getByRole('button', { name: '关闭便签' }).click())
+    await act(async () => screen.getByRole('button', { name: '关闭便笺' }).click())
     expect(windows.hide).not.toHaveBeenCalled()
 
     await act(async () => finishImage({ relativePath: 'assets/capture.png', width: 2, height: 2 }))

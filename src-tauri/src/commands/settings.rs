@@ -1,7 +1,7 @@
 use crate::{
     error::CommandError,
     platform::{IndexMutationLock, SafeDirectory, SafeEntryKind},
-    shortcuts::normalize_accelerator,
+    shortcuts::{normalize_accelerator, DEFAULT_CAPTURE_SHORTCUT},
     storage::{
         database::Database, paths::StoragePaths, rebuild::rebuild_index_strict_with_validator,
     },
@@ -24,6 +24,7 @@ use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_store::{Store, StoreExt};
 
 const SETTINGS_VERSION: u32 = 1;
+const PREVIOUS_DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+Space";
 const MOVE_MARKER: &str = ".simple-notes-storage-move.json";
 const SOURCE_MOVE_MARKER: &str = ".simple-notes-storage-move-source.json";
 const MUTATION_LOCK: &str = ".index-mutation.lock";
@@ -186,6 +187,7 @@ pub fn load_bootstrap_settings<S: SettingsStore>(store: &S) -> Result<AppSetting
     match store.load()? {
         Some(value) => match serde_json::from_value::<AppSettings>(value)
             .ok()
+            .map(migrate_loaded_settings)
             .and_then(|settings| validate_settings(settings).ok())
         {
             Some(settings) => {
@@ -393,7 +395,7 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
         let value = self.store.load()?;
         if let Some(value) = value {
             if let Ok(settings) = serde_json::from_value::<AppSettings>(value) {
-                if let Ok(settings) = validate_settings(settings) {
+                if let Ok(settings) = validate_settings(migrate_loaded_settings(settings)) {
                     return self.reconcile_system(settings);
                 }
             }
@@ -762,6 +764,13 @@ fn apply_patch(
         settings.autosave_delay_ms = value.clamp(150, 2_000);
     }
     validate_settings(settings)
+}
+
+fn migrate_loaded_settings(mut settings: AppSettings) -> AppSettings {
+    if settings.shortcut == PREVIOUS_DEFAULT_CAPTURE_SHORTCUT {
+        settings.shortcut = DEFAULT_CAPTURE_SHORTCUT.to_owned();
+    }
+    settings
 }
 
 fn validate_settings(mut settings: AppSettings) -> Result<AppSettings, CommandError> {

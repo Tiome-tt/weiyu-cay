@@ -1,10 +1,13 @@
 use simple_notes_lib::{
     commands::{
         folders::FolderRepository,
-        notes::{prepare_startup_repository, prepare_startup_repository_after_recovery},
+        notes::{
+            getting_started_markdown, legacy_getting_started_markdown, prepare_startup_repository,
+            prepare_startup_repository_after_recovery,
+        },
         storage::StorageCommandState,
     },
-    domain::{NoteDocument, NoteId, NoteKind},
+    domain::{CreateFolderInput, NoteDocument, NoteId, NoteKind},
     storage::{
         database::Database,
         paths::StoragePaths,
@@ -50,6 +53,18 @@ fn fresh_storage_creates_the_getting_started_guide_once() {
     assert!(guide.markdown.contains("无需登录，也不依赖网络"));
     assert!(guide.markdown.contains("[[笔记标题]]"));
     assert!(guide.markdown.contains("临时便笺"));
+    assert!(guide.markdown.contains("Ctrl+Shift+D"));
+    assert!(guide.markdown.contains("Command+Shift+D"));
+    assert!(!guide.markdown.contains("Shift+Space"));
+    assert!(guide.markdown.contains("设置中修改全局快捷键"));
+    assert!(guide.markdown.contains("钉在桌面最上层"));
+    assert!(guide.markdown.contains("转为正式笔记"));
+    assert!(guide.markdown.contains("- [ ] 任务项"));
+    assert!(guide.markdown.contains("> 引用一段重要内容"));
+    assert!(guide.markdown.contains("[显示文字](https://example.com)"));
+    assert!(guide.markdown.contains("分隔线使用三个短横线："));
+    assert!(!guide.markdown.contains("这篇引导笔记也可以随时删除。"));
+    assert!(!guide.markdown.contains("## 你的内容属于你"));
     let target = simple_notes_lib::domain::StartupGuideTarget {
         folder_id: folders[0].id,
         note_id: guide.id,
@@ -173,4 +188,117 @@ fn a_successful_recovery_retry_finishes_pending_guide_setup() {
         state.startup_guide_target().unwrap().unwrap().note_id,
         notes[0].id
     );
+}
+
+#[test]
+fn startup_upgrades_only_an_unmodified_legacy_guide() {
+    let root = tempfile::tempdir().expect("create storage root");
+    let paths = StoragePaths::open(root.path()).expect("open storage paths");
+    let database = Database::open(paths.database()).expect("create database");
+    database.migrate().expect("migrate database");
+    database.close().expect("close database");
+    let folder = FolderRepository::new(paths.clone())
+        .create(CreateFolderInput {
+            parent_id: None,
+            name: "开始使用".to_owned(),
+        })
+        .unwrap();
+    let notes = NoteRepository::new(paths.clone());
+    let legacy_id = NoteId::now_v7();
+    let edited_id = NoteId::now_v7();
+    for (id, markdown) in [
+        (legacy_id, legacy_getting_started_markdown().to_owned()),
+        (
+            edited_id,
+            format!("{}\n\n用户补充", legacy_getting_started_markdown()),
+        ),
+    ] {
+        notes
+            .create(NoteDocument {
+                id,
+                kind: NoteKind::Formal,
+                title: "欢迎来到微屿".to_owned(),
+                folder_id: Some(folder.id),
+                tags: Vec::new(),
+                markdown,
+                revision: 0,
+                created_at: "2026-08-31T00:00:00Z".to_owned(),
+                updated_at: "2026-08-31T00:00:00Z".to_owned(),
+            })
+            .unwrap();
+    }
+
+    let readiness = StartupRecoveryReadiness::new();
+    let state = StorageCommandState::new(paths.clone(), readiness.clone());
+    let _recovery = StartupRecoveryState::initialize(paths.clone(), readiness);
+    prepare_startup_repository(&state).expect("upgrade startup guide");
+
+    assert_eq!(
+        notes.load(legacy_id).unwrap().markdown,
+        getting_started_markdown()
+    );
+    assert!(notes.load(legacy_id).unwrap().revision > 0);
+    assert!(notes
+        .load(edited_id)
+        .unwrap()
+        .markdown
+        .ends_with("用户补充"));
+}
+
+#[test]
+fn startup_upgrades_unmodified_previous_guides() {
+    for use_space_shortcut in [false, true] {
+        let root = tempfile::tempdir().expect("create storage root");
+        let paths = StoragePaths::open(root.path()).expect("open storage paths");
+        let database = Database::open(paths.database()).expect("create database");
+        database.migrate().expect("migrate database");
+        database.close().expect("close database");
+        let folder = FolderRepository::new(paths.clone())
+            .create(CreateFolderInput {
+                parent_id: None,
+                name: "开始使用".to_owned(),
+            })
+            .unwrap();
+        let previous_guide = getting_started_markdown()
+            .replace("分隔线使用三个短横线：\n\n---", "---")
+            .replace(
+                "现在，新建你的第一篇笔记吧。\n",
+                "现在，新建你的第一篇笔记吧。\n\n这篇引导笔记也可以随时删除。\n",
+            );
+        let previous_guide = if use_space_shortcut {
+            previous_guide
+                .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
+                .replace("Command+Shift+D", "Command+Shift+Space")
+        } else {
+            previous_guide
+        };
+        let note_id = NoteId::now_v7();
+        let notes = NoteRepository::new(paths.clone());
+        notes
+            .create(NoteDocument {
+                id: note_id,
+                kind: NoteKind::Formal,
+                title: "欢迎来到微屿".to_owned(),
+                folder_id: Some(folder.id),
+                tags: Vec::new(),
+                markdown: previous_guide,
+                revision: 0,
+                created_at: "2026-09-01T00:00:00Z".to_owned(),
+                updated_at: "2026-09-01T00:00:00Z".to_owned(),
+            })
+            .unwrap();
+
+        let readiness = StartupRecoveryReadiness::new();
+        let state = StorageCommandState::new(paths.clone(), readiness.clone());
+        let _recovery = StartupRecoveryState::initialize(paths.clone(), readiness);
+        prepare_startup_repository(&state).expect("upgrade previous guide");
+
+        let upgraded = notes.load(note_id).unwrap();
+        assert!(upgraded.markdown.contains("Ctrl+Shift+D"));
+        assert!(upgraded.markdown.contains("Command+Shift+D"));
+        assert!(upgraded.markdown.contains("分隔线使用三个短横线："));
+        assert!(!upgraded.markdown.contains("Shift+Space"));
+        assert!(!upgraded.markdown.contains("这篇引导笔记也可以随时删除。"));
+        assert!(upgraded.revision > 0);
+    }
 }

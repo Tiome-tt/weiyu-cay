@@ -29,6 +29,7 @@ export function CreateNotePopover({
   onClose,
 }: CreateNotePopoverProps) {
   const busy = status === 'pending'
+  const hasFolder = folders.some((folder) => folder.id === draft.folderId)
   const popoverRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
 
@@ -57,7 +58,7 @@ export function CreateNotePopover({
   const submit = (event: FormEvent) => {
     event.preventDefault()
     const normalizedTitle = draft.title.trim()
-    if (busy || normalizedTitle.length === 0) return
+    if (busy || !hasFolder || normalizedTitle.length === 0) return
     onCreate(normalizedTitle, draft.folderId, normalizeTagText(draft.tags))
   }
 
@@ -113,7 +114,7 @@ export function CreateNotePopover({
             value={draft.folderId ?? ''}
             onChange={(event) => onDraftChange({ ...draft, folderId: (event.target.value || null) as FolderId | null })}
           >
-            <option value="">未归档笔记</option>
+            <option value="" disabled hidden>{folders.length === 0 ? '请先创建文件夹' : '请选择文件夹'}</option>
             {folders
               .slice()
               .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
@@ -137,7 +138,7 @@ export function CreateNotePopover({
           <button
             type="submit"
             aria-label={busy ? '正在创建笔记' : '创建笔记'}
-            disabled={busy || draft.title.trim().length === 0}
+            disabled={busy || !hasFolder || draft.title.trim().length === 0}
           >
             {busy ? '正在创建…' : '创建笔记'}
           </button>

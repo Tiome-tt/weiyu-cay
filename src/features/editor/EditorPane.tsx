@@ -13,6 +13,7 @@ import type { AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, Se
 import { TagsEditor } from '../search/TagsEditor'
 import { Backlinks } from './Backlinks'
 import { EditorActionsMenu } from './EditorActionsMenu'
+import { InternalLinkDialog } from './InternalLinkDialog'
 import { InternalLinkTree } from './InternalLinkTree'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
@@ -91,6 +92,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const [linkTargets, setLinkTargets] = useState<NoteSummary[]>([])
   const [selectedLinkTarget, setSelectedLinkTarget] = useState<NoteId | ''>('')
   const [linkActionError, setLinkActionError] = useState<string | null>(null)
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const previewRef = useRef<HTMLElement>(null)
   const sourceScrollRef = useRef<HTMLElement | null>(null)
   const sourceRef = useRef<MarkdownSourceHandle>(null)
@@ -113,6 +115,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   onDraftChangeRef.current = onDraftChange
 
   useEffect(() => setImageError(null), [document.id])
+  useEffect(() => setLinkDialogOpen(false), [document.id])
   useEffect(() => setMode(initialMode), [document.id, initialMode])
   const schedulePreview = useCallback((markdown: string, immediate = false) => {
     previewMarkdownRef.current = markdown
@@ -254,6 +257,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     setLinkActionError(applied ? null : '请先把光标放在要重定向的内部链接上。')
   }
 
+  const openInternalLinkDialog = () => {
+    setLinkActionError(null)
+    setLinkDialogOpen(true)
+  }
+
+  const insertInternalLinkFromDialog = (target: NoteSummary) => {
+    const applied = sourceRef.current?.insertInternalLink(target) === true
+    setLinkActionError(applied ? null : '无法在当前位置插入内部链接。')
+    return applied
+  }
   const syncSourceToPreview = useCallback((scrollTop: number) => {
     if (mode !== 'split' || previewRef.current === null || sourceScrollRef.current === null) return
     syncScrollPosition(sourceScrollRef.current, previewRef.current, scrollTop)
@@ -344,9 +357,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
                             aria-label="笔记文件夹"
                             value={document.folderId ?? ''}
                             disabled={metadataBusy}
-                            onChange={(event) => void moveNote(event.target.value === '' ? null : event.target.value as FolderId)}
+                            onChange={(event) => { if (event.target.value !== '') void moveNote(event.target.value as FolderId) }}
                           >
-                            <option value="">未归档笔记</option>
+                            <option value="" disabled hidden>请选择文件夹</option>
                             {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                           </select>
                         </label>
@@ -406,10 +419,17 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           ) : (
             <h1>{displayTitle}</h1>
           )}
-          <p className="editor-document-heading__meta">
-            最后编辑于{' '}
-            <time dateTime={autosave.updatedAt}>{formatLastEdited(autosave.updatedAt)}</time>
-          </p>
+          <div className="editor-document-heading__meta">
+            <span>
+              最后编辑于{' '}
+              <time dateTime={autosave.updatedAt}>{formatLastEdited(autosave.updatedAt)}</time>
+            </span>
+            {document.tags.length > 0 && (
+              <ul className="editor-document-heading__tags" aria-label="笔记标签">
+                {document.tags.map((tag) => <li key={tag}>#{tag}</li>)}
+              </ul>
+            )}
+          </div>
         </div>
         <div
           className={`editor-document__body editor-document__body--${mode}`}
@@ -438,6 +458,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             onNavigateLink={handleNavigateLink}
             presentation={mode === 'split' ? 'source' : 'document'}
             external={external}
+            onInsertInternalLinkRequest={links ? openInternalLinkDialog : undefined}
           />
           </div>
           <div
@@ -478,6 +499,15 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           </div>
         </div>
       </div>
+      {linkDialogOpen && links && (
+        <InternalLinkDialog
+          currentNoteId={document.id}
+          folders={folders ?? []}
+          targets={linkTargets}
+          onInsert={insertInternalLinkFromDialog}
+          onCancel={() => setLinkDialogOpen(false)}
+        />
+      )}
       {links && onNavigateNote && (
         <Backlinks
           noteId={document.id}
@@ -562,6 +592,6 @@ function documentBreadcrumb(document: NoteDocument, folders?: Folder[]) {
 
 function localizedDocumentTitle(document: NoteDocument) {
   return document.kind === 'temporary' && document.title === 'Temporary capture'
-    ? '临时便签'
+    ? '临时便笺'
     : document.title
 }

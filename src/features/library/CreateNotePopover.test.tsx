@@ -39,6 +39,19 @@ function ControlledPopover({
 }
 
 describe('CreateNotePopover', () => {
+  it('requires a real folder instead of offering an unfiled destination', async () => {
+    const onCreate = vi.fn()
+    render(<ControlledPopover initialDraft={{ title: '新笔记', folderId: null, tags: '' }} onCreate={onCreate} />)
+    const select = screen.getByRole('combobox', { name: '保存到目录' })
+    expect(screen.queryByRole('option', { name: '未归档笔记' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '创建笔记' })).toBeDisabled()
+    fireEvent.submit(screen.getByRole('form', { name: '新建笔记' }))
+    expect(onCreate).not.toHaveBeenCalled()
+    await userEvent.setup().selectOptions(select, folderId)
+    fireEvent.submit(screen.getByRole('form', { name: '新建笔记' }))
+    expect(onCreate).toHaveBeenCalledWith('新笔记', folderId, [])
+  })
+
   it('retains the owner draft after failure and restores trigger focus on Escape', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()

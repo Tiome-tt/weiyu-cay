@@ -34,6 +34,35 @@ const previewRenderer = unified()
   .use(hardenPreviewResources)
   .use(rehypeStringify)
 
+export interface MarkdownHeading {
+  line: number
+  index: number
+  level: number
+  text: string
+}
+
+/** Use the preview parser so code and HTML never become outline entries. */
+export function extractMarkdownHeadings(markdown: string): MarkdownHeading[] {
+  const headings: MarkdownHeading[] = []
+  const tree = parser.parse(markdown)
+  type Node = (typeof tree)['children'][number] | (typeof tree)
+  const text = (node: Node): string => {
+    if ('value' in node) return node.value
+    if (node.type === 'image' || node.type === 'imageReference') return node.alt ?? ''
+    if ('children' in node) return node.children.map(text).join('')
+    return ''
+  }
+  const visit = (node: Node) => {
+    if (node.type === 'heading') {
+      headings.push({ line: node.position!.start.line, index: headings.length, level: node.depth, text: text(node).trim() })
+    } else if ('children' in node) {
+      node.children.forEach(visit)
+    }
+  }
+  visit(tree)
+  return headings
+}
+
 export function renderMarkdown(markdown: string): string {
   return String(renderer.processSync(markdown))
 }

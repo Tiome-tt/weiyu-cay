@@ -30,7 +30,16 @@ export function tableMarkdownFromCells(
 ) {
   const normalized = cells.length === 0 ? [['']] : cells
   const columns = Math.max(1, ...normalized.map((row) => row.length))
-  const header = Array.from({ length: columns }, (_, column) => normalized[0]?.[column]?.trim() || `列 ${column + 1}`)
+  const header = Array.from({ length: columns }, (_, column) => normalized[0]?.[column]?.trim() ?? '')
+  // Reserve existing names before filling blanks, including columns after an insertion.
+  const usedNames = new Set(header.filter(Boolean))
+  for (let column = 0; column < columns; column += 1) {
+    if (header[column] !== '') continue
+    let number = column + 1
+    while (usedNames.has(`列 ${number}`)) number += 1
+    header[column] = `列 ${number}`
+    usedNames.add(header[column])
+  }
   const divider = header.map((_, column) => alignmentMarker(alignments[column] ?? null))
   const body = normalized.slice(1).map((row) => Array.from({ length: columns }, (_, column) => row[column]?.trim() ?? ''))
   return [formatRow(header), formatRow(divider, false), ...body.map((row) => formatRow(row))].join('\n')

@@ -1,0 +1,21 @@
+import { expect, test } from '@playwright/test'
+
+test('deletion uses a context menu and a floating undo notice', async ({ page }, testInfo) => {
+  await page.goto('/')
+  await page.getByRole('treeitem', { name: '项目', exact: true }).click()
+  const card = page.locator('.note-card').first()
+  await card.hover()
+  await expect(page.locator('.note-list__delete')).toHaveCount(0)
+  await card.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '删除笔记', exact: true }).click()
+  const notice = page.locator('.note-list__mutation-status')
+  await expect(notice).toBeVisible()
+  expect(await notice.evaluate((element) => getComputedStyle(element).position)).toBe('fixed')
+  await expect(page.locator('.folder-tree .note-list__mutation-status')).toHaveCount(0)
+  await expect(notice.getByRole('button', { name: '撤销删除' })).toBeVisible()
+  const box = await notice.boundingBox()
+  expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+  await page.screenshot({ path: testInfo.outputPath('undo-notice.png') })
+  await notice.getByRole('button', { name: '关闭提示' }).click()
+  await expect(notice).toHaveCount(0)
+})

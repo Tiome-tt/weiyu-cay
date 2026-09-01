@@ -82,15 +82,15 @@ fn shortcut_identity(accelerator: &str) -> ShortcutIdentity {
 
 #[test]
 fn default_and_platform_mapping_are_canonical() {
-    assert_eq!(DEFAULT_CAPTURE_SHORTCUT, "CommandOrControl+Shift+Space");
+    assert_eq!(DEFAULT_CAPTURE_SHORTCUT, "CommandOrControl+Shift+D");
     assert_eq!(
         map_accelerator_for_platform(DEFAULT_CAPTURE_SHORTCUT, AcceleratorPlatform::Windows)
             .unwrap(),
-        "Control+Shift+Space"
+        "Control+Shift+D"
     );
     assert_eq!(
         map_accelerator_for_platform(DEFAULT_CAPTURE_SHORTCUT, AcceleratorPlatform::MacOs).unwrap(),
-        "Command+Shift+Space"
+        "Command+Shift+D"
     );
 }
 
@@ -170,7 +170,7 @@ fn initial_registration_is_idempotent_and_conflicts_are_structured() {
     let backend = ShortcutFixture::default();
     let service = ShortcutService::new(backend.clone());
     assert_eq!(
-        service.register("shift+commandorcontrol+space").unwrap(),
+        service.register("shift+commandorcontrol+d").unwrap(),
         DEFAULT_CAPTURE_SHORTCUT
     );
     assert_eq!(
@@ -182,7 +182,7 @@ fn initial_registration_is_idempotent_and_conflicts_are_structured() {
     let conflicted_backend = ShortcutFixture::default();
     conflicted_backend.fail(
         "register",
-        "Control+Shift+Space",
+        "Control+Shift+D",
         ShortcutError::conflict(DEFAULT_CAPTURE_SHORTCUT, "shortcut is already in use"),
     );
     let conflicted =
@@ -212,14 +212,14 @@ fn rebind_preserves_or_rolls_back_authoritative_state() {
 
     backend.fail(
         "unregister",
-        "Control+Shift+Space",
+        "Control+Shift+D",
         ShortcutError::backend("old binding could not unregister"),
     );
     assert!(service.rebind("CommandOrControl+Alt+Space").is_err());
     assert_eq!(service.current().as_deref(), Some(DEFAULT_CAPTURE_SHORTCUT));
     assert!(backend.calls().ends_with(&[
         "register:Control+Alt+Space".to_owned(),
-        "unregister:Control+Shift+Space".to_owned(),
+        "unregister:Control+Shift+D".to_owned(),
         "unregister:Control+Alt+Space".to_owned(),
     ]));
 }
@@ -229,11 +229,8 @@ fn same_value_rebind_does_not_churn_the_operating_system_registration() {
     let backend = ShortcutFixture::default();
     let service = ShortcutService::new_for_platform(backend.clone(), AcceleratorPlatform::Windows);
     service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
-    service.rebind("shift+commandorcontrol+space").unwrap();
-    assert_eq!(
-        backend.calls(),
-        vec!["register:Control+Shift+Space".to_owned()]
-    );
+    service.rebind("shift+commandorcontrol+d").unwrap();
+    assert_eq!(backend.calls(), vec!["register:Control+Shift+D".to_owned()]);
 }
 
 #[test]
@@ -243,7 +240,7 @@ fn rollback_failure_requires_recovery_and_lists_possible_bindings() {
     service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
     backend.fail(
         "unregister",
-        "Control+Shift+Space",
+        "Control+Shift+D",
         ShortcutError::backend("old unregister failed"),
     );
     backend.fail(
@@ -265,7 +262,7 @@ fn rollback_failure_requires_recovery_and_lists_possible_bindings() {
         service.status().registration,
         ShortcutRegistrationStatus::RecoveryRequired { ref bindings }
             if bindings.len() == 2
-                && bindings.iter().any(|binding| binding.platform == "Control+Shift+Space")
+                && bindings.iter().any(|binding| binding.platform == "Control+Shift+D")
                 && bindings.iter().any(|binding| binding.platform == "Control+Alt+Space")
     ));
 
@@ -317,10 +314,7 @@ fn backend_reentry_and_simulated_plugin_lock_order_do_not_deadlock() {
     *backend.callback.lock().unwrap() = Some(Arc::new(move || {
         let _ = callback_service.status();
         assert!(callback_service
-            .match_event(
-                shortcut_identity("Control+Shift+Space"),
-                ShortcutEvent::Pressed
-            )
+            .match_event(shortcut_identity("Control+Shift+D"), ShortcutEvent::Pressed)
             .is_none());
     }));
     let (finished_tx, finished_rx) = mpsc::channel();
@@ -386,10 +380,7 @@ fn shutdown_during_registration_defers_cleanup_without_blocking_or_late_activati
     assert!(!service.status().accepting_triggers);
     assert_eq!(
         calls.lock().unwrap().as_slice(),
-        [
-            "register:Control+Shift+Space",
-            "unregister:Control+Shift+Space"
-        ]
+        ["register:Control+Shift+D", "unregister:Control+Shift+D"]
     );
 }
 
@@ -399,7 +390,7 @@ fn production_dispatch_seam_is_non_blocking_and_carries_identity() {
     let (sender, receiver) = mpsc::channel();
     dispatcher.attach(sender);
     assert!(dispatcher.dispatch(PluginShortcutEvent {
-        shortcut_identity: shortcut_identity("Control+Shift+Space"),
+        shortcut_identity: shortcut_identity("Control+Shift+D"),
         event: ShortcutEvent::Pressed,
     }));
     let started = std::time::Instant::now();
@@ -411,7 +402,7 @@ fn production_dispatch_seam_is_non_blocking_and_carries_identity() {
     let delivered = [receiver.recv().unwrap(), receiver.recv().unwrap()];
     assert_eq!(
         delivered[0].shortcut_identity,
-        shortcut_identity("Control+Shift+Space")
+        shortcut_identity("Control+Shift+D")
     );
     assert_eq!(delivered[0].event, ShortcutEvent::Pressed);
     assert_eq!(
@@ -421,7 +412,7 @@ fn production_dispatch_seam_is_non_blocking_and_carries_identity() {
     assert_eq!(delivered[1].event, ShortcutEvent::Pressed);
     dispatcher.detach();
     assert!(!dispatcher.dispatch(PluginShortcutEvent {
-        shortcut_identity: shortcut_identity("Control+Shift+Space"),
+        shortcut_identity: shortcut_identity("Control+Shift+D"),
         event: ShortcutEvent::Released,
     }));
 }
@@ -433,7 +424,7 @@ fn unregister_failure_is_retryable_and_shutdown_runs_once() {
     service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
     backend.fail(
         "unregister",
-        "Control+Shift+Space",
+        "Control+Shift+D",
         ShortcutError::backend("temporary failure"),
     );
     assert!(service.unregister().is_err());
@@ -448,7 +439,7 @@ fn unregister_failure_is_retryable_and_shutdown_runs_once() {
     let unregisters = backend
         .calls()
         .into_iter()
-        .filter(|call| call == "unregister:Control+Shift+Space")
+        .filter(|call| call == "unregister:Control+Shift+D")
         .count();
     assert_eq!(unregisters, 3);
 }
@@ -460,7 +451,7 @@ fn failed_shutdown_cleanup_is_attempted_only_once() {
     service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
     backend.fail(
         "unregister",
-        "Control+Shift+Space",
+        "Control+Shift+D",
         ShortcutError::backend("shutdown cleanup failed"),
     );
     assert!(service.shutdown().is_err());
@@ -470,7 +461,7 @@ fn failed_shutdown_cleanup_is_attempted_only_once() {
         backend
             .calls()
             .into_iter()
-            .filter(|call| call == "unregister:Control+Shift+Space")
+            .filter(|call| call == "unregister:Control+Shift+D")
             .count(),
         1
     );
@@ -686,19 +677,13 @@ fn routing_checks_platform_identity_generation_recovery_and_shutdown() {
         TriggerOutcome::Ignored
     );
     assert!(matches!(
-        router.dispatch(
-            shortcut_identity("Control+Shift+Space"),
-            ShortcutEvent::Pressed
-        ),
+        router.dispatch(shortcut_identity("Control+Shift+D"), ShortcutEvent::Pressed),
         TriggerOutcome::Shown { .. }
     ));
 
     service.rebind("CommandOrControl+Alt+Space").unwrap();
     assert_eq!(
-        router.dispatch(
-            shortcut_identity("Control+Shift+Space"),
-            ShortcutEvent::Pressed
-        ),
+        router.dispatch(shortcut_identity("Control+Shift+D"), ShortcutEvent::Pressed),
         TriggerOutcome::Ignored
     );
     assert!(matches!(
@@ -739,10 +724,7 @@ fn shutdown_between_identity_match_and_activation_acceptance_suppresses_capture(
         CaptureTrigger::new(capture_backend.clone()),
     );
     let matched = service
-        .match_event(
-            shortcut_identity("Control+Shift+Space"),
-            ShortcutEvent::Pressed,
-        )
+        .match_event(shortcut_identity("Control+Shift+D"), ShortcutEvent::Pressed)
         .expect("active binding should match before shutdown");
     let pause = Arc::new(Barrier::new(2));
     let dispatch_pause = pause.clone();
@@ -795,10 +777,7 @@ fn shutdown_does_not_wait_for_a_capture_accepted_before_shutdown() {
         }),
     );
     let dispatch = thread::spawn(move || {
-        router.dispatch(
-            shortcut_identity("Control+Shift+Space"),
-            ShortcutEvent::Pressed,
-        )
+        router.dispatch(shortcut_identity("Control+Shift+D"), ShortcutEvent::Pressed)
     });
     entered_rx.recv().unwrap();
 

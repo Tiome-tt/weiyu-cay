@@ -247,7 +247,7 @@ struct FakeSystem {
 impl Default for FakeSystem {
     fn default() -> Self {
         Self {
-            shortcut: Arc::new(Mutex::new("CommandOrControl+Shift+Space".to_owned())),
+            shortcut: Arc::new(Mutex::new("CommandOrControl+Shift+D".to_owned())),
             autostart: Arc::new(Mutex::new(false)),
             reject_shortcut: Arc::new(Mutex::new(false)),
             reject_autostart: Arc::new(Mutex::new(false)),
@@ -294,7 +294,7 @@ fn defaults_and_numeric_bounds_are_explicit() {
     let defaults = AppSettings::default();
     assert_eq!(defaults.theme.as_str(), "forest");
     assert_eq!(defaults.sticky_color_mode.as_str(), "follow-theme");
-    assert_eq!(defaults.shortcut, "CommandOrControl+Shift+Space");
+    assert_eq!(defaults.shortcut, "CommandOrControl+Shift+D");
     assert_eq!(defaults.font_size, 16.0);
     assert_eq!(defaults.line_height, 1.6);
     assert_eq!(defaults.autosave_delay_ms, 500);
@@ -317,6 +317,33 @@ fn defaults_and_numeric_bounds_are_explicit() {
     assert_eq!(updated.font_size, 28.0);
     assert_eq!(updated.line_height, 1.2);
     assert_eq!(updated.autosave_delay_ms, 150);
+}
+
+#[test]
+fn bootstrap_migrates_only_the_previous_default_shortcut() {
+    let old_default_store = MemoryStore::default();
+    let mut old_default = AppSettings::default();
+    old_default.shortcut = "CommandOrControl+Shift+Space".to_owned();
+    *old_default_store.value.lock().unwrap() = Some(serde_json::to_value(old_default).unwrap());
+
+    let migrated = load_bootstrap_settings(&old_default_store).unwrap();
+    assert_eq!(migrated.shortcut, "CommandOrControl+Shift+D");
+    assert_eq!(
+        serde_json::from_value::<AppSettings>(old_default_store.load().unwrap().unwrap())
+            .unwrap()
+            .shortcut,
+        "CommandOrControl+Shift+D"
+    );
+
+    let custom_store = MemoryStore::default();
+    let mut custom = AppSettings::default();
+    custom.shortcut = "CommandOrControl+Alt+M".to_owned();
+    *custom_store.value.lock().unwrap() = Some(serde_json::to_value(custom).unwrap());
+
+    assert_eq!(
+        load_bootstrap_settings(&custom_store).unwrap().shortcut,
+        "CommandOrControl+Alt+M"
+    );
 }
 
 #[test]
@@ -392,7 +419,7 @@ fn shortcut_and_autostart_failures_leave_behavior_and_settings_unchanged() {
             ..SettingsPatch::default()
         })
         .is_err());
-    assert_eq!(system.shortcut().unwrap(), "CommandOrControl+Shift+Space");
+    assert_eq!(system.shortcut().unwrap(), "CommandOrControl+Shift+D");
     assert_eq!(service.load().unwrap(), AppSettings::default());
 
     *system.reject_shortcut.lock().unwrap() = false;
@@ -440,7 +467,7 @@ fn persistence_failure_rolls_back_system_changes() {
             ..SettingsPatch::default()
         })
         .is_err());
-    assert_eq!(system.shortcut().unwrap(), "CommandOrControl+Shift+Space");
+    assert_eq!(system.shortcut().unwrap(), "CommandOrControl+Shift+D");
     assert!(!system.launch_at_startup().unwrap());
     assert_eq!(service.load().unwrap(), AppSettings::default());
 }

@@ -9,6 +9,7 @@ Read `docs/superpowers/specs/2026-07-30-simple-notes-design.md` before changing 
 ## Brand naming
 
 - Use `微屿` as the primary user-visible name in the application UI, native window titles, installers, system menus, and Chinese product copy.
+- Use `临时便笺` for the Chinese temporary sticky-note feature name; use `便笺` in short action labels.
 - Use `Cay` in English prose and English release titles. When a bilingual first mention is useful, write `Cay (微屿)`.
 - Keep technical compatibility identifiers such as `app.simplenotes.desktop`, the `simple-notes` package/crate name, `.simple-notes-*` file prefixes, command names, and persisted keys stable unless an approved migration explicitly changes them.
 
@@ -59,9 +60,13 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 
 ## UI rules
 
-- The main window uses resizable folder, note-list, and editor columns. Dividers are visually quiet; hovering changes the cursor and highlights the boundary. Double-click restores the default proportion.
+- The main window uses resizable folder-with-inline-notes, current-note outline, and editor columns. Folder notes expand naturally and scroll with the complete tree; the collapsed outline shows only its label, without counts. Outline entries follow the preview Markdown grammar and exclude code-block contents. Dividers are visually quiet; hovering changes the cursor and highlights the boundary. Double-click restores the default proportion.
 - The editor supports exactly three primary views in the MVP: source, split source/preview, and preview.
+- Note rows do not expose hover delete buttons. Keep recoverable deletion in the pointer/keyboard context menu, with undo feedback outside the folder tree flow. New default table headers must avoid existing names without renaming user content.
 - View controls live in the editor title toolbar, not the global application bar.
+- The editor block “+” menu and editor context menu expose the same insertion actions, including a searchable internal-link picker that excludes the current note.
+- Show non-empty note tags beside the last-edited metadata. Icon-only inline formatting controls expose visible hover labels and accessible names.
+- New-note and move destinations offer actual folders only. Moving a note updates both source and destination inline lists immediately; preserve compatibility with existing root-level content.
 - Keep the visual language warm, rounded, and nature-inspired, while preserving high contrast and dense-content readability.
 - Do not copy Nintendo assets or directly use `animal-island-ui`; its CC BY-NC license prohibits commercial use. Build an original design system.
 - Keyboard operation, visible focus, reduced motion, and adequate color contrast are required.

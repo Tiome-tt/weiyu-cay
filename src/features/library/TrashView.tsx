@@ -184,7 +184,7 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
           {(['temporary', 'formal'] as const).map((kind) => {
             const sectionEntries = entries.filter((entry) => entry.kind === kind)
             if (sectionEntries.length === 0) return null
-            const label = kind === 'temporary' ? '临时便签' : '笔记'
+            const label = kind === 'temporary' ? '临时便笺' : '笔记'
             return (
               <section key={kind} className="trash-view__section" aria-labelledby={`trash-${kind}-heading`}>
                 <header className="trash-view__section-header">
@@ -241,7 +241,7 @@ function isMissingFolder(entry: TrashEntry, folders: Folder[]) {
 }
 
 function folderName(entry: TrashEntry, folders: Folder[]) {
-  if (entry.kind === 'temporary') return '临时便签'
+  if (entry.kind === 'temporary') return '临时便笺'
   if (entry.previousFolderId === null) return '未归档笔记'
   return folders.find((folder) => folder.id === entry.previousFolderId)?.name ?? '已恢复'
 }

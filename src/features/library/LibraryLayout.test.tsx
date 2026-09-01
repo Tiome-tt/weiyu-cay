@@ -34,6 +34,10 @@ function summary(id: NoteId, title: string, folderId: FolderId | null = null): N
   }
 }
 
+async function deleteFromMenu(user: ReturnType<typeof userEvent.setup>, title: string) {
+  fireEvent.contextMenu(await screen.findByRole('button', { name: new RegExp(`^${title}`) }))
+  await user.click(screen.getByRole('menuitem', { name: '删除笔记' }))
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -61,6 +65,32 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('updates expanded source and destination rows immediately after moving from the editor menu', async () => {
+    let current: NoteDocument = { ...note('body'), id: noteA, title: '移动刷新测试', folderId: folderA }
+    const notes = fakeNotePort({
+      listNotes: vi.fn(async (id) => current.folderId === id ? [{ ...current, excerpt: 'body' }] : []),
+      loadNote: vi.fn(async () => current),
+      moveNote: vi.fn(async (_id, folderId) => (current = { ...current, folderId })),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />)
+    const destination = await screen.findByRole('treeitem', { name: '项目 B' })
+    await user.click(destination)
+    await screen.findByText('此文件夹中还没有笔记。')
+    const source = screen.getByRole('treeitem', { name: '项目 A' })
+    await user.click(source)
+    await user.click(await screen.findByRole('button', { name: /^移动刷新测试/ }))
+    await user.click(screen.getByRole('button', { name: '笔记更多操作' }))
+    const select = screen.getByRole('combobox', { name: '笔记文件夹' })
+    expect(within(select).queryByRole('option', { name: '未归档笔记' })).not.toBeInTheDocument()
+    await user.selectOptions(select, folderB)
+    await within(destination.closest('li')!).findByRole('button', { name: /^移动刷新测试/ })
+
+    expect(within(source.closest('li')!).queryByRole('button', { name: /^移动刷新测试/ })).not.toBeInTheDocument()
+    expect(within(destination.closest('li')!).getByRole('button', { name: /^移动刷新测试/ })).toBeVisible()
+    expect(screen.getByRole('textbox', { name: '笔记标题' })).toHaveValue('移动刷新测试')
+  })
+
   it('offers one clear new-note action only when no document is selected', async () => {
     const onCreateNote = vi.fn()
     const user = userEvent.setup()
@@ -411,7 +441,7 @@ describe('LibraryLayout', () => {
 
     expect(await screen.findByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
     expect(screen.queryByRole('button', { name: '未归档笔记' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '临时便签' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '临时便笺' })).toBeVisible()
     expect(screen.getByRole('button', { name: '回收站' })).toBeVisible()
     expect(system.setWindowPreference).not.toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: false })
   })
@@ -424,7 +454,7 @@ describe('LibraryLayout', () => {
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)
 
     const folderPane = await screen.findByTestId('folder-pane')
-    const directoryRail = await screen.findByRole('button', { name: '展开目录，0 篇笔记' })
+    const directoryRail = await screen.findByRole('button', { name: '展开目录' })
     const splitPane = folderPane.closest('.split-pane')
     expect(splitPane).not.toBeNull()
     expect(splitPane).toContainElement(directoryRail)
@@ -469,7 +499,7 @@ describe('LibraryLayout', () => {
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
 
     expect(await screen.findByRole('navigation', { name: '折叠的资料库' })).toBeVisible()
-    expect(screen.getByRole('button', { name: '展开目录，0 篇笔记' })).toHaveTextContent('目录 · 0')
+    expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent(/^目录$/)
     expect(screen.getByTestId('folder-pane')).toHaveAttribute('inert')
     expect(screen.getByTestId('note-list-pane')).toHaveAttribute('inert')
     expect(system.setWindowPreference).not.toHaveBeenCalledWith('library-collapsed', expect.anything())
@@ -503,12 +533,12 @@ describe('LibraryLayout', () => {
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
 
     await user.click(await screen.findByRole('button', { name: '折叠目录' }))
-    expect(screen.getByRole('button', { name: '展开目录，0 篇笔记' })).toHaveTextContent('目录 · 0')
+    expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent(/^目录$/)
     expect(screen.getByTestId('folder-pane')).not.toHaveAttribute('inert')
     expect(screen.getByTestId('note-list-pane')).toHaveAttribute('inert')
     expect(system.setWindowPreference).toHaveBeenCalledWith('library-collapsed', { folder: false, noteList: true })
 
-    await user.click(screen.getByRole('button', { name: '展开目录，0 篇笔记' }))
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
     expect(screen.getByTestId('note-list-pane')).not.toHaveAttribute('inert')
     expect(system.setWindowPreference).toHaveBeenLastCalledWith('library-collapsed', { folder: false, noteList: false })
   })
@@ -532,8 +562,8 @@ describe('LibraryLayout', () => {
       />,
     )
 
-    await user.click(await screen.findByRole('treeitem', { name: '临时便签' }))
-    await screen.findByRole('region', { name: '临时便签' })
+    await user.click(await screen.findByRole('treeitem', { name: '临时便笺' }))
+    await screen.findByRole('region', { name: '临时便笺' })
     await user.click(screen.getByRole('button', { name: '折叠目录' }))
     expect(screen.getByRole('button', { name: '展开目录' })).toHaveTextContent('目录')
 
@@ -592,9 +622,7 @@ describe('LibraryLayout', () => {
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'saved body' } }))
-    const deleteButton = screen.getByRole('button', { name: '删除 Note A' })
-    expect(within(deleteButton).getByTestId('icon-close')).toBeVisible()
-    deleteButton.click()
+    await deleteFromMenu(user, 'Note A')
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
     expect(trash.trash).not.toHaveBeenCalled()
@@ -632,7 +660,7 @@ describe('LibraryLayout', () => {
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'unsaved body' } }))
-    await user.click(screen.getByRole('button', { name: '删除 Note A' }))
+    await deleteFromMenu(user, 'Note A')
 
     expect(await screen.findByText('请先解决保存错误，再删除笔记。')).toBeVisible()
     expect(trashNote).not.toHaveBeenCalled()
@@ -657,7 +685,7 @@ describe('LibraryLayout', () => {
       />,
     )
 
-    await user.click(await screen.findByRole('button', { name: '删除 Note A' }))
+    await deleteFromMenu(user, 'Note A')
     expect(await screen.findByRole('alert')).toHaveTextContent('文件正在被使用')
     expect(screen.getByRole('button', { name: /^Note A/ })).toBeVisible()
     expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
@@ -689,7 +717,7 @@ describe('LibraryLayout', () => {
     const editor = EditorView.findFromDOM(textbox)
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'durable before delete' } }))
-    await user.click(screen.getByRole('button', { name: '删除 Note A' }))
+    await deleteFromMenu(user, 'Note A')
     await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA]))
 
     expect(textbox).toHaveAttribute('contenteditable', 'false')
@@ -730,7 +758,7 @@ describe('LibraryLayout', () => {
 
     await user.click(await screen.findByRole('button', { name: /^Note A/ }))
     const textbox = await screen.findByRole('textbox', { name: 'Markdown source' })
-    await user.click(screen.getByRole('button', { name: '删除 Note B' }))
+    await deleteFromMenu(user, 'Note B')
     await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteB]))
 
     expect(textbox).toHaveAttribute('contenteditable', 'false')
@@ -761,7 +789,7 @@ describe('LibraryLayout', () => {
     const editor = EditorView.findFromDOM(textbox)
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'durable before delete' } }))
-    await user.click(screen.getByRole('button', { name: '删除 Note A' }))
+    await deleteFromMenu(user, 'Note A')
     await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA]))
     act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: ' late edit' } }))
 
@@ -853,8 +881,8 @@ describe('LibraryLayout', () => {
       />,
     )
 
-    await user.click(await screen.findByRole('treeitem', { name: '临时便签' }))
-    expect(await screen.findByRole('region', { name: '临时便签' })).toBeVisible()
+    await user.click(await screen.findByRole('treeitem', { name: '临时便笺' }))
+    expect(await screen.findByRole('region', { name: '临时便笺' })).toBeVisible()
     expect(screen.getByTestId('folder-pane')).toHaveStyle({ width: '240px' })
     expect(screen.getByTestId('note-list-pane')).toHaveStyle({ width: '190px' })
   })
@@ -870,7 +898,7 @@ describe('LibraryLayout', () => {
     const ref = createRef<LibraryLayoutHandle>()
     const user = userEvent.setup()
     render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} temporary={temporary} autosaveDelayMs={2000} />)
-    await user.click(await screen.findByRole('treeitem', { name: '临时便签' }))
+    await user.click(await screen.findByRole('treeitem', { name: '临时便笺' }))
     await user.click(await screen.findByRole('button', { name: /发布前检查/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
@@ -1074,7 +1102,7 @@ describe('LibraryLayout', () => {
     render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} trash={trash} />)
 
     await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
-    await user.click(await screen.findByRole('button', { name: '删除 项目笔记' }))
+    await deleteFromMenu(user, '项目笔记')
 
     await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteB]))
     expect(screen.getAllByText('“项目笔记”已移入回收站。')).toHaveLength(1)

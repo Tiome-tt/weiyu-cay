@@ -51,7 +51,7 @@ describe('TrashView', () => {
     expect(screen.getByRole('heading', { name: '笔记' })).toBeVisible()
     expect(screen.getByText('原位置：项目 A')).toBeVisible()
     expect(screen.getByRole('checkbox', { name: '选择 临时想法' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: '临时便签' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '临时便笺' })).toBeVisible()
     expect(screen.getByText('原文件夹不可用，将恢复到“已恢复”')).toBeVisible()
     expect(screen.getAllByText(/2026/)).toHaveLength(2)
   })

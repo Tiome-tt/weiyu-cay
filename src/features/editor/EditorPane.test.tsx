@@ -27,6 +27,63 @@ function openMoreActions() {
 }
 
 describe('EditorPane', () => {
+  it.each(['右键菜单', '加号'] as const)('opens the same internal-link picker from the %s', async (entry) => {
+    const current = { ...note('正文'), title: '当前笔记' }
+    const target = {
+      ...note(''),
+      id: '019c0000-0000-7000-8000-000000000141' as NoteId,
+      title: '潮汐计划',
+      excerpt: '',
+    }
+    const links = fakeLinkPort({
+      listTargets: vi.fn().mockResolvedValue([
+        { ...current, excerpt: '正文' },
+        target,
+      ]),
+    })
+    const user = userEvent.setup()
+    render(<EditorPane document={current} notes={fakeNotePort()} links={links} folders={folders()} />)
+    act(() => view().dispatch({ selection: EditorSelection.cursor(view().state.doc.length) }))
+
+    if (entry === '右键菜单') fireEvent.contextMenu(view().contentDOM, { clientX: 80, clientY: 120 })
+    else await user.click(screen.getByRole('button', { name: '添加内容块' }))
+    await user.click(screen.getByRole('menuitem', { name: '插入内部链接' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '插入内部链接' })
+    expect(within(dialog).queryByRole('treeitem', { name: '选择链接：当前笔记' })).not.toBeInTheDocument()
+    await user.type(within(dialog).getByRole('searchbox', { name: '筛选笔记' }), '潮汐')
+    await user.click(within(dialog).getByRole('treeitem', { name: '选择链接：潮汐计划' }))
+    await user.click(within(dialog).getByRole('button', { name: '插入链接' }))
+
+    expect(view().state.doc.toString()).toBe('正文[[潮汐计划|' + target.id + ']]')
+    expect(screen.queryByRole('dialog', { name: '插入内部链接' })).not.toBeInTheDocument()
+  })
+
+  it('shows document tags beside the last-edited metadata and omits an empty tag list', () => {
+    const rendered = render(
+      <EditorPane document={{ ...note(''), tags: ['项目', '待确认'] }} notes={fakeNotePort()} />,
+    )
+    const tags = screen.getByRole('list', { name: '笔记标签' })
+    expect(tags).toHaveTextContent('项目')
+    expect(tags).toHaveTextContent('待确认')
+    expect(tags.parentElement).toHaveTextContent('最后编辑于')
+
+    rendered.rerender(<EditorPane document={{ ...note(''), tags: [] }} notes={fakeNotePort()} />)
+    expect(screen.queryByRole('list', { name: '笔记标签' })).not.toBeInTheDocument()
+  })
+
+  it('offers only real folders as move destinations for legacy unfiled notes', async () => {
+    const onMoveNote = vi.fn().mockResolvedValue({ ...note(''), folderId: folders()[0].id })
+    render(<EditorPane document={{ ...note(''), folderId: null }} notes={fakeNotePort()} folders={folders()} onMoveNote={onMoveNote} />)
+    openMoreActions()
+    const select = screen.getByRole('combobox', { name: '笔记文件夹' })
+    expect(within(select).queryByRole('option', { name: '未归档笔记' })).not.toBeInTheDocument()
+    expect(select.querySelector('option[value=""]')).toBeDisabled()
+    expect(select).toHaveValue('')
+    fireEvent.change(select, { target: { value: folders()[0].id } })
+    await waitFor(() => expect(onMoveNote).toHaveBeenCalledWith(folders()[0].id))
+  })
+
   it('inserts and retargets escaped stable links through keyboard-reachable controls', async () => {
     const first = {
       ...note(''),
@@ -139,8 +196,8 @@ describe('EditorPane', () => {
     const temporary = { ...note('临时内容'), kind: 'temporary' as const, title: 'Temporary capture', folderId: null }
     render(<EditorPane document={temporary} notes={fakeNotePort()} initialMode="preview" />)
 
-    expect(screen.getByRole('heading', { name: '临时便签', level: 1 })).toBeVisible()
-    expect(screen.getByLabelText('当前位置')).toHaveTextContent('未归档/临时便签')
+    expect(screen.getByRole('heading', { name: '临时便笺', level: 1 })).toBeVisible()
+    expect(screen.getByLabelText('当前位置')).toHaveTextContent('未归档/临时便笺')
     expect(screen.queryByText('Temporary capture')).not.toBeInTheDocument()
   })
 

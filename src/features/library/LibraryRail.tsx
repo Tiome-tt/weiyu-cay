@@ -18,7 +18,7 @@ interface LibraryRailProps {
 export function LibraryRail({ activeEntry, activeFolderId = null, starredFolders = [], onTemporary, onTrash, onFolder = () => undefined, onMoreFolders = () => undefined, onExpand }: LibraryRailProps) {
   return (
     <nav className="library-rail" style={{ width: '42px' }} aria-label="折叠的资料库">
-      <RailButton label="临时便签" icon="inbox" current={activeEntry === 'temporary'} onClick={onTemporary} />
+      <RailButton label="临时便笺" icon="inbox" current={activeEntry === 'temporary'} onClick={onTemporary} />
       <RailButton label="回收站" icon="trash" current={activeEntry === 'trash'} onClick={onTrash} />
       <div className="library-rail__separator" aria-hidden="true" />
       {starredFolders.length > 0 && <div className="library-rail__separator" aria-hidden="true" />}

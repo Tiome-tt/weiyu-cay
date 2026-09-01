@@ -176,14 +176,18 @@ pub fn undo_delete(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn show_temporary_window(
+pub async fn show_temporary_window(
     window: tauri::WebviewWindow,
     state: State<'_, TemporaryCommandState>,
     note_id: NoteId,
 ) -> Result<TemporaryWindowState, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Show, None)?;
     state.ensure_ready()?;
-    service(&state).show(note_id)
+    let service = service(&state);
+    // WebView creation and disk I/O must not block the native UI event loop.
+    tauri::async_runtime::spawn_blocking(move || service.show(note_id))
+        .await
+        .map_err(|source| CommandError::io(format!("could not show temporary window: {source}")))?
 }
 
 #[tauri::command(rename_all = "camelCase")]

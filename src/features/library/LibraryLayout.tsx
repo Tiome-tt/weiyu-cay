@@ -251,7 +251,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const openCreatePopover = (trigger: HTMLButtonElement | null, folderId = library.activeFolderId) => {
+  const openCreatePopover = (trigger: HTMLButtonElement | null, folderId = library.activeFolderId ?? library.document?.folderId ?? library.folders[0]?.id ?? null) => {
     onCreatePopoverOpen?.()
     createTriggerRef.current = trigger
     if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
@@ -424,12 +424,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   const renderFolderNotes = (folderId: FolderId | null): ReactNode | undefined => {
     const folderNotes = library.notesByFolder[folderId ?? '__unfiled__']
-    if (folderNotes === undefined && folderId !== library.activeFolderId) return undefined
+    const loadFailed = library.folderNoteErrors[folderId ?? '__unfiled__'] === true
+    if (folderNotes === undefined && folderId !== library.activeFolderId && !loadFailed) return undefined
     const isActiveFolder = folderId === library.activeFolderId
     return <NoteList
-      notes={folderNotes ?? library.notes}
+      notes={folderNotes ?? (isActiveFolder ? library.notes : [])}
       activeId={library.activeNoteId}
-      state={isActiveFolder ? library.noteListState : 'ready'}
+      state={isActiveFolder ? library.noteListState : loadFailed && folderNotes === undefined ? 'error' : 'ready'}
       onSelect={(noteId) => void navigateAfterSave(() => {
         if (folderId !== library.activeFolderId) library.selectFolder(folderId)
         library.selectNote(noteId)
@@ -527,7 +528,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         dividerLabels={['调整文件夹栏宽度', '调整笔记列表栏宽度']}
         proportions={columnPreference ? [columnPreference.folder, columnPreference.noteList] : undefined}
         collapsed={[collapsed.folder, collapsed.noteList]}
-        collapsedSecondRail={<DirectoryRail count={activeView === 'library' ? library.notes.length : null} onExpand={() => setColumnCollapsed('noteList', false)} />}
+        collapsedSecondRail={<DirectoryRail onExpand={() => setColumnCollapsed('noteList', false)} />}
         onCommit={persistColumns}
       >
       <aside data-testid="folder-pane" className="library-pane library-pane--folders">
@@ -568,9 +569,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
         {activeView === 'temporary' ? (
-          <section className="note-list" aria-label="临时便签导航">
+          <section className="note-list" aria-label="临时便笺导航">
             <header className="library-pane__header library-pane__header--compact">
-              <div><span className="library-pane__eyebrow">临时捕捉</span><h2>临时便签</h2></div>
+              <div><span className="library-pane__eyebrow">临时捕捉</span><h2>临时便笺</h2></div>
               <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
             <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>

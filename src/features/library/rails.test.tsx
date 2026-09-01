@@ -12,17 +12,17 @@ describe('collapsed library rails', () => {
   it('labels the collapsed note list as directory and restores it by keyboard', async () => {
     const onExpand = vi.fn()
     const user = userEvent.setup()
-    render(<DirectoryRail count={6} onExpand={onExpand} />)
+    render(<DirectoryRail onExpand={onExpand} />)
 
-    const rail = screen.getByRole('button', { name: '展开目录，6 篇笔记' })
-    expect(rail).toHaveTextContent('目录 · 6')
+    const rail = screen.getByRole('button', { name: '展开目录' })
+    expect(rail).toHaveTextContent(/^目录$/)
     expect(rail).toHaveStyle({ width: '30px' })
     await user.keyboard('{Tab}{Enter}')
     expect(onExpand).toHaveBeenCalledTimes(1)
   })
 
   it('hides a formal-note count when the active view has no note directory', () => {
-    render(<DirectoryRail count={null} onExpand={vi.fn()} />)
+    render(<DirectoryRail onExpand={vi.fn()} />)
 
     const rail = screen.getByRole('button', { name: '展开目录' })
     expect(rail).toHaveTextContent('目录')
@@ -46,10 +46,10 @@ describe('collapsed library rails', () => {
     )
 
     expect(screen.getByRole('navigation', { name: '折叠的资料库' })).toHaveStyle({ width: '42px' })
-    expect(screen.getByRole('button', { name: '临时便签' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('button', { name: '临时便签' })).toContainElement(screen.getByTestId('icon-inbox'))
+    expect(screen.getByRole('button', { name: '临时便笺' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: '临时便笺' })).toContainElement(screen.getByTestId('icon-inbox'))
 
-    await user.click(screen.getByRole('button', { name: '临时便签' }))
+    await user.click(screen.getByRole('button', { name: '临时便笺' }))
     await user.click(screen.getByRole('button', { name: '回收站' }))
     await user.click(screen.getByRole('button', { name: '展开资料库' }))
 

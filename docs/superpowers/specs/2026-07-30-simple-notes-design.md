@@ -108,15 +108,24 @@ The MVP does not include required login, cloud synchronization, mobile applicati
 
 The main window uses three columns:
 
-1. Logical folder tree and the temporary inbox.
-2. Notes in the selected folder.
+1. Logical folder tree with inline notes and the temporary inbox. New-note and move destinations list real folders only; no unfiled destination is offered. Moving a note refreshes both source and destination inline lists without another navigation action. Existing root-level content remains compatible with storage and recovery.
+2. Heading outline of the current note.
 3. Editor and preview area.
+
+Notes expand naturally within their folders; only the complete folder tree scrolls. The outline uses the preview Markdown grammar, excludes code-block contents, and retains source positions for navigation. Its collapsed rail displays only the directory label, without note or heading counts. These corrections are confirmed for 1.0.1 on 2026-08-31.
 
 The boundaries between columns are directly draggable. There is no visible “drag to resize” instruction in the application. On hover, the cursor changes and the boundary highlights subtly. Each column has a minimum width. Double-clicking a boundary restores the default proportion. The application persists proportions and collapsed states.
 
 The global application bar is reserved for application-level actions such as search, new note, future synchronization status, and settings.
 
 The editor has a slim title toolbar. It contains the note title on the left and source, split, preview, and more-actions controls on the right. View controls do not live in the global application bar because they affect only the current note.
+
+Note rows expose deletion through the context menu (including keyboard operation), without a hover delete icon. Recoverable delete feedback floats at the bottom of the workspace with undo and dismissal actions, without moving tree rows. Generated table column names avoid all existing headers; inserting a column never renames existing headers or moves their content to another column.
+
+The Chinese feature name for temporary captures is “临时便笺”, shortened to “便笺” in action labels.
+
+
+The note heading shows non-empty tags beside its last-edited metadata. The editor block “+” and context menus expose the same insertion actions, including a searchable internal-link picker that excludes the current note. Icon-only inline formatting controls show concise hover labels and retain accessible names.
 
 ### 5.2 Visual direction
 

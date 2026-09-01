@@ -311,7 +311,7 @@ function StickyApplication({ services, route }: { services: AppServices; route: 
         ? <StickyAppearanceLoadError onRetry={loadAppearance} />
         : ready
           ? <StickyWindowEntry services={services} route={route} autosaveDelayMs={appearance.autosaveDelayMs} />
-          : <main className="sticky-window"><p role="status">正在加载便签外观…</p></main>}
+          : <main className="sticky-window"><p role="status">正在加载便笺外观…</p></main>}
     </div>
   )
 }
@@ -367,9 +367,9 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
     }
   }, [route.noteId, services.temporary])
   if (error || services.temporary === undefined || services.temporaryWindows === undefined) {
-    return <main className="sticky-window"><p role="alert">无法打开这张临时便签。</p></main>
+    return <main className="sticky-window"><p role="alert">无法打开这张临时便笺。</p></main>
   }
-  if (note === null) return <main className="sticky-window"><p role="status">正在打开便签…</p></main>
+  if (note === null) return <main className="sticky-window"><p role="status">正在打开便笺…</p></main>
   return (
     <StickyWindow
       note={note}
@@ -387,7 +387,7 @@ function SettingsLoadError({ onRetry }: { onRetry(): Promise<void> }) {
 }
 
 function StickyAppearanceLoadError({ onRetry }: { onRetry(): Promise<void> }) {
-  return <main className="sticky-window"><p role="alert">无法加载便签外观。<button type="button" onClick={() => void onRetry()}>重试加载便签外观</button></p></main>
+  return <main className="sticky-window"><p role="alert">无法加载便笺外观。<button type="button" onClick={() => void onRetry()}>重试加载便笺外观</button></p></main>
 }
 
 function useSystemColorScheme(): 'light' | 'dark' {

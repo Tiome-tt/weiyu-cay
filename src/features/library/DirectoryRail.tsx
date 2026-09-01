@@ -1,19 +1,17 @@
 interface DirectoryRailProps {
-  count: number | null
   onExpand: () => void
 }
 
-export function DirectoryRail({ count, onExpand }: DirectoryRailProps) {
-  const label = count === null ? '展开目录' : `展开目录，${count} 篇笔记`
+export function DirectoryRail({ onExpand }: DirectoryRailProps) {
   return (
     <button
       type="button"
       className="directory-rail"
       style={{ width: '30px' }}
-      aria-label={label}
+      aria-label="展开目录"
       onClick={onExpand}
     >
-      <span aria-hidden="true">{count === null ? '目录' : `目录 · ${count}`}</span>
+      <span aria-hidden="true">目录</span>
     </button>
   )
 }

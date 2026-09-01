@@ -19,7 +19,7 @@ use std::{
 };
 use tauri_plugin_global_shortcut::Shortcut;
 
-pub const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+Space";
+pub const DEFAULT_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+D";
 const MAX_ACCELERATOR_LENGTH: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

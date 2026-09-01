@@ -54,7 +54,7 @@ export function StickyWindow({
       }
       await windows.hide(note.id)
     } catch {
-      setWindowError('便签无法隐藏，请重试。')
+      setWindowError('便笺无法隐藏，请重试。')
     } finally {
       sourceRef.current?.endEditBarrier()
     }
@@ -96,11 +96,11 @@ export function StickyWindow({
           type="button"
           data-testid="sticky-drag-region"
           className="sticky-window__drag"
-          aria-label="拖动便签"
+          aria-label="拖动便笺"
           onPointerDown={() => void windows.startDragging()}
         >
           <Icon name="note" size={15} />
-          <span>临时便签</span>
+          <span>临时便笺</span>
         </button>
         <div className="sticky-window__actions">
           <button
@@ -111,12 +111,12 @@ export function StickyWindow({
           >
             <span aria-hidden="true">⌖</span>
           </button>
-          <button type="button" aria-label="关闭便签" onClick={() => void hideAfterFlush()}>
+          <button type="button" aria-label="关闭便笺" onClick={() => void hideAfterFlush()}>
             <Icon name="close" size={15} />
           </button>
         </div>
       </header>
-      <section className="sticky-window__editor" aria-label="便签内容">
+      <section className="sticky-window__editor" aria-label="便笺内容">
         <MarkdownSource
           ref={sourceRef}
           markdown={autosave.markdown}

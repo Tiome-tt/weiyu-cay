@@ -467,7 +467,7 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toBeVisible()
     await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(1))
-    await userEvent.setup().click(screen.getByRole('treeitem', { name: '临时便签' }))
+    await userEvent.setup().click(screen.getByRole('treeitem', { name: '临时便笺' }))
     await waitFor(() => expect(listTemporary).toHaveBeenCalledTimes(1))
 
     await userEvent.setup().click(screen.getAllByRole('alert')[0].querySelector('button')!)
@@ -806,8 +806,8 @@ describe('App', () => {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(), stickySettings,
     }} />)
-    expect(await screen.findByRole('alert')).toHaveTextContent('无法加载便签外观')
-    await userEvent.setup().click(screen.getByRole('button', { name: '重试加载便签外观' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法加载便笺外观')
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试加载便笺外观' }))
     expect(load).toHaveBeenCalledTimes(2)
     rendered.unmount()
     retry.resolve({ ...defaultStickySettings, theme: 'sand' })

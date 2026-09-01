@@ -66,10 +66,11 @@ pub fn prepare_startup_repository_after_recovery(
             state.restore_pending_startup_guide(target)?;
         }
     }
-    prepared
+    prepared?;
+    upgrade_getting_started_guide(&paths)
 }
 
-const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+const LEGACY_GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
 
 微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
 
@@ -112,6 +113,109 @@ const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
 这篇引导笔记也可以随时删除。
 "#;
 
+const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+
+微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
+
+## 从这里开始
+
+你可以试着：
+
+- 新建一篇笔记，随手写下此刻的想法
+- 创建文件夹，整理不同主题的内容
+- 在源码、分屏和预览三种视图间切换
+- 为笔记添加标签
+- 使用 `[[笔记标题]]` 连接两篇笔记
+
+## 关于 Markdown
+
+Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本编辑器打开的文件。下面这些写法已足够应对大多数记录：
+
+````markdown
+# 一级标题
+## 二级标题
+
+**粗体**、*斜体*、~~删除线~~ 和 `行内代码`
+
+- 无序列表
+1. 有序列表
+- [ ] 任务项
+
+> 引用一段重要内容
+
+[显示文字](https://example.com)
+![图片说明](图片路径)
+
+分隔线使用三个短横线：
+
+---
+
+```text
+一段代码
+```
+````
+
+编辑器的“＋”菜单和右键菜单可以快速插入表格、代码块、图片和内部链接；也可以直接粘贴图片。
+
+## 临时便笺
+
+按 `Ctrl+Shift+D`（macOS 为 `Command+Shift+D`）可以从任何位置快速调出便笺。便笺可以钉在桌面最上层；关闭窗口只会隐藏内容，不会删除记录。你也可以在设置中修改全局快捷键。
+
+之后回到主应用的“临时便笺”，可以继续整理内容，并将便笺转为正式笔记。
+
+---
+
+现在，新建你的第一篇笔记吧。
+"#;
+
+#[doc(hidden)]
+pub fn legacy_getting_started_markdown() -> &'static str {
+    LEGACY_GETTING_STARTED_MARKDOWN
+}
+
+#[doc(hidden)]
+pub fn getting_started_markdown() -> &'static str {
+    GETTING_STARTED_MARKDOWN
+}
+
+fn upgrade_getting_started_guide(paths: &StoragePaths) -> Result<(), CommandError> {
+    let Some(folder) = super::folders::FolderRepository::new(paths.clone())
+        .list()?
+        .into_iter()
+        .find(|folder| folder.parent_id.is_none() && folder.name == "开始使用")
+    else {
+        return Ok(());
+    };
+    let notes = NoteRepository::new(paths.clone());
+    let Some(summary) = notes
+        .list_in_folder(Some(folder.id))?
+        .into_iter()
+        .find(|note| note.title == "欢迎来到微屿")
+    else {
+        return Ok(());
+    };
+    let mut document = notes.load(summary.id)?;
+    let previous_guide = GETTING_STARTED_MARKDOWN
+        .replace("分隔线使用三个短横线：\n\n---", "---")
+        .replace(
+            "现在，新建你的第一篇笔记吧。\n",
+            "现在，新建你的第一篇笔记吧。\n\n这篇引导笔记也可以随时删除。\n",
+        );
+    let previous_shortcut_guide = previous_guide
+        .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
+        .replace("Command+Shift+D", "Command+Shift+Space");
+    if document.markdown != LEGACY_GETTING_STARTED_MARKDOWN
+        && document.markdown != previous_guide
+        && document.markdown != previous_shortcut_guide
+    {
+        return Ok(());
+    }
+    document.markdown = GETTING_STARTED_MARKDOWN.to_owned();
+    document.updated_at = chrono::Utc::now().to_rfc3339();
+    let expected_revision = document.revision;
+    notes.save(document, expected_revision)?;
+    Ok(())
+}
 fn create_getting_started_guide(
     paths: &StoragePaths,
     target: StartupGuideTarget,

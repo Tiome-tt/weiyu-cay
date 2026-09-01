@@ -37,6 +37,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   const [document, setDocument] = useState<NoteDocument | null>(null)
   const [documentState, setDocumentState] = useState<LoadState>('ready')
   const [busy, setBusy] = useState<'delete' | 'convert' | null>(null)
+  const [showing, setShowing] = useState<ReadonlySet<NoteId>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestRef = useRef(0)
@@ -85,6 +86,22 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     loadNote: (noteId: NoteId) => temporary.load(noteId),
   }), [temporary])
 
+  const showCapture = async (noteId: NoteId) => {
+    if (windows === undefined || showing.has(noteId)) return
+    setShowing((current) => new Set(current).add(noteId))
+    try {
+      await windows.show(noteId)
+      setError(null)
+    } catch {
+      setError('无法重新显示便笺窗口。')
+    } finally {
+      setShowing((current) => {
+        const next = new Set(current)
+        next.delete(noteId)
+        return next
+      })
+    }
+  }
   const toggleSelected = (noteId: NoteId) => {
     setSelected((current) => {
       const next = new Set(current)
@@ -241,14 +258,14 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   }
 
   return (
-    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label="临时便签">
+    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label="临时便笺">
       <header className="temporary-inbox__header">
         <div>
           <span className="library-pane__eyebrow">临时捕捉</span>
-          <h2>临时便签</h2>
+          <h2>临时便笺</h2>
         </div>
       </header>
-      <div className="temporary-inbox__actions" aria-label="临时便签操作">
+      <div className="temporary-inbox__actions" aria-label="临时便笺操作">
         <button type="button" disabled={busy !== null || visibleItems.length === 0} onClick={() => setSelected(new Set(visibleItems.map((item) => item.id)))}>全选</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setDialogOpen(true)}>转为笔记</button>
@@ -257,7 +274,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       {error && <p role="alert" className="library-status library-status--error">{error}</p>}
       {state === 'loading' && <p role="status" className="library-status">正在加载临时捕捉…</p>}
       {state === 'error' && <p role="alert" className="library-status library-status--error">无法加载临时捕捉。</p>}
-      {state === 'ready' && visibleItems.length === 0 && <p className="library-status">临时便签为空。</p>}
+      {state === 'ready' && visibleItems.length === 0 && <p className="library-status">临时便笺为空。</p>}
       {state === 'ready' && visibleItems.length > 0 && (
         <ul className="temporary-inbox__list" aria-label="临时捕捉列表">
           {visibleItems.map((item) => {
@@ -278,14 +295,12 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                     type="button"
                     className="temporary-inbox__show"
                     aria-label={`重新显示 ${title}`}
-                    disabled={busy !== null}
-                    onClick={() => void windows.show(item.id).then(
-                      () => setError(null),
-                      () => setError('无法重新显示便签窗口。'),
-                    )}
+                    disabled={busy !== null || showing.has(item.id)}
+                    aria-busy={showing.has(item.id)}
+                    onClick={() => void showCapture(item.id)}
                   >
                     <Icon name="preview" size={15} />
-                    <span>显示便签</span>
+                    <span>{showing.has(item.id) ? '正在显示…' : '显示便笺'}</span>
                   </button>
                 )}
               </li>

@@ -15,6 +15,7 @@ export function useLibrary(
   const [folderState, setFolderState] = useState<LoadState>('loading')
   const [notes, setNotes] = useState<NoteSummary[]>([])
   const [notesByFolder, setNotesByFolder] = useState<Record<string, NoteSummary[]>>({})
+  const [folderNoteErrors, setFolderNoteErrors] = useState<Record<string, boolean>>({})
   const [noteListState, setNoteListState] = useState<LoadState>('loading')
   const [documentState, setDocumentState] = useState<LoadState>('ready')
   const [activeFolderId, setActiveFolderId] = useState<FolderId | null>(null)
@@ -23,6 +24,10 @@ export function useLibrary(
   const folderListRequest = useRef(0)
   const noteListRequest = useRef(0)
   const noteRequest = useRef(0)
+  const folderNoteRequests = useRef(new Map<string, number>())
+  const deletionSequence = useRef(0)
+  const noteDeletions = useRef(new Map<NoteId, number>())
+  const activeFolderRef = useRef<FolderId | null>(null)
   const mountedRef = useRef(false)
   const pendingStartupGuide = useRef<Awaited<ReturnType<StartupGuidePort['loadTarget']>>>(null)
 
@@ -55,19 +60,29 @@ export function useLibrary(
     void refreshFolders()
   }, [refreshFolders])
 
-  const refreshNotes = useCallback(async (folderId = activeFolderId) => {
+  const refreshNotes = useCallback(async (folderId = activeFolderId, cacheOnly = false) => {
     if (!mountedRef.current) return
-    const request = ++noteListRequest.current
-    setNoteListState('loading')
+    const deletedBeforeRead = deletionSequence.current
+    const key = folderKey(folderId)
+    const folderRequest = (folderNoteRequests.current.get(key) ?? 0) + 1
+    folderNoteRequests.current.set(key, folderRequest)
+    const request = cacheOnly ? noteListRequest.current : ++noteListRequest.current
+    if (!cacheOnly) setNoteListState('loading')
     try {
-      const result = await notesPort.listNotes(folderId)
-      if (!mountedRef.current || noteListRequest.current !== request) return
+      const result = (await notesPort.listNotes(folderId)).filter(
+        (note) => (noteDeletions.current.get(note.id) ?? 0) <= deletedBeforeRead,
+      )
+      if (!mountedRef.current || folderNoteRequests.current.get(key) !== folderRequest) return
+      if (!cacheOnly && noteListRequest.current !== request) return
+      setFolderNoteErrors((current) => ({ ...current, [key]: false }))
+      setNotesByFolder((current) => ({ ...current, [key]: result }))
+      if (cacheOnly) return
       setNotes(result)
-      setNotesByFolder((current) => ({ ...current, [folderKey(folderId)]: result }))
       setNoteListState('ready')
     } catch {
-      if (!mountedRef.current || noteListRequest.current !== request) return
-      setNoteListState('error')
+      if (!mountedRef.current || folderNoteRequests.current.get(key) !== folderRequest) return
+      setFolderNoteErrors((current) => ({ ...current, [key]: true }))
+      if (!cacheOnly && noteListRequest.current === request) setNoteListState('error')
     }
   }, [activeFolderId, notesPort])
 
@@ -79,6 +94,7 @@ export function useLibrary(
     if (!mountedRef.current) return
     noteListRequest.current += 1
     noteRequest.current += 1
+    activeFolderRef.current = id
     setActiveFolderId(id)
     setActiveNoteId(null)
     setDocument(null)
@@ -145,6 +161,7 @@ export function useLibrary(
     const request = ++noteRequest.current
     const created = await notesPort.createNote({ folderId, title })
     if (!mountedRef.current || noteRequest.current !== request) return created
+    activeFolderRef.current = folderId
     setActiveFolderId(folderId)
     setActiveNoteId(created.id)
     setDocument(created)
@@ -165,15 +182,58 @@ export function useLibrary(
   }, [activeNoteId, notesPort, refreshNotes])
 
   const moveNote = useCallback(async (id: NoteId, folderId: FolderId | null) => {
+    const navigation = noteRequest.current
+    const sourceKeys = Object.entries(notesByFolder)
+      .filter(([, items]) => items.some((note) => note.id === id))
+      .map(([key]) => key)
+    if (document?.id === id) sourceKeys.push(folderKey(document.folderId))
     const authoritative = await notesPort.moveNote(id, folderId)
     if (!mountedRef.current || authoritative.id !== id) return authoritative
-    if (activeNoteId === id) {
+    if (activeNoteId === id && noteRequest.current === navigation) {
       setDocument(authoritative)
       setDocumentState('ready')
     }
-    await refreshNotes()
+    // Invalidate only this move's folders so unrelated destination reads can finish.
+    const destinationKey = folderKey(authoritative.folderId)
+    for (const key of new Set([...sourceKeys, destinationKey])) {
+      folderNoteRequests.current.set(key, (folderNoteRequests.current.get(key) ?? 0) + 1)
+    }
+    const movedSummary: NoteSummary = {
+      id: authoritative.id,
+      kind: authoritative.kind,
+      title: authoritative.title,
+      folderId: authoritative.folderId,
+      tags: authoritative.tags,
+      revision: authoritative.revision,
+      createdAt: authoritative.createdAt,
+      updatedAt: authoritative.updatedAt,
+      excerpt: '',
+    }
+    const currentFolder = activeFolderRef.current
+    setNotes((current) => {
+      const previous = current.find((note) => note.id === id)
+      const remaining = current.filter((note) => note.id !== id)
+      return currentFolder === authoritative.folderId
+        ? [...remaining, { ...movedSummary, excerpt: previous?.excerpt ?? '' }]
+        : remaining
+    })
+    // Update complete cached lists from the durable result even if re-reading fails.
+    // An unvisited folder still needs a full read; one moved note is not its full list.
+    setNotesByFolder((current) => {
+      const previous = Object.values(current).flat().find((note) => note.id === id)
+      return Object.fromEntries(Object.entries(current).map(([key, items]) => {
+        const remaining = items.filter((note) => note.id !== id)
+        return [key, key === destinationKey
+          ? [...remaining, { ...movedSummary, excerpt: previous?.excerpt ?? '' }]
+          : remaining]
+      }))
+    })
+    await Promise.all([
+      refreshNotes(currentFolder),
+      ...(currentFolder === authoritative.folderId ? [] : [refreshNotes(authoritative.folderId, true)]),
+    ])
     return authoritative
-  }, [activeNoteId, notesPort, refreshNotes])
+  }, [activeNoteId, document, notesByFolder, notesPort, refreshNotes])
 
   const renameFolder = useCallback(
     async (id: FolderId, name: string) => {
@@ -248,6 +308,8 @@ export function useLibrary(
     if (!mountedRef.current) return
     noteRequest.current += 1
     noteListRequest.current += 1
+    // Filter only deletions newer than a read; later undo/recovery reads remain valid.
+    noteDeletions.current.set(id, ++deletionSequence.current)
     setNotes((current) => current.filter((note) => note.id !== id))
     setNotesByFolder((current) => {
       let changed = false
@@ -276,6 +338,7 @@ export function useLibrary(
     folderState,
     notes,
     notesByFolder,
+    folderNoteErrors,
     noteListState,
     documentState,
     activeFolderId,
