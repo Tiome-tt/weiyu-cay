@@ -23,6 +23,10 @@ use std::{
     time::Duration,
 };
 
+fn canonical_tempdir_path(directory: &tempfile::TempDir) -> PathBuf {
+    directory.path().canonicalize().unwrap()
+}
+
 #[test]
 fn night_theme_round_trips_without_changing_existing_defaults() {
     for existing in ["forest", "sand", "system"] {
@@ -163,7 +167,7 @@ fn sticky_read_uses_valid_persisted_appearance_without_system_or_store_mutation(
     *store.value.lock().unwrap() = Some(raw);
     let system = AutostartReadFailureSystem::default();
     let service = SettingsService::new(
-        StoragePaths::open(root.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&root)).unwrap(),
         store.clone(),
         system.clone(),
     );
@@ -183,15 +187,14 @@ fn sticky_read_missing_primary_with_custom_lkg_conflicts_without_defaulting() {
     let root = tempfile::tempdir().unwrap();
     let store = MemoryStore::default();
     *store.root_backup.lock().unwrap() = Some(DataRootSetting::Custom {
-        path: root
-            .path()
+        path: canonical_tempdir_path(&root)
             .join("custom-library")
             .to_string_lossy()
             .into_owned(),
     });
     let system = AutostartReadFailureSystem::default();
     let service = SettingsService::new(
-        StoragePaths::open(root.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&root)).unwrap(),
         store.clone(),
         system.clone(),
     );
@@ -286,7 +289,11 @@ fn service(
     store: MemoryStore,
     system: FakeSystem,
 ) -> SettingsService<MemoryStore, FakeSystem> {
-    SettingsService::new(StoragePaths::open(root.path()).unwrap(), store, system)
+    SettingsService::new(
+        StoragePaths::open(canonical_tempdir_path(&root)).unwrap(),
+        store,
+        system,
+    )
 }
 
 #[test]
@@ -391,8 +398,7 @@ fn corrupted_settings_never_overwrite_the_last_known_custom_root() {
     let root = tempfile::tempdir().unwrap();
     let store = MemoryStore::corrupted();
     let custom = DataRootSetting::Custom {
-        path: root
-            .path()
+        path: canonical_tempdir_path(&root)
             .join("custom-library")
             .to_string_lossy()
             .into_owned(),
@@ -416,8 +422,7 @@ fn missing_settings_never_overwrite_or_bypass_the_last_known_custom_root() {
     let root = tempfile::tempdir().unwrap();
     let store = MemoryStore::default();
     let custom = DataRootSetting::Custom {
-        path: root
-            .path()
+        path: canonical_tempdir_path(&root)
             .join("preserved-library")
             .to_string_lossy()
             .into_owned(),
@@ -506,9 +511,9 @@ fn custom_root_and_main_settings_publish_atomically_or_neither_changes() {
     *store.value.lock().unwrap() = Some(serde_json::to_value(AppSettings::default()).unwrap());
     *store.root_backup.lock().unwrap() = Some(DataRootSetting::Default);
     store.fail_next_save();
-    let destination = parent.path().join("atomic-settings-failure");
+    let destination = canonical_tempdir_path(&parent).join("atomic-settings-failure");
     let service = SettingsService::new(
-        StoragePaths::open(source.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
         store.clone(),
         FakeSystem::default(),
     );
@@ -525,11 +530,13 @@ fn custom_root_and_main_settings_publish_atomically_or_neither_changes() {
             .data_root,
         DataRootSetting::Default
     );
-    assert!(fs::read_dir(parent.path()).unwrap().any(|entry| entry
+    assert!(fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with(".simple-notes-incomplete-")));
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".simple-notes-incomplete-")));
 }
 
 #[test]
@@ -548,7 +555,7 @@ fn concurrent_updates_linearize_store_shortcut_and_autostart() {
     };
     let system = FakeSystem::default();
     let service = SettingsService::new(
-        StoragePaths::open(root.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&root)).unwrap(),
         store.clone(),
         system.clone(),
     );
@@ -597,7 +604,7 @@ fn concurrent_updates_linearize_store_shortcut_and_autostart() {
 #[test]
 fn reset_never_deletes_note_data() {
     let root = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(root.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&root)).unwrap();
     let note = paths.notes().join("sentinel.md");
     fs::write(&note, b"keep me").unwrap();
     let service = SettingsService::new(paths, MemoryStore::default(), FakeSystem::default());
@@ -614,7 +621,7 @@ fn reset_never_deletes_note_data() {
 #[test]
 fn storage_info_counts_notes_assets_and_trash_without_following_links() {
     let root = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(root.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&root)).unwrap();
     fs::write(paths.notes().join("note.bin"), vec![1_u8; 7]).unwrap();
     fs::create_dir(paths.notes().join("assets")).unwrap();
     fs::write(paths.notes().join("assets/image.bin"), vec![2_u8; 11]).unwrap();
@@ -632,11 +639,11 @@ fn storage_info_counts_notes_assets_and_trash_without_following_links() {
 fn storage_move_copies_and_verifies_bytes_then_persists_custom_root() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     fs::write(paths.notes().join("content.bin"), b"durable bytes").unwrap();
     let store = MemoryStore::default();
     let service = SettingsService::new(paths, store.clone(), FakeSystem::default());
-    let destination = parent.path().join("moved-library");
+    let destination = canonical_tempdir_path(&parent).join("moved-library");
     service.move_storage_root(&destination).unwrap();
     assert_eq!(
         fs::read(destination.join("notes/content.bin")).unwrap(),
@@ -658,7 +665,7 @@ fn storage_move_copies_and_verifies_bytes_then_persists_custom_root() {
 fn storage_move_uses_a_sqlite_snapshot_and_preserves_uncheckpointed_window_state() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let temporary = TemporaryRepository::new(paths.clone()).create().unwrap();
 
     let reader = rusqlite::Connection::open(paths.database()).unwrap();
@@ -683,7 +690,7 @@ fn storage_move_uses_a_sqlite_snapshot_and_preserves_uncheckpointed_window_state
         .unwrap();
     assert!(paths.database().with_extension("sqlite-wal").exists());
 
-    let destination = parent.path().join("wal-snapshot");
+    let destination = canonical_tempdir_path(&parent).join("wal-snapshot");
     SettingsService::new(paths, MemoryStore::default(), FakeSystem::default())
         .move_storage_root(&destination)
         .unwrap();
@@ -716,10 +723,10 @@ fn storage_move_uses_a_sqlite_snapshot_and_preserves_uncheckpointed_window_state
 fn active_relocation_lease_rejects_storage_queries_and_second_moves_immediately() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let service = SettingsService::new(paths, MemoryStore::default(), FakeSystem::default());
     service
-        .move_storage_root(parent.path().join("first-destination"))
+        .move_storage_root(canonical_tempdir_path(&parent).join("first-destination"))
         .unwrap();
 
     let started = std::time::Instant::now();
@@ -731,43 +738,49 @@ fn active_relocation_lease_rejects_storage_queries_and_second_moves_immediately(
 
     let started = std::time::Instant::now();
     assert!(service
-        .move_storage_root(parent.path().join("second-destination"))
+        .move_storage_root(canonical_tempdir_path(&parent).join("second-destination"))
         .is_err());
     assert!(
         started.elapsed() < Duration::from_millis(250),
         "a second relocation waited instead of reporting the active lease"
     );
-    assert!(!parent.path().join("second-destination").exists());
+    assert!(!canonical_tempdir_path(&parent)
+        .join("second-destination")
+        .exists());
 }
 
 #[test]
 fn storage_move_rejects_collision_and_symlink_source_entries() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let service =
         SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
-    let collision = parent.path().join("exists");
+    let collision = canonical_tempdir_path(&parent).join("exists");
     fs::create_dir(&collision).unwrap();
     assert!(service.move_storage_root(&collision).is_err());
 
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(parent.path(), paths.notes().join("escape")).unwrap();
+        std::os::unix::fs::symlink(
+            canonical_tempdir_path(&parent),
+            paths.notes().join("escape"),
+        )
+        .unwrap();
         assert!(service
-            .move_storage_root(&parent.path().join("symlink-copy"))
+            .move_storage_root(&canonical_tempdir_path(&parent).join("symlink-copy"))
             .is_err());
     }
     #[cfg(windows)]
     {
         if std::os::windows::fs::symlink_file(
-            parent.path().join("missing"),
+            canonical_tempdir_path(&parent).join("missing"),
             paths.notes().join("escape"),
         )
         .is_ok()
         {
             assert!(service
-                .move_storage_root(parent.path().join("symlink-copy"))
+                .move_storage_root(canonical_tempdir_path(&parent).join("symlink-copy"))
                 .is_err());
         }
     }
@@ -777,7 +790,7 @@ fn storage_move_rejects_collision_and_symlink_source_entries() {
 fn failed_move_keeps_old_root_and_removes_only_created_destination() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     fs::write(paths.notes().join("content.bin"), b"old active root").unwrap();
     let store = MemoryStore::default();
     let service = SettingsService::new_with_failure(
@@ -786,19 +799,19 @@ fn failed_move_keeps_old_root_and_removes_only_created_destination() {
         FakeSystem::default(),
         StorageMoveFailurePoint::AfterCopy,
     );
-    let destination = parent.path().join("incomplete");
+    let destination = canonical_tempdir_path(&parent).join("incomplete");
     let error = service.move_storage_root(&destination).unwrap_err();
     assert!(
         !destination.exists(),
         "destination remained after quarantine: {error:?}; siblings={:?}",
-        fs::read_dir(parent.path())
+        fs::read_dir(canonical_tempdir_path(&parent))
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>()
     );
     assert_eq!(service.load().unwrap().data_root, DataRootSetting::Default);
     assert_eq!(
-        fs::read(source.path().join("notes/content.bin")).unwrap(),
+        fs::read(canonical_tempdir_path(&source).join("notes/content.bin")).unwrap(),
         b"old active root"
     );
 }
@@ -840,11 +853,11 @@ fn settings_commands_are_main_only_and_capabilities_exclude_sticky_windows() {
 fn storage_move_waits_for_the_global_mutation_lock() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     fs::write(paths.notes().join("content.bin"), b"serialized save").unwrap();
     let service =
         SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
-    let destination = parent.path().join("serialized-move");
+    let destination = canonical_tempdir_path(&parent).join("serialized-move");
     let guard = simple_notes_lib::platform::IndexMutationLock::acquire(paths.root()).unwrap();
     let (sent, received) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
@@ -864,14 +877,14 @@ fn storage_move_waits_for_the_global_mutation_lock() {
 fn post_validation_failure_removes_fresh_destination_and_keeps_configuration() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let service = SettingsService::new_with_failure(
         paths,
         MemoryStore::default(),
         FakeSystem::default(),
         StorageMoveFailurePoint::AfterValidation,
     );
-    let destination = parent.path().join("validated-but-unpublished");
+    let destination = canonical_tempdir_path(&parent).join("validated-but-unpublished");
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
     assert_eq!(service.load().unwrap().data_root, DataRootSetting::Default);
@@ -881,7 +894,7 @@ fn post_validation_failure_removes_fresh_destination_and_keeps_configuration() {
 fn restart_quarantines_a_verified_destination_when_config_was_never_published() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     fs::write(paths.notes().join("crash.bin"), b"recoverable copy").unwrap();
     let store = MemoryStore::default();
     let crashed = SettingsService::new_with_failure(
@@ -890,22 +903,23 @@ fn restart_quarantines_a_verified_destination_when_config_was_never_published() 
         FakeSystem::default(),
         StorageMoveFailurePoint::CrashBeforeSettingsPublish,
     );
-    let destination = parent.path().join("retryable-destination");
+    let destination = canonical_tempdir_path(&parent).join("retryable-destination");
     assert!(crashed.move_storage_root(&destination).is_err());
     assert!(destination.exists());
     assert_eq!(crashed.load().unwrap().data_root, DataRootSetting::Default);
-    assert!(source
-        .path()
+    assert!(canonical_tempdir_path(&source)
         .join(".simple-notes-storage-move-source.json")
         .exists());
 
     recover_interrupted_source_relocation(&paths).unwrap();
     assert!(!destination.exists());
-    assert!(fs::read_dir(parent.path()).unwrap().any(|entry| entry
+    assert!(fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with(".simple-notes-incomplete-")));
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".simple-notes-incomplete-")));
     SettingsService::new(paths, store, FakeSystem::default())
         .move_storage_root(&destination)
         .unwrap();
@@ -919,9 +933,9 @@ fn restart_quarantines_a_verified_destination_when_config_was_never_published() 
 fn crash_before_staging_marker_never_occupies_the_requested_destination() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let store = MemoryStore::default();
-    let destination = parent.path().join("still-retryable");
+    let destination = canonical_tempdir_path(&parent).join("still-retryable");
     let crashed = SettingsService::new_with_failure(
         paths.clone(),
         store.clone(),
@@ -930,24 +944,30 @@ fn crash_before_staging_marker_never_occupies_the_requested_destination() {
     );
     assert!(crashed.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
-    assert!(fs::read_dir(parent.path()).unwrap().any(|entry| entry
+    assert!(fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with(".simple-notes-relocation-")));
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".simple-notes-relocation-")));
 
     recover_interrupted_source_relocation(&paths).unwrap();
     assert!(!destination.exists());
-    assert!(!fs::read_dir(parent.path()).unwrap().any(|entry| entry
+    assert!(!fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with(".simple-notes-relocation-")));
-    assert!(fs::read_dir(parent.path()).unwrap().any(|entry| entry
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".simple-notes-relocation-")));
+    assert!(fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .starts_with(".simple-notes-orphan-")));
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".simple-notes-orphan-")));
     SettingsService::new(paths, store, FakeSystem::default())
         .move_storage_root(&destination)
         .unwrap();
@@ -959,11 +979,11 @@ fn restart_quarantines_an_unmarked_staging_link_without_following_it() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let sentinel = outside.path().join("outside-sentinel.bin");
+    let sentinel = canonical_tempdir_path(&outside).join("outside-sentinel.bin");
     fs::write(&sentinel, b"never move or delete").unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let store = MemoryStore::default();
-    let destination = parent.path().join("still-retryable-after-link-swap");
+    let destination = canonical_tempdir_path(&parent).join("still-retryable-after-link-swap");
     let crashed = SettingsService::new_with_failure(
         paths.clone(),
         store.clone(),
@@ -971,7 +991,7 @@ fn restart_quarantines_an_unmarked_staging_link_without_following_it() {
         StorageMoveFailurePoint::CrashAfterStagingCreate,
     );
     assert!(crashed.move_storage_root(&destination).is_err());
-    let staging = fs::read_dir(parent.path())
+    let staging = fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -981,16 +1001,16 @@ fn restart_quarantines_an_unmarked_staging_link_without_following_it() {
                 .starts_with(".simple-notes-relocation-")
         })
         .unwrap();
-    let parked = parent.path().join("parked-original-staging");
+    let parked = canonical_tempdir_path(&parent).join("parked-original-staging");
     fs::rename(&staging, &parked).unwrap();
-    create_directory_link(outside.path(), &staging).unwrap();
+    create_directory_link(&canonical_tempdir_path(&outside), &staging).unwrap();
 
     recover_interrupted_source_relocation(&paths).unwrap();
 
     assert_eq!(fs::read(&sentinel).unwrap(), b"never move or delete");
     assert!(!staging.exists());
     assert!(!destination.exists());
-    let orphan = fs::read_dir(parent.path())
+    let orphan = fs::read_dir(canonical_tempdir_path(&parent))
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -1012,10 +1032,10 @@ fn quarantine_rejects_a_destination_replaced_by_an_external_directory_link() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let sentinel = outside.path().join("outside-sentinel.bin");
+    let sentinel = canonical_tempdir_path(&outside).join("outside-sentinel.bin");
     fs::write(&sentinel, b"never move or delete").unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
-    let destination = parent.path().join("replace-before-quarantine");
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
+    let destination = canonical_tempdir_path(&parent).join("replace-before-quarantine");
     let crashed = SettingsService::new_with_failure(
         paths,
         MemoryStore::default(),
@@ -1023,9 +1043,9 @@ fn quarantine_rejects_a_destination_replaced_by_an_external_directory_link() {
         StorageMoveFailurePoint::CrashBeforeSettingsPublish,
     );
     assert!(crashed.move_storage_root(&destination).is_err());
-    let parked = parent.path().join("original-operation");
+    let parked = canonical_tempdir_path(&parent).join("original-operation");
     let destination_for_hook = destination.clone();
-    let outside_for_hook = outside.path().to_path_buf();
+    let outside_for_hook = canonical_tempdir_path(&outside).to_path_buf();
     let result = quarantine_incomplete_destination_with_hook(&destination, move || {
         fs::rename(&destination_for_hook, &parked).unwrap();
         create_directory_link(&outside_for_hook, &destination_for_hook).unwrap();
@@ -1039,9 +1059,9 @@ fn quarantine_rejects_a_destination_replaced_by_an_external_directory_link() {
 fn same_length_staging_file_replacement_is_rejected_before_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     fs::write(paths.notes().join("content.bin"), b"trusted-content").unwrap();
-    let parent_for_hook = parent.path().to_path_buf();
+    let parent_for_hook = canonical_tempdir_path(&parent).to_path_buf();
     let service = SettingsService::new_with_staging_publish_hook(
         paths,
         MemoryStore::default(),
@@ -1060,7 +1080,7 @@ fn same_length_staging_file_replacement_is_rejected_before_publish() {
             fs::write(staging.join("notes/content.bin"), b"tampered-value!").unwrap();
         },
     );
-    let destination = parent.path().join("must-not-publish");
+    let destination = canonical_tempdir_path(&parent).join("must-not-publish");
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1070,7 +1090,7 @@ fn same_length_staging_file_replacement_is_rejected_before_publish() {
 fn same_length_source_file_replacement_is_rejected_before_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let source_file = paths.notes().join("content.bin");
     fs::write(&source_file, b"trusted-content").unwrap();
     let service = SettingsService::new_with_staging_publish_hook(
@@ -1079,7 +1099,7 @@ fn same_length_source_file_replacement_is_rejected_before_publish() {
         FakeSystem::default(),
         move || fs::write(&source_file, b"tampered-value!").unwrap(),
     );
-    let destination = parent.path().join("must-not-publish-source-change");
+    let destination = canonical_tempdir_path(&parent).join("must-not-publish-source-change");
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1102,7 +1122,7 @@ fn relocation_staging_directory(parent: &std::path::Path) -> PathBuf {
 fn source_tree_file_added_after_copy_is_rejected_before_relocation_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let source_notes = paths.notes().to_path_buf();
     let service = SettingsService::new_with_staging_publish_hook(
         paths,
@@ -1110,7 +1130,7 @@ fn source_tree_file_added_after_copy_is_rejected_before_relocation_publish() {
         FakeSystem::default(),
         move || fs::write(source_notes.join("late-durable.bin"), b"late durable bytes").unwrap(),
     );
-    let destination = parent.path().join("must-not-publish-late-tree-file");
+    let destination = canonical_tempdir_path(&parent).join("must-not-publish-late-tree-file");
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1120,7 +1140,7 @@ fn source_tree_file_added_after_copy_is_rejected_before_relocation_publish() {
 fn unknown_root_file_added_after_copy_is_rejected_before_relocation_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let source_root = paths.root().to_path_buf();
     let service = SettingsService::new_with_staging_publish_hook(
         paths,
@@ -1128,7 +1148,7 @@ fn unknown_root_file_added_after_copy_is_rejected_before_relocation_publish() {
         FakeSystem::default(),
         move || fs::write(source_root.join("late-unknown.bin"), b"late root bytes").unwrap(),
     );
-    let destination = parent.path().join("must-not-publish-late-root-file");
+    let destination = canonical_tempdir_path(&parent).join("must-not-publish-late-root-file");
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1138,9 +1158,9 @@ fn unknown_root_file_added_after_copy_is_rejected_before_relocation_publish() {
 fn extra_staging_file_after_copy_is_rejected_before_relocation_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let parent_path = parent.path().to_path_buf();
+    let parent_path = canonical_tempdir_path(&parent).to_path_buf();
     let service = SettingsService::new_with_staging_publish_hook(
-        StoragePaths::open(source.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
         MemoryStore::default(),
         FakeSystem::default(),
         move || {
@@ -1151,7 +1171,7 @@ fn extra_staging_file_after_copy_is_rejected_before_relocation_publish() {
             .unwrap();
         },
     );
-    let destination = parent.path().join("must-not-publish-extra-staging-file");
+    let destination = canonical_tempdir_path(&parent).join("must-not-publish-extra-staging-file");
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1161,9 +1181,9 @@ fn extra_staging_file_after_copy_is_rejected_before_relocation_publish() {
 fn extra_empty_staging_directory_after_copy_is_rejected_before_relocation_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let parent_path = parent.path().to_path_buf();
+    let parent_path = canonical_tempdir_path(&parent).to_path_buf();
     let service = SettingsService::new_with_staging_publish_hook(
-        StoragePaths::open(source.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
         MemoryStore::default(),
         FakeSystem::default(),
         move || {
@@ -1171,9 +1191,8 @@ fn extra_empty_staging_directory_after_copy_is_rejected_before_relocation_publis
                 .unwrap();
         },
     );
-    let destination = parent
-        .path()
-        .join("must-not-publish-extra-staging-directory");
+    let destination =
+        canonical_tempdir_path(&parent).join("must-not-publish-extra-staging-directory");
 
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1184,10 +1203,10 @@ fn relocation_owned_marker_and_index_tampering_are_rejected_before_publish() {
     for target in [".simple-notes-storage-move.json", "index.sqlite"] {
         let source = tempfile::tempdir().unwrap();
         let parent = tempfile::tempdir().unwrap();
-        let parent_path = parent.path().to_path_buf();
+        let parent_path = canonical_tempdir_path(&parent).to_path_buf();
         let tampered = target.to_owned();
         let service = SettingsService::new_with_staging_publish_hook(
-            StoragePaths::open(source.path()).unwrap(),
+            StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
             MemoryStore::default(),
             FakeSystem::default(),
             move || {
@@ -1198,7 +1217,8 @@ fn relocation_owned_marker_and_index_tampering_are_rejected_before_publish() {
                 .unwrap();
             },
         );
-        let destination = parent.path().join(format!("must-not-publish-{target}"));
+        let destination =
+            canonical_tempdir_path(&parent).join(format!("must-not-publish-{target}"));
 
         assert!(
             service.move_storage_root(&destination).is_err(),
@@ -1212,18 +1232,18 @@ fn relocation_owned_marker_and_index_tampering_are_rejected_before_publish() {
 fn pinned_destination_parent_prevents_staging_creation_in_a_replacement_link() {
     let source = tempfile::tempdir().unwrap();
     let outer = tempfile::tempdir().unwrap();
-    let selected_parent = outer.path().join("selected-parent");
+    let selected_parent = canonical_tempdir_path(&outer).join("selected-parent");
     fs::create_dir(&selected_parent).unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let sentinel = outside.path().join("sentinel.bin");
+    let sentinel = canonical_tempdir_path(&outside).join("sentinel.bin");
     fs::write(&sentinel, b"outside remains isolated").unwrap();
     let destination = selected_parent.join("requested-library");
     let selected_for_hook = selected_parent.clone();
-    let parked = outer.path().join("parked-parent");
+    let parked = canonical_tempdir_path(&outer).join("parked-parent");
     #[cfg(unix)]
-    let outside_for_hook = outside.path().to_path_buf();
+    let outside_for_hook = canonical_tempdir_path(&outside).to_path_buf();
     let service = SettingsService::new_with_staging_hook(
-        StoragePaths::open(source.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
         MemoryStore::default(),
         FakeSystem::default(),
         move || {
@@ -1247,7 +1267,12 @@ fn pinned_destination_parent_prevents_staging_creation_in_a_replacement_link() {
     #[cfg(windows)]
     assert!(result.is_ok());
     assert_eq!(fs::read(&sentinel).unwrap(), b"outside remains isolated");
-    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 1);
+    assert_eq!(
+        fs::read_dir(canonical_tempdir_path(&outside))
+            .unwrap()
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -1255,13 +1280,13 @@ fn index_snapshot_never_writes_through_a_replaced_staging_path() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let sentinel = outside.path().join("sentinel.bin");
+    let sentinel = canonical_tempdir_path(&outside).join("sentinel.bin");
     fs::write(&sentinel, b"outside index is untouched").unwrap();
-    let parent_for_hook = parent.path().to_path_buf();
+    let parent_for_hook = canonical_tempdir_path(&parent).to_path_buf();
     #[cfg(unix)]
-    let outside_for_hook = outside.path().to_path_buf();
+    let outside_for_hook = canonical_tempdir_path(&outside).to_path_buf();
     let service = SettingsService::new_with_index_snapshot_hook(
-        StoragePaths::open(source.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
         MemoryStore::default(),
         FakeSystem::default(),
         move || {
@@ -1290,13 +1315,15 @@ fn index_snapshot_never_writes_through_a_replaced_staging_path() {
             }
         },
     );
-    let result = service.move_storage_root(parent.path().join("requested"));
+    let result = service.move_storage_root(canonical_tempdir_path(&parent).join("requested"));
     #[cfg(unix)]
     assert!(result.is_err());
     #[cfg(windows)]
     assert!(result.is_ok());
     assert_eq!(fs::read(&sentinel).unwrap(), b"outside index is untouched");
-    assert!(!outside.path().join("index.sqlite").exists());
+    assert!(!canonical_tempdir_path(&outside)
+        .join("index.sqlite")
+        .exists());
 }
 
 #[test]
@@ -1304,14 +1331,14 @@ fn verified_staging_identity_is_bound_to_the_published_directory() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let sentinel = outside.path().join("sentinel.bin");
+    let sentinel = canonical_tempdir_path(&outside).join("sentinel.bin");
     fs::write(&sentinel, b"outside publication is inert").unwrap();
-    let parent_for_hook = parent.path().to_path_buf();
+    let parent_for_hook = canonical_tempdir_path(&parent).to_path_buf();
     #[cfg(unix)]
-    let outside_for_hook = outside.path().to_path_buf();
+    let outside_for_hook = canonical_tempdir_path(&outside).to_path_buf();
     let store = MemoryStore::default();
     let service = SettingsService::new_with_staging_publish_hook(
-        StoragePaths::open(source.path()).unwrap(),
+        StoragePaths::open(canonical_tempdir_path(&source)).unwrap(),
         store.clone(),
         FakeSystem::default(),
         move || {
@@ -1340,7 +1367,7 @@ fn verified_staging_identity_is_bound_to_the_published_directory() {
             }
         },
     );
-    let destination = parent.path().join("requested");
+    let destination = canonical_tempdir_path(&parent).join("requested");
     let result = service.move_storage_root(&destination);
     #[cfg(unix)]
     assert!(result.is_err());
@@ -1391,11 +1418,11 @@ fn remove_directory_link(link: &std::path::Path) -> std::io::Result<()> {
 fn successful_relocation_blocks_all_future_old_root_mutations_until_restart() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let service =
         SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
     service
-        .move_storage_root(parent.path().join("restart-required"))
+        .move_storage_root(canonical_tempdir_path(&parent).join("restart-required"))
         .unwrap();
     let blocked = simple_notes_lib::platform::IndexMutationLock::acquire_with_timeout(
         paths.root(),
@@ -1408,7 +1435,7 @@ fn successful_relocation_blocks_all_future_old_root_mutations_until_restart() {
 fn visible_sticky_note_prevents_relocation_before_copying() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let temporary = TemporaryRepository::new(paths.clone()).create().unwrap();
     let database = rusqlite::Connection::open(paths.database()).unwrap();
     database
@@ -1421,7 +1448,7 @@ fn visible_sticky_note_prevents_relocation_before_copying() {
         )
         .unwrap();
     drop(database);
-    let destination = parent.path().join("must-not-copy");
+    let destination = canonical_tempdir_path(&parent).join("must-not-copy");
     let service = SettingsService::new(paths, MemoryStore::default(), FakeSystem::default());
     assert!(service.move_storage_root(&destination).is_err());
     assert!(!destination.exists());
@@ -1431,13 +1458,13 @@ fn visible_sticky_note_prevents_relocation_before_copying() {
 fn concurrent_show_and_move_cannot_both_publish() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let temporary = TemporaryRepository::new(paths.clone()).create().unwrap();
     let windows =
         TemporaryWindowService::new(paths.clone(), InMemoryTemporaryWindowBackend::default());
     let settings = SettingsService::new(paths, MemoryStore::default(), FakeSystem::default());
     let retained_lease = settings.clone();
-    let destination = parent.path().join("show-race");
+    let destination = canonical_tempdir_path(&parent).join("show-race");
     let start = Arc::new(std::sync::Barrier::new(3));
     let show_start = start.clone();
     let show = std::thread::spawn(move || {
@@ -1460,27 +1487,28 @@ fn concurrent_show_and_move_cannot_both_publish() {
 fn restart_opens_the_verified_custom_root_with_complete_bytes() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     fs::write(
         paths.notes().join("restart.bin"),
         b"complete before restart",
     )
     .unwrap();
     fs::write(
-        source.path().join("unknown-durable.bin"),
+        canonical_tempdir_path(&source).join("unknown-durable.bin"),
         b"copy unknown bytes",
     )
     .unwrap();
     fs::write(
-        source.path().join("settings.json"),
+        canonical_tempdir_path(&source).join("settings.json"),
         b"must never be offered",
     )
     .unwrap();
     let store = MemoryStore::default();
     let service = SettingsService::new(paths, store, FakeSystem::default());
-    let destination = parent.path().join("reopened");
+    let destination = canonical_tempdir_path(&parent).join("reopened");
     service.move_storage_root(&destination).unwrap();
-    let reopened = open_configured_storage(source.path(), &service.load().unwrap()).unwrap();
+    let reopened =
+        open_configured_storage(canonical_tempdir_path(&source), &service.load().unwrap()).unwrap();
     assert_eq!(reopened.root(), destination.canonicalize().unwrap());
     assert_eq!(
         fs::read(reopened.notes().join("restart.bin")).unwrap(),
@@ -1505,7 +1533,7 @@ fn restart_opens_the_verified_custom_root_with_complete_bytes() {
         .expect("verified reopen should expose exact cleanup candidates");
     assert_eq!(
         PathBuf::from(cleanup.root).canonicalize().unwrap(),
-        source.path().canonicalize().unwrap()
+        canonical_tempdir_path(&source).canonicalize().unwrap()
     );
     assert!(cleanup
         .candidates
@@ -1530,7 +1558,7 @@ fn restart_opens_the_verified_custom_root_with_complete_bytes() {
 fn failed_reopen_window_state_validation_preserves_active_index_and_retryable_marker() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let temporary = TemporaryRepository::new(paths.clone()).create().unwrap();
     let database = rusqlite::Connection::open(paths.database()).unwrap();
     database
@@ -1558,7 +1586,7 @@ fn failed_reopen_window_state_validation_preserves_active_index_and_retryable_ma
         )
         .unwrap();
     drop(database);
-    let destination = parent.path().join("window-state-validation");
+    let destination = canonical_tempdir_path(&parent).join("window-state-validation");
     SettingsService::new(paths, MemoryStore::default(), FakeSystem::default())
         .move_storage_root(&destination)
         .unwrap();
@@ -1578,10 +1606,10 @@ fn failed_reopen_window_state_validation_preserves_active_index_and_retryable_ma
 fn failed_reopen_validation_keeps_relocation_awaiting_restart() {
     let source = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let paths = StoragePaths::open(source.path()).unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
     let store = MemoryStore::default();
     let service = SettingsService::new(paths, store, FakeSystem::default());
-    let destination = parent.path().join("broken-reopen");
+    let destination = canonical_tempdir_path(&parent).join("broken-reopen");
     service.move_storage_root(&destination).unwrap();
     fs::write(destination.join("index.sqlite"), b"not a sqlite database").unwrap();
     let reopened = StoragePaths::open(&destination).unwrap();
@@ -1602,19 +1630,19 @@ fn configured_custom_root_rejects_relative_and_link_paths() {
         },
         ..AppSettings::default()
     };
-    assert!(open_configured_storage(default_root.path(), &settings).is_err());
+    assert!(open_configured_storage(canonical_tempdir_path(&default_root), &settings).is_err());
 
     #[cfg(unix)]
     {
         let target = tempfile::tempdir().unwrap();
-        let link = default_root.path().join("linked-root");
-        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+        let link = canonical_tempdir_path(&default_root).join("linked-root");
+        std::os::unix::fs::symlink(canonical_tempdir_path(&target), &link).unwrap();
         let settings = AppSettings {
             data_root: DataRootSetting::Custom {
                 path: link.to_string_lossy().into_owned(),
             },
             ..AppSettings::default()
         };
-        assert!(open_configured_storage(default_root.path(), &settings).is_err());
+        assert!(open_configured_storage(canonical_tempdir_path(&default_root), &settings).is_err());
     }
 }
