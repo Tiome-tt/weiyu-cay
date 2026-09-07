@@ -1488,7 +1488,7 @@ describe('LibraryLayout', () => {
       const items = screen.getAllByRole('treeitem').filter((item) => item.hasAttribute('data-folder-id'))
       const labels = items.map((item) => item.textContent?.trim())
       expect(labels).toEqual(['项目 C', '项目 A'])
-      expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(0)
+      expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
     })
   })
 

@@ -36,14 +36,15 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   const [activeId, setActiveId] = useState<NoteId | null>(null)
   const [document, setDocument] = useState<NoteDocument | null>(null)
   const [documentState, setDocumentState] = useState<LoadState>('ready')
-  const [busy, setBusy] = useState<'delete' | 'convert' | null>(null)
+  const [busy, setBusy] = useState<'delete' | 'undo' | 'convert' | null>(null)
+  const [deleteOperationId, setDeleteOperationId] = useState<string | null>(null)
   const [showing, setShowing] = useState<ReadonlySet<NoteId>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestRef = useRef(0)
   const documentRequestRef = useRef(0)
   const activeIdRef = useRef<NoteId | null>(null)
-  const busyRef = useRef<'delete' | 'convert' | null>(null)
+  const busyRef = useRef<'delete' | 'undo' | 'convert' | null>(null)
   const editorRef = useRef<EditorPaneHandle>(null)
 
   const refresh = useCallback(async (options: { silent?: boolean } = {}) => {
@@ -212,12 +213,34 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       }
       const result = await temporary.delete(ids)
       removeSuccessful(result.deleted)
+      setDeleteOperationId(result.deleted.length > 0 ? result.operationId : null)
       showFailure(result.failed)
       void refresh()
     } catch {
       setError('无法删除临时捕捉。')
     } finally {
       release()
+      busyRef.current = null
+      setBusy(null)
+    }
+  }
+
+  const undoDelete = async () => {
+    if (deleteOperationId === null || busyRef.current !== null) return
+    const operationId = deleteOperationId
+    busyRef.current = 'undo'
+    setBusy('undo')
+    setError(null)
+    try {
+      const result = await temporary.undoDelete(operationId)
+      const restored = new Set(result.restored)
+      setDismissed((current) => new Set([...current].filter((id) => !restored.has(id))))
+      setDeleteOperationId(result.failed.length > 0 ? operationId : null)
+      showFailure(result.failed)
+      await refresh()
+    } catch {
+      setError('无法撤销删除临时捕捉。')
+    } finally {
       busyRef.current = null
       setBusy(null)
     }
@@ -270,6 +293,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setDialogOpen(true)}>转为笔记</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void deleteSelected()}>{busy === 'delete' ? '正在删除…' : '删除所选'}</button>
+        {deleteOperationId !== null && <button type="button" disabled={busy !== null} onClick={() => void undoDelete()}>{busy === 'undo' ? '正在撤销…' : '撤销删除'}</button>}
       </div>
       {error && <p role="alert" className="library-status library-status--error">{error}</p>}
       {state === 'loading' && <p role="status" className="library-status">正在加载临时捕捉…</p>}

@@ -171,7 +171,7 @@ describe('TemporaryInbox', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('目标文件夹不可用')
   })
 
-  it('deletes successful captures directly to trash and leaves failed captures selected', async () => {
+  it('deletes successful captures directly to trash and restores them on undo', async () => {
     const captures = twoCaptures()
     const deleted = captures[0].id
     const temporary = {
@@ -192,9 +192,10 @@ describe('TemporaryInbox', () => {
     await user.click(screen.getByRole('button', { name: '删除所选' }))
 
     await waitFor(() => expect(temporary.delete).toHaveBeenCalledWith(captures.map((item) => item.id)))
-    expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '撤销删除' }))
+    await waitFor(() => expect(temporary.undoDelete).toHaveBeenCalledWith('019c0000-0000-7000-8000-000000000099'))
+    expect(await screen.findByRole('checkbox', { name: '选择 发布前检查' })).toBeVisible()
     expect(screen.getByRole('checkbox', { name: '选择 接口异常处理' })).toBeChecked()
-    expect(temporary.undoDelete).not.toHaveBeenCalled()
   })
 
   it('removes stale selection when a refresh no longer includes that capture', async () => {
@@ -216,6 +217,29 @@ describe('TemporaryInbox', () => {
 
     await waitFor(() => expect(screen.queryByRole('checkbox', { name: '选择 发布前检查' })).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '删除所选' })).toBeDisabled()
+  })
+
+  it('keeps the undo action available when restoring a deletion partially fails', async () => {
+    const capture = twoCaptures()[0]
+    const undoDelete = vi.fn()
+      .mockResolvedValueOnce({ operationId: 'retry-operation', restored: [], failed: [{ temporaryId: capture.id, message: '目标位置被占用' }] })
+      .mockResolvedValueOnce({ operationId: 'retry-operation', restored: [capture.id], failed: [] })
+    const temporary = {
+      ...fakeTemporaryPort([capture]),
+      delete: vi.fn(async () => ({ operationId: 'retry-operation', deleted: [capture.id], failed: [] })),
+      undoDelete,
+    }
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={temporary} folders={folderRows} />)
+
+    await user.click(await screen.findByRole('checkbox', { name: '选择 发布前检查' }))
+    await user.click(screen.getByRole('button', { name: '删除所选' }))
+    await user.click(screen.getByRole('button', { name: '撤销删除' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('目标位置被占用')
+    await user.click(screen.getByRole('button', { name: '撤销删除' }))
+
+    expect(await screen.findByRole('checkbox', { name: '选择 发布前检查' })).toBeVisible()
+    expect(undoDelete).toHaveBeenCalledTimes(2)
   })
 
   it('reports an empty inbox and a safe loading error', async () => {
@@ -528,6 +552,6 @@ describe('TemporaryInbox', () => {
     await act(async () => { await inboxRef.current?.refresh() })
     expect(await screen.findByRole('checkbox', { name: '选择 new shortcut capture' })).not.toBeChecked()
     await user.click(screen.getByRole('button', { name: '删除所选' }))
-    expect(screen.queryByRole('button', { name: '撤销删除' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '撤销删除' })).toBeVisible()
   })
 })

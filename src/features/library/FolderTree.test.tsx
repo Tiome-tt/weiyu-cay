@@ -457,6 +457,27 @@ describe('FolderTree keyboard navigation', () => {
     expect(screen.getByRole('treeitem', { name: '回收站' })).toContainElement(screen.getByTestId('icon-trash'))
   })
 
+  it('keeps one visible tree item tabbable when the unfiled entry is hidden', async () => {
+    render(
+      <FolderTree
+        folders={rows}
+        activeId={null}
+        state="ready"
+        showUnfiled={false}
+        onSelect={vi.fn()}
+        onTemporaryInbox={vi.fn()}
+        onTrash={vi.fn()}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onMove={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: '临时便笺' })).toHaveAttribute('tabindex', '0'))
+    expect(screen.getAllByRole('treeitem').filter((item) => item.tabIndex === 0)).toHaveLength(1)
+  })
+
   it('uses roving focus with vertical and hierarchy-aware arrow navigation', async () => {
     const user = userEvent.setup()
     renderTree()

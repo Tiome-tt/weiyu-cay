@@ -344,7 +344,11 @@ export function FolderTree(props: FolderTreeProps) {
 
   useEffect(() => {
     if (!visibleKeys.includes(focusedKey)) {
-      setFocusedKey(props.activeId !== null && visibleKeys.includes(props.activeId) ? props.activeId : 'root')
+      setFocusedKey(
+        props.activeId !== null && visibleKeys.includes(props.activeId)
+          ? props.activeId
+          : visibleKeys[0] ?? 'root',
+      )
     }
   }, [focusedKey, props.activeId, visibleKeys])
 
