@@ -525,6 +525,7 @@ impl SafeDirectory {
         })?;
         let mut path = root.to_path_buf();
         for segment in segments {
+            let segment = *segment;
             validate_child_name(segment)?;
             let next = match openat(
                 &fd,
@@ -972,7 +973,9 @@ impl SafeDirectory {
                 "contained entry is not a regular file",
             ));
         }
-        Ok((stat.st_dev, stat.st_ino))
+        let device = u64::try_from(stat.st_dev)
+            .map_err(|_| CommandError::validation("contained device identity is out of range"))?;
+        Ok((device, stat.st_ino))
     }
 
     pub fn read(&self, name: &str, max_bytes: u64) -> Result<Vec<u8>, CommandError> {
@@ -1113,7 +1116,9 @@ fn directory_identity_from_stat(stat: &rustix::fs::Stat) -> Result<(u64, u64), C
             "contained directory source is not a directory",
         ));
     }
-    Ok((stat.st_dev, stat.st_ino))
+    let device = u64::try_from(stat.st_dev)
+        .map_err(|_| CommandError::validation("contained device identity is out of range"))?;
+    Ok((device, stat.st_ino))
 }
 
 fn validate_child_name(name: &str) -> Result<(), CommandError> {
@@ -1134,7 +1139,9 @@ fn regular_identity_from_file(file: &fs::File) -> Result<(u64, u64), CommandErro
             "validated contained entry is not a regular file",
         ));
     }
-    Ok((stat.st_dev, stat.st_ino))
+    let device = u64::try_from(stat.st_dev)
+        .map_err(|_| CommandError::validation("contained device identity is out of range"))?;
+    Ok((device, stat.st_ino))
 }
 
 #[cfg(test)]

@@ -9,9 +9,11 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
 };
+#[cfg(target_os = "windows")]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     Emitter, Manager,
 };
 
@@ -172,17 +174,17 @@ fn try_setup(app: &mut tauri::App) -> tauri::Result<()> {
                 dispatch(app, action);
             }
         })
-        .on_tray_icon_event(|tray, event| {
+        .on_tray_icon_event(|_tray, _event| {
             #[cfg(target_os = "windows")]
             if matches!(
-                event,
+                _event,
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,
                     ..
                 }
             ) {
-                main::activate_main(tray.app_handle());
+                main::activate_main(_tray.app_handle());
             }
         })
         .build(app)?;
