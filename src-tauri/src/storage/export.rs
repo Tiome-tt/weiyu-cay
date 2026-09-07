@@ -1184,8 +1184,9 @@ mod tests {
     #[test]
     fn manifest_write_failure_returns_an_incomplete_report_without_publishing_or_temp_files() {
         let sandbox = tempfile::tempdir().unwrap();
-        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
-        let destination = sandbox.path().join("exports");
+        let paths =
+            StoragePaths::open(sandbox.path().canonicalize().unwrap().join("data")).unwrap();
+        let destination = sandbox.path().canonicalize().unwrap().join("exports");
         fs::create_dir(&destination).unwrap();
         let note_id = NoteId::parse_str("019c0000-0000-7000-8000-000000000499").unwrap();
         NoteRepository::new(paths.clone())
@@ -1253,8 +1254,9 @@ mod tests {
     #[test]
     fn final_enumeration_failure_returns_the_staged_manifest_as_incomplete() {
         let sandbox = tempfile::tempdir().unwrap();
-        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
-        let destination = sandbox.path().join("exports");
+        let paths =
+            StoragePaths::open(sandbox.path().canonicalize().unwrap().join("data")).unwrap();
+        let destination = sandbox.path().canonicalize().unwrap().join("exports");
         fs::create_dir(&destination).unwrap();
 
         let report = export_library_with_operations(
@@ -1279,8 +1281,9 @@ mod tests {
     #[test]
     fn staging_creation_partial_failure_returns_the_known_incomplete_root() {
         let sandbox = tempfile::tempdir().unwrap();
-        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
-        let destination = sandbox.path().join("exports");
+        let paths =
+            StoragePaths::open(sandbox.path().canonicalize().unwrap().join("data")).unwrap();
+        let destination = sandbox.path().canonicalize().unwrap().join("exports");
         fs::create_dir(&destination).unwrap();
 
         let report = export_library_with_operations(
@@ -1323,8 +1326,9 @@ mod tests {
 
     fn assert_precreate_staging_failure_has_no_incomplete_root(error: CommandError) {
         let sandbox = tempfile::tempdir().unwrap();
-        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
-        let destination = sandbox.path().join("exports");
+        let paths =
+            StoragePaths::open(sandbox.path().canonicalize().unwrap().join("data")).unwrap();
+        let destination = sandbox.path().canonicalize().unwrap().join("exports");
         fs::create_dir(&destination).unwrap();
         let before = fs::read_dir(&destination).unwrap().count();
         let mut error = Some(error);
