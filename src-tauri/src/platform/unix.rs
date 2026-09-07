@@ -145,6 +145,7 @@ pub fn recover_file(_destination: &Path) -> Result<(), CommandError> {
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct SafeDirectory {
     fd: OwnedFd,
     path: PathBuf,
