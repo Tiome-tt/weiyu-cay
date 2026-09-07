@@ -45,7 +45,8 @@ fn export_materializes_readable_folders_markdown_and_assets() {
     fs::write(assets.join("Cafe\u{301}.png"), b"unicode image").unwrap();
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
 
     assert!(report.completed, "{report:?}");
@@ -111,7 +112,8 @@ fn export_rewrites_parser_confirmed_asset_variants_and_preserves_suffixes_and_co
     fs::write(assets.join("plain.png"), b"plain").unwrap();
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
     let exported = fs::read_to_string(output.join("Variants.md")).unwrap();
 
@@ -142,7 +144,8 @@ fn export_preserves_unmanaged_relative_and_root_relative_asset_paths() {
     );
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
     let exported = fs::read_to_string(output.join("Documentation.md")).unwrap();
 
@@ -190,7 +193,8 @@ fn export_rejects_raw_and_percent_encoded_asset_traversal() {
     );
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
     let manifest: Value =
         serde_json::from_slice(&fs::read(output.join("export-manifest.json")).unwrap()).unwrap();
@@ -222,7 +226,8 @@ fn export_allocates_portable_names_deterministically() {
     create_formal_note(&store, third_id, "AUX", Some(decomposed.id), "three");
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
 
     assert!(output.join("Caf\u{e9}/CON_.md").exists());
@@ -250,7 +255,8 @@ fn export_limits_portable_components_by_utf8_bytes_and_revalidates_truncation() 
     fs::write(assets.join(&long_asset), b"long asset").unwrap();
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
 
     assert_eq!(report.notes_exported, 1, "{report:?}");
@@ -286,7 +292,8 @@ fn export_budgets_final_note_and_asset_components_with_collisions_and_unicode() 
     fs::write(assets.join("plain.png"), b"asset").unwrap();
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
     let names = fs::read_dir(&output)
         .unwrap()
@@ -311,11 +318,12 @@ fn export_publishes_a_unique_child_without_overwriting_existing_content() {
     create_formal_note(&store, note_id(FIRST_ID), "Blocked", None, "blocked body");
     create_formal_note(&store, note_id(SECOND_ID), "Good", None, "good body");
     let destination = tempfile::tempdir().unwrap();
-    let existing = destination.path().join("微屿导出");
+    let existing = canonical_tempdir_path(&destination).join("微屿导出");
     fs::create_dir(&existing).unwrap();
     fs::write(existing.join("user.txt"), b"user content").unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
 
     assert_eq!(
@@ -349,7 +357,8 @@ fn manifest_and_renames_include_only_notes_that_were_staged_successfully() {
     .unwrap();
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
 
     assert_eq!(report.notes_exported, 1);
@@ -414,7 +423,8 @@ fn export_materializes_nested_empty_and_all_failed_logical_folders() {
     .unwrap();
     let destination = tempfile::tempdir().unwrap();
 
-    let report = export_library(&store.paths, destination.path(), "0.1.0").unwrap();
+    let report =
+        export_library(&store.paths, &canonical_tempdir_path(&destination), "0.1.0").unwrap();
     let output = successful_output(&report);
 
     assert!(output.join("Empty/Nested").is_dir());
@@ -448,8 +458,14 @@ fn export_rejects_data_root_descendants_and_traversal_before_writing() {
     assert_eq!(error.code(), CommandErrorCode::Validation);
 
     let destination = tempfile::tempdir().unwrap();
-    let traversal = destination.path().join("child").join("..");
-    fs::create_dir(destination.path().join("child")).unwrap();
+    let destination_root = canonical_tempdir_path(&destination);
+    let traversal = PathBuf::from(format!(
+        "{}{}child{}..",
+        destination_root.display(),
+        std::path::MAIN_SEPARATOR,
+        std::path::MAIN_SEPARATOR,
+    ));
+    fs::create_dir(destination_root.join("child")).unwrap();
     let error = export_library(&store.paths, &traversal, "0.1.0").unwrap_err();
     assert_eq!(error.code(), CommandErrorCode::Validation);
 }
@@ -469,6 +485,10 @@ fn export_rejects_a_symlink_destination() {
 
     assert_eq!(error.code(), CommandErrorCode::Validation);
     assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+}
+
+fn canonical_tempdir_path(directory: &tempfile::TempDir) -> PathBuf {
+    directory.path().canonicalize().unwrap()
 }
 
 fn create_formal_note(
