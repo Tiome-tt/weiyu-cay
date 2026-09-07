@@ -347,6 +347,32 @@ fn bootstrap_migrates_only_the_previous_default_shortcut() {
 }
 
 #[test]
+fn settings_without_tray_fields_keep_existing_values_and_gain_safe_defaults() {
+    let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+    let object = legacy.as_object_mut().unwrap();
+    object.remove("closeToTray");
+    object.remove("closeBehaviorConfirmed");
+    object.remove("showMenuBarIcon");
+    object.insert("launchAtStartup".into(), Value::Bool(true));
+    object.insert(
+        "dataRoot".into(),
+        serde_json::json!({ "mode": "custom", "path": "D:\\ExistingNotes" }),
+    );
+
+    let loaded: AppSettings = serde_json::from_value(legacy).unwrap();
+    assert!(loaded.close_to_tray);
+    assert!(!loaded.close_behavior_confirmed);
+    assert!(loaded.show_menu_bar_icon);
+    assert!(loaded.launch_at_startup);
+    assert_eq!(
+        loaded.data_root,
+        DataRootSetting::Custom {
+            path: "D:\\ExistingNotes".into()
+        }
+    );
+}
+
+#[test]
 fn corrupted_settings_recover_to_valid_defaults() {
     let root = tempfile::tempdir().unwrap();
     let store = MemoryStore::corrupted();

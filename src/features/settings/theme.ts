@@ -122,6 +122,9 @@ export type ThemeVariables = Record<string, string>
 export function normalizeSettings(value: AppSettings): AppSettings {
   return {
     ...value,
+    closeToTray: typeof value.closeToTray === 'boolean' ? value.closeToTray : true,
+    closeBehaviorConfirmed: typeof value.closeBehaviorConfirmed === 'boolean' ? value.closeBehaviorConfirmed : false,
+    showMenuBarIcon: typeof value.showMenuBarIcon === 'boolean' ? value.showMenuBarIcon : true,
     bodyFont: normalizeBodyFont(value.bodyFont),
     stickyColorMode: 'follow-theme',
     fontSize: clamp(value.fontSize, 12, 28),

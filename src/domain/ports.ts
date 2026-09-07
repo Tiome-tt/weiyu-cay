@@ -103,12 +103,34 @@ export interface UpdatePort {
   restart(): Promise<void>
 }
 
-/** Native main-window close requests stay prevented until the renderer acknowledges a flush. */
-export interface AppLifecyclePort {
-  beginCloseListenerRegistration(): Promise<number>
-  onCloseRequested(handler: (request: { generation: number }) => void): Promise<() => void>
-  setListenerReady(ready: boolean, registrationToken: number): Promise<void>
-  completeClose(generation: number, saved: boolean): Promise<void>
+/** Application lifecycle intents are distinct from editor-window visibility. */
+export type LifecycleIntent = 'hide' | 'exit' | 'restart' | 'relocate'
+export interface LifecycleRequest { generation: number; intent: LifecycleIntent }
+export interface LifecycleFailure { participant: string | null }
+export interface MainCloseChoiceRequest { trayAvailable: boolean }
+export type AppNavigationAction = 'temporary-inbox' | 'settings'
+export interface TrayActionFailure { action: 'setup' | 'new-temporary' }
+export interface AppNavigationPort {
+  onRequested(handler: (action: AppNavigationAction) => void): Promise<() => void>
+  onFailure?(handler: (failure: TrayActionFailure) => void): Promise<() => void>
+  setReady?(ready: boolean): Promise<void>
+}
+export interface SaveParticipant {
+  /** Cancellation releases UI barriers only; never abort an atomic content write.
+   * The returned release must be idempotent, including after signal cancellation. */
+  prepare(signal: AbortSignal): Promise<(() => void) | null>
+}
+export interface LifecycleParticipantPort {
+  beginRegistration(): Promise<number>
+  setReady(ready: boolean, registrationToken: number): Promise<void>
+  onPrepare(handler: (request: LifecycleRequest) => void): Promise<() => void>
+  onRelease(handler: (request: { generation: number }) => void): Promise<() => void>
+  onFailure?(handler: (failure: LifecycleFailure) => void): Promise<() => void>
+  onCloseChoiceRequested?(handler: (request: MainCloseChoiceRequest) => void): Promise<() => void>
+  resolveCloseChoice?(choice: 'hide' | 'exit'): Promise<void>
+  prepareRelocation?(): Promise<number>
+  cancelRelocation?(generation: number): Promise<void>
+  acknowledge(generation: number, registrationToken: number, saved: boolean): Promise<void>
 }
 
 /** Narrow renderer boundary for the frameless main window. */
@@ -276,6 +298,9 @@ export interface AppSettings {
   lineHeight: number
   shortcut: string
   launchAtStartup: boolean
+  closeToTray: boolean
+  closeBehaviorConfirmed: boolean
+  showMenuBarIcon: boolean
   defaultEditorMode: EditorMode
   autosaveDelayMs: number
   dataRoot: { mode: 'default' } | { mode: 'custom'; path: string }

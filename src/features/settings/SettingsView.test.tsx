@@ -40,12 +40,51 @@ describe('SettingsView', () => {
     expect(screen.getByLabelText('行高')).toHaveAttribute('max', '2.2')
     expect(screen.getByLabelText('全局快捷键')).toBeVisible()
     expect(screen.getByLabelText('开机启动')).toBeVisible()
+    expect(screen.getByLabelText('关闭主窗口时隐藏到托盘')).toBeChecked()
     expect(screen.getByLabelText('默认编辑视图')).toBeVisible()
     expect(screen.getByRole('option', { name: '文档编辑' })).toHaveValue('source')
     expect(screen.getByRole('option', { name: '分栏校对' })).toHaveValue('split')
     expect(screen.getByRole('option', { name: '阅读视图' })).toHaveValue('preview')
     expect(screen.getByLabelText('自动保存延迟')).toHaveAttribute('min', '150')
     expect(await screen.findByText(/3 KB/)).toBeVisible()
+  })
+
+  it('persists an explicit Windows close behavior and marks the first-close choice confirmed', async () => {
+    const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, closeToTray: false, closeBehaviorConfirmed: true })
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} platform="windows" onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+
+    await user.click(screen.getByLabelText('关闭主窗口时隐藏到托盘'))
+
+    expect(update).toHaveBeenCalledWith({ closeToTray: false, closeBehaviorConfirmed: true })
+    expect(screen.queryByLabelText('在菜单栏显示微屿图标')).not.toBeInTheDocument()
+  })
+
+  it('lets Windows users show the close choice again without changing their tray preference', async () => {
+    const initial = { ...DEFAULT_APP_SETTINGS, closeToTray: false, closeBehaviorConfirmed: true }
+    const user = userEvent.setup()
+    render(
+      <SettingsView
+        settings={settingsPort({ update: async (patch) => ({ ...initial, ...patch }) })}
+        value={initial}
+        platform="windows"
+        onChange={vi.fn()}
+        onClose={vi.fn()}
+        prepareStorageMove={async () => () => undefined}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '下次关闭时重新询问' }))
+
+    expect(screen.getByLabelText('关闭主窗口时隐藏到托盘')).not.toBeChecked()
+    expect(await screen.findByRole('button', { name: '下次关闭时会询问' })).toBeDisabled()
+  })
+
+  it('keeps native close semantics on macOS and offers only the menu-bar icon setting', () => {
+    render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} platform="macos" onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+
+    expect(screen.getByLabelText('在菜单栏显示微屿图标')).toBeChecked()
+    expect(screen.queryByLabelText('关闭主窗口时隐藏到托盘')).not.toBeInTheDocument()
   })
 
   it('records a shortcut from the keyboard instead of asking for accelerator text', async () => {

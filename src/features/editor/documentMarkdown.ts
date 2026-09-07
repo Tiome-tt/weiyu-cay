@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language'
-import { EditorSelection, StateEffect, type EditorState, type Extension, type Range, type SelectionRange } from '@codemirror/state'
+import { Annotation, EditorSelection, StateEffect, type ChangeSet, type EditorState, type Extension, type Range, type SelectionRange } from '@codemirror/state'
 import { Decoration, EditorView, keymap, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { DocumentImageWidget, DocumentTableWidget, type DocumentImageWidgetContext } from './documentWidgets'
@@ -60,9 +60,34 @@ export function isLiveNodeActive(node: LiveMarkdownNode, selection: SelectionRan
   // mounted prevents a source selection from exposing the persisted pipes,
   // separators, or Cay merge metadata when a table cell is focused.
   if (node.kind === 'table') return false
+  if (node.kind === 'heading' && selection.empty) {
+    return selection.head >= node.blockFrom && selection.head <= node.blockTo
+  }
   return selection.empty
     ? selection.head > node.from && selection.head < node.to
     : selection.from < node.to && selection.to > node.from
+}
+
+export const documentTableEdit = Annotation.define<boolean>()
+
+export function selectionTouchesDocumentTable(
+  state: EditorState,
+  selection: SelectionRange = state.selection.main,
+): boolean {
+  return selection.empty
+    ? documentTableRangeAtPosition(state, selection.head) !== null
+    : rangeTouchesDocumentTable(state, selection.from, selection.to)
+}
+
+export function changesTouchDocumentTable(state: EditorState, changes: ChangeSet): boolean {
+  let touchesTable = false
+  changes.iterChangedRanges((from, to) => {
+    if (touchesTable) return
+    touchesTable = from === to
+      ? documentTableRangeAtPosition(state, from) !== null
+      : rangeTouchesDocumentTable(state, from, to)
+  })
+  return touchesTable
 }
 
 export function visibleDocumentLineNumbers(
@@ -425,6 +450,38 @@ function documentTableSourceRange(state: EditorState, from: number, to: number):
   return { from, to: end }
 }
 
+function documentTableRangeAtPosition(state: EditorState, position: number): { from: number; to: number } | null {
+  const bounded = Math.max(0, Math.min(position, state.doc.length))
+  for (const bias of [-1, 1] as const) {
+    let node: SyntaxNode | null = syntaxTree(state).resolveInner(bounded, bias)
+    while (node !== null && node.name !== 'Table') node = node.parent
+    if (node !== null) return documentTableSourceRange(state, node.from, node.to)
+  }
+  const line = state.doc.lineAt(bounded)
+  if (!isTableMetadataLine(line.text) || line.number === 1) return null
+  return documentTableRangeAtPosition(state, state.doc.line(line.number - 1).to)
+}
+
+function rangeTouchesDocumentTable(state: EditorState, from: number, to: number): boolean {
+  if (
+    documentTableRangeAtPosition(state, from) !== null ||
+    documentTableRangeAtPosition(state, to) !== null
+  ) {
+    return true
+  }
+  let touchesTable = false
+  syntaxTree(state).iterate({
+    from,
+    to,
+    enter(node) {
+      if (node.name !== 'Table') return
+      touchesTable = true
+      return false
+    },
+  })
+  return touchesTable
+}
+
 function liveContentClass(kind: LiveMarkdownKind): string | null {
   if (kind === 'strong') return 'cm-live-strong'
   if (kind === 'emphasis') return 'cm-live-emphasis'
@@ -509,19 +566,26 @@ function handleAtomicWidgetDelete(view: EditorView, direction: 'forward' | 'back
   const selection = view.state.selection.main
   const nodes = analyzeLiveMarkdown(view.state, [{ from: 0, to: view.state.doc.length }])
     .filter((node) => node.kind === 'image' || node.kind === 'table')
-  const exact = nodes.find((node) => node.from === selection.from && node.to === selection.to)
+    .map((node) => ({
+      node,
+      range: node.kind === 'table'
+        ? documentTableSourceRange(view.state, node.from, node.to)
+        : { from: node.from, to: node.to },
+    }))
+  const exact = nodes.find(({ range }) => range.from === selection.from && range.to === selection.to)
   if (exact !== undefined) {
     view.dispatch({
-      changes: { from: exact.from, to: exact.to },
-      selection: EditorSelection.cursor(exact.from),
+      changes: { from: exact.range.from, to: exact.range.to },
+      selection: EditorSelection.cursor(exact.range.from),
+      annotations: documentTableEdit.of(exact.node.kind === 'table'),
     })
     return true
   }
   if (!selection.empty) return false
-  const adjacent = nodes.find((node) => direction === 'forward'
-    ? node.from === selection.head
-    : node.to === selection.head)
+  const adjacent = nodes.find(({ range }) => direction === 'forward'
+    ? range.from === selection.head
+    : range.to === selection.head)
   if (adjacent === undefined) return false
-  view.dispatch({ selection: EditorSelection.range(adjacent.from, adjacent.to) })
+  view.dispatch({ selection: EditorSelection.range(adjacent.range.from, adjacent.range.to) })
   return true
 }

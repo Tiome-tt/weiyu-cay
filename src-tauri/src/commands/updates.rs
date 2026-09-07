@@ -174,9 +174,10 @@ pub async fn install_pending_update(
 pub fn restart_after_update(
     window: WebviewWindow,
     app: tauri::AppHandle,
+    lifecycle: tauri::State<'_, crate::windows::main::MainWindowCloseCoordinator>,
 ) -> Result<(), CommandError> {
     authorize_main(&window)?;
-    app.restart()
+    crate::windows::main::request_restart(&app, &lifecycle)
 }
 
 #[cfg(test)]

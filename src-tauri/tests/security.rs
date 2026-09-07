@@ -98,6 +98,9 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
         "allow-save-temporary",
         "allow-hide-temporary-window",
         "allow-set-temporary-always-on-top",
+        "allow-complete-main-window-close",
+        "allow-begin-main-window-close-listener-registration",
+        "allow-set-main-window-close-listener-ready",
     ] {
         assert!(sticky_permissions.contains(required));
     }
@@ -108,13 +111,11 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
         "allow-list-link-targets",
         "allow-read-image-asset",
         "allow-open-external-link",
-        "allow-complete-main-window-close",
-        "allow-begin-main-window-close-listener-registration",
-        "allow-set-main-window-close-listener-ready",
         "allow-delete-temporary",
         "allow-convert-temporary",
         "allow-export-library",
         "allow-move-storage-root",
+        "allow-set-tray-navigation-ready",
     ] {
         assert!(!sticky_permissions.contains(forbidden));
         assert!(main_permissions.contains(forbidden));

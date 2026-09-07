@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-storage-relocation"
+description = "Enables the request_storage_relocation command without any pre-configured scope."
+commands.allow = ["request_storage_relocation"]
+
+[[permission]]
+identifier = "deny-request-storage-relocation"
+description = "Denies the request_storage_relocation command without any pre-configured scope."
+commands.deny = ["request_storage_relocation"]

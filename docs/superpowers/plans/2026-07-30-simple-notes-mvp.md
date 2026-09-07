@@ -1637,7 +1637,7 @@ Expected: all commands exit 0 and the fixture generator reports exactly 10,000 n
 
 - [ ] **Step 6: Run platform release candidates**
 
-Run the release workflow for a prerelease tag. Complete every checkbox in `docs/release-checklist.md` on real Windows and macOS machines. Record installer filenames, checksums, OS versions, and failures in the release notes. A release is blocked if either platform is unsigned, not installable, or fails a primary flow.
+Run the release workflow for a prerelease tag. Complete every checkbox in `docs/release-checklist.md` on real Windows and macOS machines. Record installer filenames, checksums, OS versions, and failures in the release notes. A release is blocked if either installer is not installable or fails a primary flow; platform certificate signing is optional in the current distribution phase, while Tauri updater signatures remain required.
 
 - [ ] **Step 7: Commit**
 

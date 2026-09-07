@@ -28,4 +28,24 @@ describe('frameless window capabilities', () => {
       expect(temporaryCapability.permissions).not.toContain(permission)
     }
   })
+
+  it('allows temporary editors to participate in safe lifecycle saves only', () => {
+    expect(temporaryCapability.permissions).toEqual(expect.arrayContaining([
+      'allow-begin-main-window-close-listener-registration',
+      'allow-set-main-window-close-listener-ready',
+      'allow-complete-main-window-close',
+    ]))
+    expect(temporaryCapability.permissions).not.toContain('core:app:allow-exit')
+    expect(temporaryCapability.permissions).not.toContain('allow-request-storage-relocation')
+    expect(temporaryCapability.permissions).not.toContain('allow-cancel-storage-relocation')
+  })
+
+  it('keeps close choice and storage relocation lifecycle commands main-window only', () => {
+    expect(mainCapability.permissions).toEqual(expect.arrayContaining([
+      'allow-resolve-main-window-close-choice',
+      'allow-request-storage-relocation',
+      'allow-cancel-storage-relocation',
+      'allow-set-tray-navigation-ready',
+    ]))
+  })
 })

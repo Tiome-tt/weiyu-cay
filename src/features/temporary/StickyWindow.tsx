@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
-import type { AssetPort, ImageReadPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState } from '../../domain/ports'
+import type { AssetPort, ImageReadPort, LifecycleParticipantPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState } from '../../domain/ports'
+import { useLifecycleParticipant } from '../lifecycle/useLifecycleParticipant'
 import { MarkdownSource, type MarkdownSourceHandle } from '../editor/MarkdownSource'
 import { useAutosave, type SaveState } from '../editor/useAutosave'
 import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
@@ -11,6 +12,7 @@ interface StickyWindowProps {
   temporary: Pick<TemporaryPort, 'save'>
   windows: Pick<TemporaryWindowPort, 'hide' | 'setAlwaysOnTop' | 'startDragging' | 'onCloseRequested'>
   assets?: AssetPort
+  lifecycle?: LifecycleParticipantPort
   assetReader?: ImageReadPort
   autosaveDelayMs?: number
   initialWindowState?: TemporaryWindowState
@@ -31,6 +33,7 @@ export function StickyWindow({
   temporary,
   windows,
   assets,
+  lifecycle,
   assetReader,
   autosaveDelayMs,
   initialWindowState,
@@ -41,6 +44,35 @@ export function StickyWindow({
   const [windowState, setWindowState] = useState(initialWindowState ?? defaultState(note))
   const [windowError, setWindowError] = useState<string | null>(null)
   const sourceRef = useRef<MarkdownSourceHandle>(null)
+
+  useLifecycleParticipant(lifecycle, {
+    prepare: async (signal) => {
+      const source = sourceRef.current
+      if (source === null || signal.aborted) return null
+      let retained = false
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        signal.removeEventListener('abort', release)
+        source.endEditBarrier()
+      }
+      // beginEditBarrier takes the UI lock synchronously, then awaits pastes.
+      // Cancellation unlocks UI without aborting an in-flight content write.
+      const pendingPastes = source.beginEditBarrier()
+      signal.addEventListener('abort', release, { once: true })
+      try {
+        await pendingPastes
+        if (signal.aborted) return null
+        if (!await autosave.flush()) return null
+        if (signal.aborted) return null
+        retained = true
+        return release
+      } finally {
+        if (!retained) release()
+      }
+    },
+  })
 
   const hideAfterFlush = useCallback(async () => {
     setWindowError(null)

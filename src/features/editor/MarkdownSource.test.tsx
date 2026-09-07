@@ -68,6 +68,26 @@ describe('MarkdownSource', () => {
     expect(view.contentDOM.querySelectorAll('.cm-line')[1]).toHaveTextContent('# 标题')
   })
 
+  it('keeps a heading marker visible through end-of-line editing and hides it after leaving the heading', () => {
+    render(<MarkdownSource markdown={'正文\n'} onChange={vi.fn()} />)
+    const view = editorView()
+
+    act(() => view.dispatch({
+      changes: { from: view.state.doc.length, insert: '# 新标题' },
+      selection: { anchor: view.state.doc.length + '# 新标题'.length },
+    }))
+
+    expect(view.contentDOM.querySelectorAll('.cm-line')[1]).toHaveTextContent('# 新标题')
+
+    act(() => view.dispatch({
+      changes: { from: view.state.doc.length, insert: '\n' },
+      selection: { anchor: view.state.doc.length + 1 },
+    }))
+
+    expect(view.contentDOM.querySelectorAll('.cm-line')[1]).toHaveTextContent('新标题')
+    expect(view.contentDOM.querySelectorAll('.cm-line')[1]).not.toHaveTextContent('# 新标题')
+  })
+
   it('reveals only the active inline Markdown node', () => {
     render(<MarkdownSource markdown="A **bold** and ~~gone~~" onChange={vi.fn()} />)
     const view = editorView()
@@ -293,6 +313,46 @@ describe('MarkdownSource', () => {
     expect(screen.getByRole('table', { name: 'Markdown 表格' })).toBeInTheDocument()
     expect(view.contentDOM).not.toHaveTextContent('| Name | Note |')
     expect(view.contentDOM).not.toHaveTextContent('<!-- cay-table:')
+  })
+
+  it('treats a rendered table as an atomic block for the block handle and ordinary typing', () => {
+    const source = '前文\n\n| Name | Note |\n| --- | --- |\n| A | B |\n\n后文'
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={source} onChange={onChange} />)
+    const view = editorView()
+    const tableFrom = source.indexOf('| Name')
+
+    act(() => view.dispatch({ selection: EditorSelection.cursor(tableFrom) }))
+
+    expect(screen.queryByRole('button', { name: '添加内容块' })).not.toBeInTheDocument()
+
+    act(() => view.dispatch({
+      changes: { from: tableFrom, insert: '#' },
+      selection: { anchor: tableFrom + 1 },
+    }))
+
+    expect(view.state.doc.toString()).toBe(source)
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('atomically deletes and restores a table together with its Cay metadata', () => {
+    const source = '| A | B |\n| --- | --- |\n| 1 | 2 |\n<!-- cay-table: {"merges":[]} -->\n\n后文'
+    render(<MarkdownSource markdown={source} onChange={vi.fn()} links={fakeLinkPort()} />)
+    const view = editorView()
+    const tableSourceEnd = source.indexOf('\n\n后文')
+
+    act(() => view.dispatch({ selection: EditorSelection.cursor(0) }))
+    fireEvent.keyDown(view.contentDOM, { key: 'Delete' })
+
+    expect(view.state.selection.main.from).toBe(0)
+    expect(view.state.selection.main.to).toBe(tableSourceEnd)
+
+    fireEvent.keyDown(view.contentDOM, { key: 'Delete' })
+    expect(view.state.doc.toString()).toBe('\n\n后文')
+
+    act(() => { undo(view) })
+    expect(view.state.doc.toString()).toBe(source)
   })
 
   it('offers row, column, merge, and split controls inline without opening a dialog', () => {
@@ -586,6 +646,124 @@ describe('MarkdownSource', () => {
     expect(screen.getByRole('menuitem', { name: '插入表格' })).toBeVisible()
   })
 
+  it('anchors the insertion menu to the clicked block handle while scrolling', () => {
+    render(<MarkdownSource markdown={'第一行\n第二行'} onChange={vi.fn()} />)
+    const view = editorView()
+    const host = view.contentDOM.closest<HTMLElement>('.markdown-source')
+    const handle = screen.getByRole('button', { name: '添加内容块' })
+    if (host === null) throw new Error('Markdown source host not found')
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 500))
+    vi.spyOn(handle, 'getBoundingClientRect').mockReturnValue(new DOMRect(130, 220, 20, 20))
+    vi.spyOn(view.scrollDOM, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 400))
+    let anchorTop = 220
+    vi.spyOn(view, 'coordsAtPos').mockImplementation(() => new DOMRect(160, anchorTop, 1, 20))
+
+    fireEvent.click(handle)
+
+    expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({
+      left: '58px',
+      top: '120px',
+    })
+
+    anchorTop = 180
+    fireEvent.scroll(view.scrollDOM)
+    expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({ top: '80px' })
+
+    anchorTop = 80
+    fireEvent.scroll(view.scrollDOM)
+    expect(screen.queryByRole('menu', { name: 'Markdown 快捷插入' })).not.toBeInTheDocument()
+  })
+
+  it.each(['missing', 'failed'] as const)(
+    'keeps a right-click menu at the clicked point when document-position lookup is %s',
+    (lookupResult) => {
+      render(<MarkdownSource markdown={'第一行\n第二行'} onChange={vi.fn()} />)
+      const view = editorView()
+      const host = view.contentDOM.closest<HTMLElement>('.markdown-source')
+      if (host === null) throw new Error('Markdown source host not found')
+      vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 500))
+      const lookup = vi.spyOn(view, 'posAtCoords')
+      if (lookupResult === 'missing') lookup.mockReturnValue(null)
+      else lookup.mockImplementation(() => { throw new Error('layout unavailable') })
+      let unrelatedSelectionTop = 220
+      vi.spyOn(view, 'coordsAtPos').mockImplementation(
+        () => new DOMRect(160, unrelatedSelectionTop, 1, 20),
+      )
+
+      fireEvent.contextMenu(view.contentDOM, { clientX: 300, clientY: 250 })
+
+      expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({
+        left: '200px',
+        top: '150px',
+      })
+      unrelatedSelectionTop = 180
+      fireEvent.scroll(view.scrollDOM)
+      expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({
+        left: '200px',
+        top: '150px',
+      })
+    },
+  )
+
+  it('anchors a right-click in line whitespace to the nearest document position', () => {
+    render(<MarkdownSource markdown={'第一行\n第二行'} onChange={vi.fn()} />)
+    const view = editorView()
+    const host = view.contentDOM.closest<HTMLElement>('.markdown-source')
+    if (host === null) throw new Error('Markdown source host not found')
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 500))
+    vi.spyOn(view.scrollDOM, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 400))
+    vi.spyOn(view, 'posAtCoords').mockImplementation(((_coords: { x: number; y: number }, precise?: boolean) =>
+      precise === false ? 4 : null) as typeof view.posAtCoords)
+    let anchorTop = 220
+    vi.spyOn(view, 'coordsAtPos').mockImplementation(() => new DOMRect(160, anchorTop, 1, 20))
+
+    fireEvent.contextMenu(view.contentDOM, { clientX: 300, clientY: 250 })
+    expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({
+      left: '200px',
+      top: '150px',
+    })
+
+    anchorTop = 180
+    fireEvent.scroll(view.scrollDOM)
+
+    expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({
+      left: '200px',
+      top: '110px',
+    })
+  })
+
+  it('repositions an anchored insertion menu immediately after document changes', () => {
+    render(<MarkdownSource markdown={'第一行\n第二行'} onChange={vi.fn()} />)
+    const view = editorView()
+    const host = view.contentDOM.closest<HTMLElement>('.markdown-source')
+    const handle = screen.getByRole('button', { name: '添加内容块' })
+    if (host === null) throw new Error('Markdown source host not found')
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 500))
+    vi.spyOn(handle, 'getBoundingClientRect').mockReturnValue(new DOMRect(130, 220, 20, 20))
+    vi.spyOn(view.scrollDOM, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 700, 400))
+    let anchorTop = 220
+    vi.spyOn(view, 'coordsAtPos').mockImplementation(() => new DOMRect(160, anchorTop, 1, 20))
+    fireEvent.click(handle)
+
+    anchorTop = 180
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: '。' } }))
+
+    expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toHaveStyle({ top: '80px' })
+  })
+
+  it('closes the insertion menu when an item becomes unavailable before it is chosen', () => {
+    const onChange = vi.fn()
+    const rendered = render(<MarkdownSource markdown="正文" onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: '添加内容块' }))
+    expect(screen.getByRole('menu', { name: 'Markdown 快捷插入' })).toBeInTheDocument()
+
+    rendered.rerender(<MarkdownSource markdown="正文" onChange={onChange} readOnly />)
+    fireEvent.click(screen.getByRole('menuitem', { name: '插入超链接' }))
+
+    expect(screen.queryByRole('menu', { name: 'Markdown 快捷插入' })).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('formats the real CodeMirror selection from the inline toolbar', () => {
     const onChange = vi.fn()
     render(<MarkdownSource markdown="潮汐来信" onChange={onChange} />)
@@ -814,5 +992,31 @@ describe('MarkdownSource', () => {
     ref.current!.endEditBarrier()
     view.dispatch({ changes: { from: view.state.doc.length, insert: ' editable' } })
     expect(view.state.doc.toString()).toMatch(/ editable$/)
+  })
+
+  it('keeps pending paste authorization until the final nested barrier is released', async () => {
+    let finishImage!: (value: { relativePath: string; width: number; height: number }) => void
+    const assets = {
+      saveImage: vi.fn(() => new Promise<{ relativePath: string; width: number; height: number }>((resolve) => {
+        finishImage = resolve
+      })),
+    }
+    const ref = createRef<MarkdownSourceHandle>()
+    render(<MarkdownSource ref={ref} markdown="draft" noteId={noteId} assets={assets} onChange={vi.fn()} />)
+    const view = editorView()
+    view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length) })
+    fireEvent.paste(view.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
+    await vi.waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
+
+    const ordinaryClose = ref.current!.beginEditBarrier()
+    const lifecycleClose = ref.current!.beginEditBarrier()
+    ref.current!.endEditBarrier()
+    await act(async () => finishImage({ relativePath: 'assets/late.png', width: 2, height: 2 }))
+    await Promise.all([ordinaryClose, lifecycleClose])
+
+    expect(view.state.doc.toString()).toContain('![截图](assets/late.png)')
+    expect(view.contentDOM).toHaveAttribute('contenteditable', 'false')
+    ref.current!.endEditBarrier()
+    expect(view.contentDOM).toHaveAttribute('contenteditable', 'true')
   })
 })

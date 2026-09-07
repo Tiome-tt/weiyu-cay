@@ -326,7 +326,7 @@ fn purge_expired_removes_folder_only_trash_manifests() {
     assert_eq!(listed[0].title, "待清理");
 
     TrashService::new(store.paths.clone())
-        .purge_expired("2026-10-01T00:00:00Z")
+        .purge_expired("2100-01-01T00:00:00Z")
         .unwrap();
 
     let remaining = fs::read_dir(store.paths.trash())

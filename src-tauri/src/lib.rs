@@ -14,6 +14,9 @@ pub fn run() {
     let shortcut_dispatcher = commands::shortcuts::PluginEventDispatcher::default();
     let plugin_dispatcher = shortcut_dispatcher.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            windows::main::activate_main(app);
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -39,6 +42,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             app.manage(windows::main::MainWindowCloseCoordinator::default());
+            app.manage(windows::tray::TrayState::default());
             commands::settings::setup(app)?;
             commands::updates::setup(app);
             let readiness = storage::recovery::StartupRecoveryReadiness::new();
@@ -61,6 +65,7 @@ pub fn run() {
                 commands::settings::finalize_reopened_relocation(&paths)?;
             }
             commands::shortcuts::setup(app, shortcut_dispatcher.clone())?;
+            windows::tray::setup(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -125,18 +130,27 @@ pub fn run() {
             windows::main::begin_main_window_close_listener_registration,
             windows::main::set_main_window_close_listener_ready,
             windows::main::complete_main_window_close,
+            windows::main::resolve_main_window_close_choice,
+            windows::main::request_storage_relocation,
+            windows::main::cancel_storage_relocation,
+            windows::tray::set_tray_navigation_ready,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
     app.run(|app_handle, event| {
         let coordinator = app_handle.state::<windows::main::MainWindowCloseCoordinator>();
         let lifecycle = match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                windows::main::activate_main(app_handle);
+                None
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } if label == windows::main::MAIN_WINDOW_LABEL => {
-                match windows::main::request_renderer_flush(app_handle, &coordinator) {
+                match windows::main::request_main_window_close(app_handle, &coordinator) {
                     windows::main::CloseRequestDecision::AllowExit => {}
                     windows::main::CloseRequestDecision::RequestFlush { .. }
                     | windows::main::CloseRequestDecision::WaitForRenderer { .. } => {

@@ -127,6 +127,8 @@ The Chinese feature name for temporary captures is “临时便笺”, shortened
 
 The note heading shows non-empty tags beside its last-edited metadata. The editor block “+” and context menus expose the same insertion actions, including a searchable internal-link picker that excludes the current note. Icon-only inline formatting controls show concise hover labels and retain accessible names.
 
+The tray and application lifecycle extension was approved on 2026-09-04 and is specified in `2026-09-04-tray-lifecycle-design.md` (implementation pending). Windows optionally saves and hides the main window to the tray after an explicit first-close choice. macOS retains native window-close/application-quit behavior. Tray/menu-bar actions restore the application, create a temporary capture, open the inbox or settings, and request safe quit. Quit and authorized restart require durable-save confirmation from every live editor, including hidden sticky windows. Storage relocation must save every live editor before acquiring the relocation lock or copying data; failure leaves the configured root unchanged, while success transfers only that attempt's barriers to the authorized restart. Tray failure must not strand a hidden main window; startup single-instance activation reuses the existing process. Existing note formats and autostart choices remain unchanged.
+
 ### 5.2 Visual direction
 
 The interface uses warm neutrals, muted greens, gentle rounded corners, restrained shadows, and subtle motion. Decorative styling must not reduce code-block clarity, text contrast, focus visibility, or information density.

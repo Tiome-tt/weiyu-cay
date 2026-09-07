@@ -132,13 +132,13 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
     );
     assert_step_with(
         build,
-        "Build and attach signed installers and updater metadata",
+        "Build and attach unsigned installers with signed updater metadata",
         "retryAttempts",
         "3",
     );
     assert_step_with(
         build,
-        "Build and attach signed installers and updater metadata",
+        "Build and attach unsigned installers with signed updater metadata",
         "releaseName",
         "Cay ${{ github.ref_name }}",
     );
@@ -439,6 +439,28 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
     }
 }
 
+#[test]
+fn release_workflow_signs_tauri_updates_without_requiring_platform_certificates() {
+    let source = fs::read_to_string("../.github/workflows/release.yml").expect("workflow source");
+
+    assert!(source.contains("TAURI_SIGNING_PRIVATE_KEY"));
+    assert!(source.contains("TAURI_UPDATER_PUBLIC_KEY"));
+    assert!(!source.contains("WINDOWS_CERTIFICATE"));
+    assert!(!source.contains("APPLE_CERTIFICATE"));
+    assert!(!source.contains("certificateThumbprint"));
+    assert!(!source.contains("APPLE_SIGNING_IDENTITY"));
+}
+
+#[test]
+fn stable_releases_do_not_require_rc_staging_configuration() {
+    let source = fs::read_to_string("../.github/workflows/release.yml").expect("workflow source");
+
+    assert!(source.contains("if (channel === 'rc' && (!staging ||"));
+    assert!(source.contains("const endpoints = channel === 'rc'"));
+    assert!(
+        source.contains("https://github.com/${repository}/releases/latest/download/latest.json")
+    );
+}
 fn parse(path: &str) -> Workflow {
     serde_yml::from_str(&fs::read_to_string(path).expect("workflow source"))
         .expect("valid workflow YAML")

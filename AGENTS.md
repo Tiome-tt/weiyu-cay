@@ -60,6 +60,8 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 
 ## UI rules
 
+- Approved tray lifecycle design: `docs/superpowers/specs/2026-09-04-tray-lifecycle-design.md`. Windows close-to-tray is optional with first-close disclosure; macOS preserves native close/quit semantics. Explicit quit and authorized restart must await all live editors, including hidden sticky windows. Never hide the main window without an available recovery entry. A source candidate is implemented; do not describe it as shipped until native platform acceptance is recorded.
+
 - The main window uses resizable folder-with-inline-notes, current-note outline, and editor columns. Folder notes expand naturally and scroll with the complete tree; the collapsed outline shows only its label, without counts. Outline entries follow the preview Markdown grammar and exclude code-block contents. Dividers are visually quiet; hovering changes the cursor and highlights the boundary. Double-click restores the default proportion.
 - The editor supports exactly three primary views in the MVP: source, split source/preview, and preview.
 - Note rows do not expose hover delete buttons. Keep recoverable deletion in the pointer/keyboard context menu, with undo feedback outside the folder tree flow. New default table headers must avoid existing names without renaming user content.

@@ -3,8 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App as ProductionApp } from './App'
 import userEvent from '@testing-library/user-event'
-import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeWindowChromePort } from '../test/fakes'
-import type { AppSettings, ExportReport, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
+import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeTemporaryPort, fakeWindowChromePort } from '../test/fakes'
+import type { AppSettings, ExportReport, LifecycleRequest, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
 import type { FolderId, NoteDocument, NoteId } from '../domain/model'
@@ -120,10 +120,11 @@ describe('App', () => {
   it('mounts main-window chrome while retaining the native safe-close listener', async () => {
     const windowChrome = fakeWindowChromePort()
     const lifecycle = {
-      beginCloseListenerRegistration: vi.fn().mockResolvedValue(81),
-      onCloseRequested: vi.fn().mockResolvedValue(() => undefined),
-      setListenerReady: vi.fn().mockResolvedValue(undefined),
-      completeClose: vi.fn().mockResolvedValue(undefined),
+      beginRegistration: vi.fn().mockResolvedValue(81),
+      onPrepare: vi.fn().mockResolvedValue(() => undefined),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      acknowledge: vi.fn().mockResolvedValue(undefined),
     }
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
@@ -131,11 +132,11 @@ describe('App', () => {
       lifecycle, windowChrome,
     }} />)
 
-    await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
+    await waitFor(() => expect(lifecycle.onPrepare).toHaveBeenCalledOnce())
     await userEvent.setup().click(screen.getByRole('button', { name: '关闭窗口' }))
 
     expect(windowChrome.requestClose).toHaveBeenCalledOnce()
-    expect(lifecycle.completeClose).not.toHaveBeenCalled()
+    expect(lifecycle.acknowledge).not.toHaveBeenCalled()
   })
 
   it('acknowledges a native close only after the dirty editor flushes behind a barrier', async () => {
@@ -146,18 +147,19 @@ describe('App', () => {
       loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Close-safe note', 'old body')),
       saveNote: vi.fn(() => pendingSave.promise),
     })
-    let requestClose!: (request: { generation: number }) => void
-    const completeClose = vi.fn().mockResolvedValue(undefined)
-    const setListenerReady = vi.fn().mockResolvedValue(undefined)
+    let requestClose!: (request: LifecycleRequest) => void
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+    const setReady = vi.fn().mockResolvedValue(undefined)
     const registrationToken = deferred<number>()
     const lifecycle = {
-      beginCloseListenerRegistration: vi.fn(() => registrationToken.promise),
-      onCloseRequested: vi.fn(async (handler: (request: { generation: number }) => void) => {
+      beginRegistration: vi.fn(() => registrationToken.promise),
+      onPrepare: vi.fn(async (handler: (request: LifecycleRequest) => void) => {
         requestClose = handler
         return () => undefined
       }),
-      setListenerReady,
-      completeClose,
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady,
+      acknowledge,
     }
     const services = {
       notes, folders: fakeFolderPort(), system: fakeSystemPort(),
@@ -166,32 +168,33 @@ describe('App', () => {
     }
     const user = userEvent.setup()
     render(<App services={services} />)
-    expect(lifecycle.onCloseRequested).not.toHaveBeenCalled()
+    expect(lifecycle.onPrepare).not.toHaveBeenCalled()
     await act(async () => registrationToken.resolve(7))
     await user.click(await screen.findByRole('button', { name: /^Close-safe note/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty close draft' } }))
-    await waitFor(() => expect(lifecycle.onCloseRequested).toHaveBeenCalledOnce())
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 7))
+    await waitFor(() => expect(lifecycle.onPrepare).toHaveBeenCalledOnce())
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(true, 7))
 
-    act(() => requestClose({ generation: 7 }))
+    act(() => requestClose({ generation: 7, intent: 'exit' }))
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
-    expect(completeClose).not.toHaveBeenCalled()
+    expect(acknowledge).not.toHaveBeenCalled()
     expect(editor.state.facet(EditorView.editable)).toBe(false)
     await act(async () => pendingSave.resolve({ ...fakeNotePortDocument(activeId, 'Close-safe note', 'dirty close draft'), revision: 2 }))
-    await waitFor(() => expect(completeClose).toHaveBeenCalledWith(7, true))
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledWith(7, 7, true))
   })
 
   it('marks each lifecycle listener generation unavailable before unmounting it', async () => {
     const unlisten = vi.fn()
-    const setListenerReady = vi.fn().mockResolvedValue(undefined)
+    const setReady = vi.fn().mockResolvedValue(undefined)
     const lifecycle = {
-      beginCloseListenerRegistration: vi.fn().mockResolvedValueOnce(41).mockResolvedValueOnce(42),
-      onCloseRequested: vi.fn(async () => unlisten),
-      setListenerReady,
-      completeClose: vi.fn().mockResolvedValue(undefined),
+      beginRegistration: vi.fn().mockResolvedValueOnce(41).mockResolvedValueOnce(42),
+      onPrepare: vi.fn(async () => unlisten),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady,
+      acknowledge: vi.fn().mockResolvedValue(undefined),
     }
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
@@ -200,30 +203,31 @@ describe('App', () => {
     }
 
     const mounted = render(<App services={services} />)
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 41))
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(true, 41))
     mounted.unmount()
 
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 41))
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(false, 41))
     await waitFor(() => expect(unlisten).toHaveBeenCalledOnce())
 
     const remounted = render(<App services={services} />)
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 42))
-    expect(setListenerReady.mock.calls).not.toContainEqual([false, 42])
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(true, 42))
+    expect(setReady.mock.calls).not.toContainEqual([false, 42])
     remounted.unmount()
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 42))
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(false, 42))
   })
 
   it('retains an installed listener after a readiness re-emit failure until unmount', async () => {
     const unlisten = vi.fn()
-    const setListenerReady = vi.fn(async (ready: boolean, registrationToken: number) => {
+    const setReady = vi.fn(async (ready: boolean, registrationToken: number) => {
       void registrationToken
       if (ready) throw new Error('injected initial close re-emit failure')
     })
     const lifecycle = {
-      beginCloseListenerRegistration: vi.fn().mockResolvedValue(51),
-      onCloseRequested: vi.fn(async () => unlisten),
-      setListenerReady,
-      completeClose: vi.fn().mockResolvedValue(undefined),
+      beginRegistration: vi.fn().mockResolvedValue(51),
+      onPrepare: vi.fn(async () => unlisten),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady,
+      acknowledge: vi.fn().mockResolvedValue(undefined),
     }
     const services = {
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
@@ -232,21 +236,22 @@ describe('App', () => {
     }
 
     const mounted = render(<App services={services} />)
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(true, 51))
-    expect(setListenerReady).not.toHaveBeenCalledWith(false, 51)
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(true, 51))
+    expect(setReady).not.toHaveBeenCalledWith(false, 51)
     expect(unlisten).not.toHaveBeenCalled()
     mounted.unmount()
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 51))
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(false, 51))
     await waitFor(() => expect(unlisten).toHaveBeenCalledOnce())
   })
 
   it('releases a reserved registration token when listener installation fails', async () => {
-    const setListenerReady = vi.fn().mockResolvedValue(undefined)
+    const setReady = vi.fn().mockResolvedValue(undefined)
     const lifecycle = {
-      beginCloseListenerRegistration: vi.fn().mockResolvedValue(61),
-      onCloseRequested: vi.fn().mockRejectedValue(new Error('listener installation failed')),
-      setListenerReady,
-      completeClose: vi.fn().mockResolvedValue(undefined),
+      beginRegistration: vi.fn().mockResolvedValue(61),
+      onPrepare: vi.fn().mockRejectedValue(new Error('listener installation failed')),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady,
+      acknowledge: vi.fn().mockResolvedValue(undefined),
     }
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
@@ -254,8 +259,8 @@ describe('App', () => {
       lifecycle,
     }} />)
 
-    await waitFor(() => expect(setListenerReady).toHaveBeenCalledWith(false, 61))
-    expect(setListenerReady).not.toHaveBeenCalledWith(true, 61)
+    await waitFor(() => expect(setReady).toHaveBeenCalledWith(false, 61))
+    expect(setReady).not.toHaveBeenCalledWith(true, 61)
   })
 
   it('checks, confirms, installs, and reports updater failures only after explicit main-window actions', async () => {
@@ -357,12 +362,21 @@ describe('App', () => {
       loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Update-safe note', 'old body')),
       saveNote: vi.fn(() => pendingSave.promise),
     })
-    const restart = vi.fn().mockResolvedValue(undefined)
+    let requestLifecycle!: (request: LifecycleRequest) => void
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+    const restart = vi.fn(async () => requestLifecycle({ generation: 12, intent: 'restart' }))
+    const lifecycle = {
+      beginRegistration: vi.fn().mockResolvedValue(52),
+      onPrepare: vi.fn(async (handler: typeof requestLifecycle) => { requestLifecycle = handler; return () => undefined }),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      acknowledge,
+    }
     const services = {
       notes, folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
       settings: fakeSettingsPort(),
-      updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart },
+      updater: { check: vi.fn().mockResolvedValue({ version: '0.1.1', notes: null }), install: vi.fn().mockResolvedValue(undefined), restart }, lifecycle,
     }
     const user = userEvent.setup()
     render(<App services={services} />)
@@ -376,10 +390,10 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
-    expect(restart).not.toHaveBeenCalled()
+    expect(restart).toHaveBeenCalledOnce()
     expect(editor.state.facet(EditorView.editable)).toBe(false)
     await act(async () => pendingSave.resolve({ ...fakeNotePortDocument(activeId, 'Update-safe note', 'dirty update draft'), revision: 2 }))
-    await waitFor(() => expect(restart).toHaveBeenCalledOnce())
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledWith(12, 52, true))
   })
 
   it('announces the actual startup recovery report in the main application', async () => {
@@ -538,7 +552,8 @@ describe('App', () => {
         assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
         settings: fakeSettingsPort({ load: async () => ({
           theme: 'sand', stickyColorMode: 'follow-theme', bodyFont: 'serif', codeFont: 'monospace', fontSize: 18,
-          lineHeight: 1.7, shortcut: 'Ctrl+N', launchAtStartup: false, defaultEditorMode: 'split', autosaveDelayMs: 800,
+          lineHeight: 1.7, shortcut: 'Ctrl+N', launchAtStartup: false, closeToTray: true,
+          closeBehaviorConfirmed: false, showMenuBarIcon: true, defaultEditorMode: 'split', autosaveDelayMs: 800,
           dataRoot: { mode: 'default' },
         }) }),
       }} />,
@@ -624,10 +639,19 @@ describe('App', () => {
 
   it('removes library navigation from interaction after storage relocation requires restart', async () => {
     const user = userEvent.setup()
+    const lifecycle = {
+      beginRegistration: vi.fn().mockResolvedValue(60),
+      onPrepare: vi.fn().mockResolvedValue(() => undefined),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+      prepareRelocation: vi.fn().mockResolvedValue(9),
+      cancelRelocation: vi.fn().mockResolvedValue(undefined),
+    }
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
-      settings: fakeSettingsPort(),
+      settings: fakeSettingsPort(), lifecycle,
     }} />)
     await user.click(screen.getByRole('button', { name: '打开设置' }))
     await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
@@ -643,16 +667,26 @@ describe('App', () => {
       listNotes: vi.fn().mockResolvedValue([{ ...fakeNotePortDocument(activeId, 'Relocated note'), excerpt: '' }]),
       loadNote: vi.fn().mockResolvedValue(fakeNotePortDocument(activeId, 'Relocated note', 'durable body')),
     })
-    let requestClose!: (request: { generation: number }) => void
-    const completeClose = vi.fn().mockResolvedValue(undefined)
+    let requestClose!: (request: LifecycleRequest) => void
+    let releaseLifecycle!: (request: { generation: number }) => void
+    const prepared = deferred<number>()
+    const acknowledge = vi.fn(async (generation: number, _token: number, saved: boolean) => {
+      if (generation === 10 && saved) prepared.resolve(generation)
+    })
     const lifecycle = {
-      beginCloseListenerRegistration: vi.fn().mockResolvedValue(71),
-      onCloseRequested: vi.fn(async (handler: (request: { generation: number }) => void) => {
+      beginRegistration: vi.fn().mockResolvedValue(71),
+      onPrepare: vi.fn(async (handler: (request: LifecycleRequest) => void) => {
         requestClose = handler
         return () => undefined
       }),
-      setListenerReady: vi.fn().mockResolvedValue(undefined),
-      completeClose,
+      onRelease: vi.fn(async (handler: typeof releaseLifecycle) => { releaseLifecycle = handler; return () => undefined }),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      acknowledge,
+      prepareRelocation: vi.fn(() => {
+        requestClose({ generation: 10, intent: 'relocate' })
+        return prepared.promise
+      }),
+      cancelRelocation: vi.fn(async (generation: number) => releaseLifecycle({ generation })),
     }
     const moveStorageRoot = vi.fn().mockResolvedValue(undefined)
     const restartApplication = vi.fn().mockRejectedValue(new Error('restart rejected'))
@@ -675,9 +709,10 @@ describe('App', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('请手动退出后重新打开')
     expect(editor.state.facet(EditorView.editable)).toBe(true)
-    act(() => requestClose({ generation: 11 }))
-    await waitFor(() => expect(completeClose).toHaveBeenCalledWith(11, true))
+    act(() => requestClose({ generation: 11, intent: 'exit' }))
+    await waitFor(() => expect(acknowledge).toHaveBeenCalledWith(11, 71, true))
     expect(moveStorageRoot).toHaveBeenCalledOnce()
+    expect(lifecycle.cancelRelocation).toHaveBeenCalledWith(10)
   })
 
   it('adopts settings events, ignores a stale load, and removes the listener on unmount', async () => {
@@ -762,6 +797,128 @@ describe('App', () => {
     expect(save).toHaveBeenCalledOnce()
     window.history.replaceState(null, '', previousUrl)
     vi.useRealTimers()
+  })
+
+  it('persists the remembered first-close choice before requesting native hide', async () => {
+    let requestChoice!: (request: { trayAvailable: boolean }) => void
+    const persisted = deferred<AppSettings>()
+    const update = vi.fn(() => persisted.promise)
+    const resolveCloseChoice = vi.fn().mockResolvedValue(undefined)
+    const lifecycle = {
+      beginRegistration: vi.fn().mockResolvedValue(82),
+      onPrepare: vi.fn().mockResolvedValue(() => undefined),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      onCloseChoiceRequested: vi.fn(async (handler: typeof requestChoice) => { requestChoice = handler; return () => undefined }),
+      resolveCloseChoice,
+      setReady: vi.fn().mockResolvedValue(undefined),
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    }
+    const user = userEvent.setup()
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle, settings: fakeSettingsPort({ update }),
+    }} />)
+    await waitFor(() => expect(lifecycle.setReady).toHaveBeenCalledWith(true, 82))
+    act(() => requestChoice({ trayAvailable: true }))
+    await user.click(screen.getByRole('button', { name: '隐藏到托盘' }))
+
+    expect(update).toHaveBeenCalledWith({ closeToTray: true, closeBehaviorConfirmed: true })
+    expect(resolveCloseChoice).not.toHaveBeenCalled()
+    await act(async () => persisted.resolve({ ...DEFAULT_APP_SETTINGS, closeBehaviorConfirmed: true }))
+    await waitFor(() => expect(resolveCloseChoice).toHaveBeenCalledWith('hide'))
+  })
+
+  it('routes native tray navigation through typed settings and temporary inbox actions', async () => {
+    let navigate!: (action: 'temporary-inbox' | 'settings') => void
+    const navigation = {
+      onRequested: vi.fn(async (handler: typeof navigate) => { navigate = handler; return () => undefined }),
+    }
+    const user = userEvent.setup()
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      settings: fakeSettingsPort(), temporary: fakeTemporaryPort([]),
+      temporaryWindows: { hide: vi.fn(), show: vi.fn(), setAlwaysOnTop: vi.fn(), startDragging: vi.fn() },
+      navigation,
+    }} />)
+    await waitFor(() => expect(navigation.onRequested).toHaveBeenCalledOnce())
+
+    act(() => navigate('settings'))
+    expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '关闭设置' }))
+    act(() => navigate('temporary-inbox'))
+
+    expect(await screen.findByRole('region', { name: '临时便笺' })).toBeVisible()
+  })
+
+  it('shows a visible recovery message when a tray action fails', async () => {
+    let fail!: (failure: { action: 'setup' | 'new-temporary' }) => void
+    const navigation = {
+      onRequested: vi.fn().mockResolvedValue(() => undefined),
+      onFailure: vi.fn(async (handler: typeof fail) => { fail = handler; return () => undefined }),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      navigation,
+    }} />)
+    await waitFor(() => expect(navigation.onFailure).toHaveBeenCalledOnce())
+
+    act(() => fail({ action: 'new-temporary' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法新建临时便笺')
+  })
+
+  it('reopens a failed hidden sticky and replaces an indefinite saving notice with recovery guidance', async () => {
+    const failedId = '019c0000-0000-7000-8000-000000000071' as NoteId
+    let emitFailure!: (failure: { participant: string | null }) => void
+    const show = vi.fn().mockResolvedValue({
+      noteId: failedId, visible: true, x: 20, y: 20, width: 360, height: 420, alwaysOnTop: true,
+    })
+    const lifecycle = {
+      beginRegistration: vi.fn().mockResolvedValue(71),
+      onPrepare: vi.fn().mockResolvedValue(() => undefined),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      onFailure: vi.fn(async (handler: typeof emitFailure) => { emitFailure = handler; return () => undefined }),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      lifecycle,
+      temporaryWindows: { hide: vi.fn(), show, setAlwaysOnTop: vi.fn(), startDragging: vi.fn() },
+    }} />)
+    await waitFor(() => expect(lifecycle.setReady).toHaveBeenCalledWith(true, 71))
+
+    act(() => emitFailure({ participant: `temporary-${failedId}` }))
+
+    await waitFor(() => expect(show).toHaveBeenCalledWith(failedId))
+    expect(await screen.findByRole('alert')).toHaveTextContent('未能安全保存')
+    expect(screen.queryByText('正在安全保存…')).not.toBeInTheDocument()
+  })
+
+  it('registers a sticky route as a lifecycle save participant', async () => {
+    const temporaryId = '019c0000-0000-7000-8000-000000000073' as NoteId
+    window.history.replaceState(null, '', `?sticky=${temporaryId}`)
+    const lifecycle = {
+      beginRegistration: vi.fn().mockResolvedValue(9),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      onPrepare: vi.fn().mockResolvedValue(() => undefined),
+      onRelease: vi.fn().mockResolvedValue(() => undefined),
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<App services={{
+      notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
+      assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
+      temporary: { ...fakeNotePort(), load: vi.fn().mockResolvedValue({ ...fakeNotePortDocument(temporaryId, '临时便笺'), kind: 'temporary' }) },
+      temporaryWindows: { hide: vi.fn(), show: vi.fn(), setAlwaysOnTop: vi.fn(), startDragging: vi.fn() },
+      stickySettings: fakeStickySettingsPort(),
+      lifecycle,
+    } as unknown as AppServices} />)
+    await screen.findByTestId('sticky-window')
+    await waitFor(() => expect(lifecycle.setReady).toHaveBeenCalledWith(true, 9))
   })
 
   it('adopts narrowed sticky events, ignores a stale sticky load, and removes its listener', async () => {

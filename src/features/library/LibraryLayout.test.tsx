@@ -413,6 +413,29 @@ describe('LibraryLayout', () => {
     release?.()
   })
 
+  it('releases an exit edit barrier immediately when coordination is cancelled', async () => {
+    const pending = deferred<NoteDocument>()
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([summary(noteA, 'Pending note')]),
+      loadNote: vi.fn().mockResolvedValue(note('body')),
+      saveNote: vi.fn(() => pending.promise),
+    })
+    const ref = createRef<LibraryLayoutHandle>()
+    render(<LibraryLayout ref={ref} notes={notes} folders={fakeFolderPort()} system={fakeSystemPort()} />)
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Pending note/ }))
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
+    if (editor === null) throw new Error('CodeMirror view not found')
+    act(() => editor.dispatch({ changes: { from: 0, insert: 'pending' } }))
+    const controller = new AbortController()
+    const preparing = ref.current?.prepareExit(controller.signal)
+    await waitFor(() => expect(notes.saveNote).toHaveBeenCalledOnce())
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    act(() => controller.abort())
+    expect(editor.state.facet(EditorView.editable)).toBe(true)
+    pending.resolve(note('pending'))
+    expect(await preparing).toBeNull()
+  })
+
   it('restores a manual collapse as a functional rail and persists only explicit expansion', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': { folder: 0.25, noteList: 0.3 },

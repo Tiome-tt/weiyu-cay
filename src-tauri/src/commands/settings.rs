@@ -89,6 +89,12 @@ pub struct AppSettings {
     pub line_height: f64,
     pub shortcut: String,
     pub launch_at_startup: bool,
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
+    #[serde(default)]
+    pub close_behavior_confirmed: bool,
+    #[serde(default = "default_true")]
+    pub show_menu_bar_icon: bool,
     pub default_editor_mode: EditorMode,
     pub autosave_delay_ms: u64,
     pub data_root: DataRootSetting,
@@ -124,6 +130,10 @@ const fn settings_version() -> u32 {
     SETTINGS_VERSION
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         DEFAULT_APP_SETTINGS.clone()
@@ -148,6 +158,9 @@ pub struct SettingsPatch {
     pub line_height: Option<f64>,
     pub shortcut: Option<String>,
     pub launch_at_startup: Option<bool>,
+    pub close_to_tray: Option<bool>,
+    pub close_behavior_confirmed: Option<bool>,
+    pub show_menu_bar_icon: Option<bool>,
     pub default_editor_mode: Option<EditorMode>,
     pub autosave_delay_ms: Option<u64>,
 }
@@ -756,6 +769,15 @@ fn apply_patch(
     }
     if let Some(value) = patch.launch_at_startup {
         settings.launch_at_startup = value;
+    }
+    if let Some(value) = patch.close_to_tray {
+        settings.close_to_tray = value;
+    }
+    if let Some(value) = patch.close_behavior_confirmed {
+        settings.close_behavior_confirmed = value;
+    }
+    if let Some(value) = patch.show_menu_bar_icon {
+        settings.show_menu_bar_icon = value;
     }
     if let Some(value) = patch.default_editor_mode {
         settings.default_editor_mode = value;
@@ -1893,6 +1915,9 @@ pub fn update_settings(
 ) -> Result<AppSettings, CommandError> {
     authorize_settings_caller(window.label())?;
     let settings = state.service().update(patch)?;
+    if crate::windows::tray::update_visibility(&state.app, settings.show_menu_bar_icon).is_err() {
+        crate::windows::tray::report_failure(&state.app, "setup");
+    }
     let _ = state
         .app
         .emit_to("main", "settings-updated", settings.clone());
@@ -1909,6 +1934,9 @@ pub fn reset_settings(
 ) -> Result<AppSettings, CommandError> {
     authorize_settings_caller(window.label())?;
     let settings = state.service().reset()?;
+    if crate::windows::tray::update_visibility(&state.app, settings.show_menu_bar_icon).is_err() {
+        crate::windows::tray::report_failure(&state.app, "setup");
+    }
     let _ = state
         .app
         .emit_to("main", "settings-updated", settings.clone());
@@ -1932,9 +1960,15 @@ pub fn move_storage_root(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, SettingsCommandState>,
     recovery: tauri::State<'_, crate::storage::recovery::StartupRecoveryState>,
+    lifecycle: tauri::State<'_, crate::windows::main::MainWindowCloseCoordinator>,
     destination: String,
 ) -> Result<(), CommandError> {
     authorize_settings_caller(window.label())?;
+    if !lifecycle.is_prepared_relocation() {
+        return Err(CommandError::conflict(
+            "all editor windows must be safely saved before moving storage",
+        ));
+    }
     recovery.ensure_ready()?;
     state.service().move_storage_root(destination)
 }
@@ -1943,7 +1977,8 @@ pub fn move_storage_root(
 pub fn restart_application(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, SettingsCommandState>,
+    lifecycle: tauri::State<'_, crate::windows::main::MainWindowCloseCoordinator>,
 ) -> Result<(), CommandError> {
     authorize_restart_request(window.label(), state.relocation_pending())?;
-    state.app.restart()
+    crate::windows::main::commit_storage_relocation_restart(&state.app, &lifecycle)
 }

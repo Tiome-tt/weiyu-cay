@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import type { AppSettings, SettingsPort, StorageInfo } from '../../domain/ports'
+import type { AppSettings, SettingsPort, StorageInfo, WindowChromePort } from '../../domain/ports'
 import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
 import { APP_NAME } from '../../shared/brand'
@@ -15,9 +15,10 @@ interface SettingsViewProps {
   onRestartRequired?(): void
   exportController?: ExportLibraryController
   updateController?: UpdateController
+  platform?: WindowChromePort['platform']
 }
 
-export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController, updateController }: SettingsViewProps) {
+export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController, updateController, platform = 'windows' }: SettingsViewProps) {
   const [draft, setDraft] = useState(value)
   const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [destination, setDestination] = useState('')
@@ -214,7 +215,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   return (
     <div className="settings-backdrop" role="presentation">
       <section className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
-        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button type="button" disabled={closeDisabled} onClick={onClose} aria-label="关闭设置"><Icon name="close" size={17} /></button></header>
+        <header><div><span className="library-pane__eyebrow">{APP_NAME}</span><h1 id="settings-heading">设置</h1></div><button className="settings-view__close" type="button" disabled={closeDisabled} onClick={onClose} aria-label="关闭设置"><Icon name="close" size={17} /></button></header>
         {error && <p className="settings-view__error" role="alert">{error}</p>}
         {shortcutWarning && <p className="settings-view__warning" role="status" aria-label="快捷键状态警告">{shortcutWarning}</p>}
         <div className="settings-view__body">
@@ -232,6 +233,25 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
             <legend>系统</legend>
             <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" readOnly value={draft.shortcut} /><button type="button" aria-label="录制快捷键" onClick={() => { recordedShortcutKeysRef.current.clear(); pressedShortcutKeysRef.current.clear(); recordedNonModifierRef.current = false; setRecordingShortcut(true) }}>{recordingShortcut ? '请按下按键…' : '录制快捷键'}</button></label>
             <label className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} />开机启动</label>
+            {platform === 'windows'
+              ? <div className="settings-view__close-behavior">
+                  <label className="settings-view__check settings-view__check--described">
+                    <input aria-label="关闭主窗口时隐藏到托盘" type="checkbox" checked={draft.closeToTray} onChange={(event) => void update({ closeToTray: event.target.checked, closeBehaviorConfirmed: true })} />
+                    <span><strong>关闭主窗口时隐藏到托盘</strong><small>托盘菜单仍可打开窗口或安全退出。</small></span>
+                  </label>
+                  <button
+                    className="settings-view__text-action"
+                    type="button"
+                    disabled={!draft.closeBehaviorConfirmed}
+                    onClick={() => void update({ closeBehaviorConfirmed: false })}
+                  >
+                    {draft.closeBehaviorConfirmed ? '下次关闭时重新询问' : '下次关闭时会询问'}
+                  </button>
+                </div>
+              : <label className="settings-view__check settings-view__check--described">
+                  <input aria-label="在菜单栏显示微屿图标" type="checkbox" checked={draft.showMenuBarIcon} onChange={(event) => void update({ showMenuBarIcon: event.target.checked })} />
+                  <span><strong>在菜单栏显示微屿图标</strong><small>关闭窗口仍遵循 macOS 的原生行为。</small></span>
+                </label>}
           </fieldset>
           {updateController !== undefined && (
             <fieldset disabled={operationBusy}>
@@ -252,7 +272,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
             </fieldset>
           )}
         </div>
-        <footer><div><button type="button" disabled={operationBusy} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button type="button" disabled={closeDisabled} onClick={onClose}>完成</button></footer>
+        <footer><div><button type="button" disabled={operationBusy} onClick={() => void reset()}>恢复默认设置</button><span>笔记数据不会被删除。</span></div><button className="settings-view__done" type="button" disabled={closeDisabled} onClick={onClose}>完成</button></footer>
       </section>
     </div>
   )

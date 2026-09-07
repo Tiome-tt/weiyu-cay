@@ -63,6 +63,7 @@ impl TauriCaptureBackend {
 
 impl CaptureBackend for TauriCaptureBackend {
     fn create(&self) -> Result<NoteId, CommandError> {
+        let _lifecycle_permit = self.windows.acquire_lifecycle_mutation_permit()?;
         TemporaryRepository::new(self.paths.clone())
             .create()
             .map(|document| document.id)

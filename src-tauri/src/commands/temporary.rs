@@ -93,6 +93,8 @@ pub fn create_temporary(
     state: State<'_, TemporaryCommandState>,
 ) -> Result<NoteDocument, CommandError> {
     authorize_temporary_caller(window.label(), TemporaryCommandOperation::Create, None)?;
+    let _lifecycle_permit =
+        crate::windows::main::acquire_lifecycle_mutation_permit(window.app_handle())?;
     state.ensure_ready()?;
     TemporaryRepository::new(state.paths.clone()).create()
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-main-window-close-choice"
+description = "Enables the resolve_main_window_close_choice command without any pre-configured scope."
+commands.allow = ["resolve_main_window_close_choice"]
+
+[[permission]]
+identifier = "deny-resolve-main-window-close-choice"
+description = "Denies the resolve_main_window_close_choice command without any pre-configured scope."
+commands.deny = ["resolve_main_window_close_choice"]

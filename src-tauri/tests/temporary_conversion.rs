@@ -1854,6 +1854,10 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-begin-main-window-close-listener-registration",
             "allow-set-main-window-close-listener-ready",
             "allow-complete-main-window-close",
+            "allow-resolve-main-window-close-choice",
+            "allow-request-storage-relocation",
+            "allow-cancel-storage-relocation",
+            "allow-set-tray-navigation-ready",
             "allow-export-library"
         ])
     );
@@ -1868,7 +1872,10 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-hide-temporary-window",
             "allow-set-temporary-always-on-top",
             "allow-save-image",
-            "allow-load-sticky-settings"
+            "allow-load-sticky-settings",
+            "allow-begin-main-window-close-listener-registration",
+            "allow-set-main-window-close-listener-ready",
+            "allow-complete-main-window-close"
         ])
     );
 }

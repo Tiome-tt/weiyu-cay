@@ -1,13 +1,13 @@
 # Release checklist
 
-Complete this checklist for every signed prerelease and stable version tag. Record the tag, commit SHA, installer filenames, SHA256 values, OS versions, and every failure in the GitHub release notes. Do not publish a release while any required checkbox is incomplete.
+Complete this checklist for every Tauri-signed prerelease and stable version tag. Platform installers are intentionally unsigned in the current distribution phase. Record the tag, commit SHA, installer filenames, SHA256 values, OS versions, and every failure in the GitHub release notes. Do not publish a release while any required checkbox is incomplete.
 
 ## Release-owner preflight
 
 - [ ] The tag is an annotated, GitHub-verified signature and exactly matches `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` (for example, `v0.1.0`).
-- [ ] Repository secrets contain the release-owner updater public key, matching Tauri updater private key and password, Windows PFX and password, plus Apple certificate, identity, Apple ID, app-specific password, and team ID. The workflow derives the Windows thumbprint from the imported PFX and cryptographically verifies a newly signed updater probe with the public key.
-- [ ] Configure the non-secret `RELEASE_STAGING_ENDPOINT` repository variable as the owner-controlled, HTTPS RC channel root (for example, `https://updates.example/rc`) and the `RELEASE_STAGING_UPLOAD_TOKEN` secret for its authenticated PUT upload API. The host must make `/assets/<encoded-name>` immutable/reachable at that same HTTPS origin and replace `latest.json` atomically only after all assets upload. It must serve only signed staged files and no credentials; updater signatures, private keys, and release credentials never go there.
-- [ ] The release workflow created signed installers, updater signatures, `latest.json`, and `SHA256SUMS`; verify the checksums and record all filenames and SHA256 values in the release notes.
+- [ ] Repository secrets contain the release-owner updater public key and matching Tauri updater private key and password. Platform installer signing is intentionally disabled for this phase; the workflow cryptographically verifies a newly signed updater probe with the updater public key.
+- [ ] For RC tags only, configure the non-secret `RELEASE_STAGING_ENDPOINT` repository variable as the owner-controlled, HTTPS RC channel root (for example, `https://updates.example/rc`) and the `RELEASE_STAGING_UPLOAD_TOKEN` secret for its authenticated PUT upload API. Stable tags use GitHub Releases directly and do not require either RC staging setting. The RC host must make `/assets/<encoded-name>` immutable/reachable at that same HTTPS origin and replace `latest.json` atomically only after all assets upload. It must serve only signed staged files and no credentials; updater signatures, private keys, and release credentials never go there.
+- [ ] The release workflow created unsigned platform installers, Tauri updater signatures, `latest.json`, and `SHA256SUMS`; verify the checksums and record all filenames and SHA256 values in the release notes.
 - [ ] Confirm `latest.json` has matching URL and signature entries for `windows-x86_64`, `darwin-aarch64`, and `darwin-x86_64`. Each updater URL must name an uploaded asset and its metadata signature must equal that asset's `.sig` file.
 - [ ] Never add a placeholder updater key or endpoint to `src-tauri/tauri.conf.json`. The checked-in config is intentionally fail-closed; only the signed release workflow materializes the release-owner public key into a temporary config.
 
@@ -23,7 +23,7 @@ Complete this checklist for every signed prerelease and stable version tag. Reco
 
 ## Windows release candidate
 
-- [ ] Install the signed Windows installer.
+- [ ] Install the unsigned Windows installer and record the SmartScreen/publisher warning shown on a clean machine.
 - [ ] Launch the installed application.
 - [ ] Verify global shortcut conflict feedback.
 - [ ] Create, move, resize, hide, and restore three sticky-note windows.
@@ -34,7 +34,7 @@ Complete this checklist for every signed prerelease and stable version tag. Reco
 
 ## macOS release candidate
 
-- [ ] Install the signed and notarized macOS application.
+- [ ] Install the unsigned, non-notarized macOS application and record the Gatekeeper warning shown on a clean machine.
 - [ ] Launch the installed application.
 - [ ] Verify shortcut permission and conflict feedback.
 - [ ] Create, move, resize, hide, and restore three sticky-note windows.

@@ -2,7 +2,7 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppLifecyclePort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrashEntry, TrashFolderEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
+import type { AppNavigationAction, AppNavigationPort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LifecycleFailure, LifecycleParticipantPort, LifecycleRequest, LinkPort, MainCloseChoiceRequest, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrayActionFailure, TrashEntry, TrashFolderEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -71,23 +71,93 @@ class TauriUpdatePort implements UpdatePort {
   }
 }
 
-class TauriAppLifecyclePort implements AppLifecyclePort {
+class TauriAppLifecyclePort implements LifecycleParticipantPort {
   constructor(private readonly client: TauriClient) {}
 
-  beginCloseListenerRegistration() {
+  beginRegistration() {
     return this.client.invoke<number>('begin_main_window_close_listener_registration')
   }
 
-  onCloseRequested(handler: (request: { generation: number }) => void) {
-    return getCurrentWebviewWindow().listen<{ generation: number }>('main-window-close-requested', (event) => handler(event.payload))
+  onPrepare(handler: (request: LifecycleRequest) => void) {
+    return getCurrentWebviewWindow().listen<LifecycleRequest>('app-lifecycle-prepare', (event) => handler(event.payload))
   }
 
-  async setListenerReady(ready: boolean, registrationToken: number) {
+  onRelease(handler: (request: { generation: number }) => void) {
+    return getCurrentWebviewWindow().listen<{ generation: number }>('app-lifecycle-release', (event) => handler(event.payload))
+  }
+
+  onFailure(handler: (failure: LifecycleFailure) => void) {
+    return getCurrentWebviewWindow().listen<LifecycleFailure>('app-lifecycle-failed', (event) => handler(event.payload))
+  }
+
+  onCloseChoiceRequested(handler: (request: MainCloseChoiceRequest) => void) {
+    return getCurrentWebviewWindow().listen<MainCloseChoiceRequest>('main-close-choice-requested', (event) => handler(event.payload))
+  }
+
+  async resolveCloseChoice(choice: 'hide' | 'exit') {
+    await this.client.invoke<void>('resolve_main_window_close_choice', { choice })
+  }
+
+  async prepareRelocation() {
+    const window = getCurrentWebviewWindow()
+    let stopPrepared: (() => void) | undefined
+    let stopFailure: (() => void) | undefined
+    let responseTimeout: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+    const cleanup = () => {
+      stopPrepared?.()
+      stopFailure?.()
+      if (responseTimeout !== undefined) clearTimeout(responseTimeout)
+      stopPrepared = undefined
+      stopFailure = undefined
+    }
+    let resolvePrepared!: (generation: number) => void
+    let rejectPrepared!: (error: Error) => void
+    const prepared = new Promise<number>((resolve, reject) => {
+      resolvePrepared = resolve
+      rejectPrepared = reject
+    })
+    try {
+      stopPrepared = await window.listen<{ generation: number }>('app-lifecycle-prepared', (event) => {
+        settled = true
+        cleanup()
+        resolvePrepared(event.payload.generation)
+      })
+      stopFailure = await window.listen<LifecycleFailure>('app-lifecycle-failed', () => {
+        settled = true
+        cleanup()
+        rejectPrepared(new Error('storage relocation lifecycle failed'))
+      })
+      try {
+        await this.client.invoke<void>('request_storage_relocation')
+      } catch (error) {
+        // The native command may have started even if its response channel was
+        // lost. Prefer the authoritative prepared/failure event, bounded by the
+        // same native save deadline plus a small delivery margin.
+        if (!settled) {
+          responseTimeout = setTimeout(() => {
+            cleanup()
+            rejectPrepared(error instanceof Error ? error : new Error('storage relocation request failed'))
+          }, 10_500)
+        }
+      }
+      return await prepared
+    } catch (error) {
+      cleanup()
+      throw error
+    }
+  }
+
+  async cancelRelocation(generation: number) {
+    await this.client.invoke<void>('cancel_storage_relocation', { generation })
+  }
+
+  async setReady(ready: boolean, registrationToken: number) {
     await this.client.invoke<void>('set_main_window_close_listener_ready', { ready, registrationToken })
   }
 
-  async completeClose(generation: number, saved: boolean) {
-    await this.client.invoke<void>('complete_main_window_close', { generation, saved })
+  async acknowledge(generation: number, registrationToken: number, saved: boolean) {
+    await this.client.invoke<void>('complete_main_window_close', { generation, registrationToken, saved })
   }
 }
 
@@ -111,6 +181,22 @@ class TauriWindowChromePort implements WindowChromePort {
   requestClose() {
     // A normal close request is intercepted by the existing safe-close protocol.
     return getCurrentWebviewWindow().close()
+  }
+}
+
+class TauriAppNavigationPort implements AppNavigationPort {
+  constructor(private readonly client: TauriClient) {}
+
+  onRequested(handler: (action: AppNavigationAction) => void) {
+    return getCurrentWebviewWindow().listen<AppNavigationAction>('app-navigation-requested', (event) => handler(event.payload))
+  }
+
+  onFailure(handler: (failure: TrayActionFailure) => void) {
+    return getCurrentWebviewWindow().listen<TrayActionFailure>('tray-action-failed', (event) => handler(event.payload))
+  }
+
+  async setReady(ready: boolean) {
+    await this.client.invoke<void>('set_tray_navigation_ready', { ready })
   }
 }
 
@@ -426,7 +512,8 @@ export function createTauriPorts(): {
   recovery: RecoveryPort
   startupGuide: StartupGuidePort
   updater: UpdatePort
-  lifecycle: AppLifecyclePort
+  lifecycle: LifecycleParticipantPort
+  navigation: AppNavigationPort
   windowChrome: WindowChromePort
 } {
   const client = new TauriClient()
@@ -448,6 +535,7 @@ export function createTauriPorts(): {
     startupGuide: new TauriStartupGuidePort(client),
     updater: new TauriUpdatePort(client),
     lifecycle: new TauriAppLifecyclePort(client),
+    navigation: new TauriAppNavigationPort(client),
     windowChrome: new TauriWindowChromePort(),
   }
 }

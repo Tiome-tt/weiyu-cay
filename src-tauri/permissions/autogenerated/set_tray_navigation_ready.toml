@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-tray-navigation-ready"
+description = "Enables the set_tray_navigation_ready command without any pre-configured scope."
+commands.allow = ["set_tray_navigation_ready"]
+
+[[permission]]
+identifier = "deny-set-tray-navigation-ready"
+description = "Denies the set_tray_navigation_ready command without any pre-configured scope."
+commands.deny = ["set_tray_navigation_ready"]

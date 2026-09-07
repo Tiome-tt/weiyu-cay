@@ -35,11 +35,12 @@ interface LibraryLayoutProps {
 }
 
 export interface LibraryLayoutHandle {
-  prepareStorageMove(): Promise<(() => void) | null>
-  prepareExit(): Promise<(() => void) | null>
+  prepareStorageMove(signal?: AbortSignal): Promise<(() => void) | null>
+  prepareExit(signal?: AbortSignal): Promise<(() => void) | null>
   refreshAfterRecovery(): Promise<void>
   selectSearchResult(noteId: NoteId): void
   createNote(trigger: HTMLButtonElement): void
+  openTemporaryInbox(): void
 }
 
 export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
@@ -277,37 +278,47 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       })
     },
     createNote: (trigger) => openCreatePopover(trigger),
+    openTemporaryInbox: () => {
+      if (temporary !== undefined) void navigateAfterSave(() => setActiveView('temporary'))
+    },
   }))
 
-  async function prepareEditorFlush(): Promise<(() => void) | null> {
+  async function prepareEditorFlush(signal?: AbortSignal): Promise<(() => void) | null> {
       if (storageMoveLockedRef.current) return null
       storageMoveLockedRef.current = true
       const formal = editorRef.current
       const temporaryEditor = temporaryInboxRef.current
       const releases: Array<() => void> = []
+      let released = false
       const releaseAll = () => {
+        if (released) return
+        released = true
         while (releases.length > 0) releases.pop()?.()
         storageMoveLockedRef.current = false
       }
+      const cancelled = () => signal?.aborted === true
+      signal?.addEventListener('abort', releaseAll, { once: true })
       try {
+        if (cancelled()) return null
         if (formal !== null) {
-          await formal.beginEditBarrier()
           releases.push(() => formal.endEditBarrier())
+          await formal.beginEditBarrier()
+          if (cancelled()) return null
         }
         if (temporaryEditor !== null) {
-          await temporaryEditor.beginEditBarrier()
           releases.push(() => temporaryEditor.endEditBarrier())
+          await temporaryEditor.beginEditBarrier()
+          if (cancelled()) return null
         }
         const formalSaved = (await formal?.flush()) ?? true
+        if (cancelled()) return null
         const temporarySaved = (await temporaryEditor?.flush()) ?? true
-        if (!formalSaved || !temporarySaved) {
+        if (cancelled() || !formalSaved || !temporarySaved) {
           releaseAll()
           return null
         }
-        let released = false
         return () => {
-          if (released) return
-          released = true
+          signal?.removeEventListener('abort', releaseAll)
           releaseAll()
         }
       } catch {

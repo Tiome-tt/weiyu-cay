@@ -8,8 +8,11 @@ import type { AssetPort, ImageReadPort, LinkPort, SystemPort } from '../../domai
 import { handleImagePaste, type ImagePasteResult } from './imagePaste'
 import { insertInternalLink, internalLinkExtension, refreshInternalLinkContext, retargetInternalLink } from './internalLinks'
 import {
+  changesTouchDocumentTable,
   createDocumentMarkdownExtension,
+  documentTableEdit,
   refreshDocumentMarkdownContext,
+  selectionTouchesDocumentTable,
   type MarkdownPresentation,
 } from './documentMarkdown'
 import {
@@ -68,6 +71,28 @@ interface TableDialogState {
   table?: MarkdownTable
 }
 
+interface ContextMenuAnchor {
+  position: number
+  offsetX: number
+  offsetY: number
+}
+
+function editorCoordsAtPos(view: EditorView, position: number) {
+  try {
+    return view.coordsAtPos(position)
+  } catch {
+    return null
+  }
+}
+
+function editorPosAtCoords(view: EditorView, coords: { x: number; y: number }) {
+  try {
+    return view.posAtCoords(coords, false)
+  } catch {
+    return null
+  }
+}
+
 export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourceProps>(function MarkdownSource({
   markdown,
   onChange,
@@ -109,11 +134,18 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const externalRef = useRef(external)
   const renderedLinkContextRef = useRef({ links, linkCache })
   const contextViewRef = useRef<EditorView | null>(null)
+  const contextMenuAnchorRef = useRef<ContextMenuAnchor | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [tableDialog, setTableDialog] = useState<TableDialogState | null>(null)
   const [tableRows, setTableRows] = useState(3)
   const [tableColumns, setTableColumns] = useState(3)
-  const [surfaceControls, setSurfaceControls] = useState({ blockTop: 12, toolbarTop: 12, toolbarLeft: 56, hasSelection: false })
+  const [surfaceControls, setSurfaceControls] = useState({
+    blockTop: 12,
+    toolbarTop: 12,
+    toolbarLeft: 56,
+    hasSelection: false,
+    blockProtected: false,
+  })
 
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
@@ -151,15 +183,54 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     } catch {
       // JSDOM and hidden panes do not expose layout; stable fallbacks keep controls usable.
     }
-    const next = { blockTop, toolbarTop, toolbarLeft, hasSelection: selection.from < selection.to }
+    const next = {
+      blockTop,
+      toolbarTop,
+      toolbarLeft,
+      hasSelection: selection.from < selection.to,
+      blockProtected: presentationRef.current === 'document' && selectionTouchesDocumentTable(view.state, selection),
+    }
     setSurfaceControls((current) => (
       current.blockTop === next.blockTop &&
       current.toolbarTop === next.toolbarTop &&
       current.toolbarLeft === next.toolbarLeft &&
-      current.hasSelection === next.hasSelection
+      current.hasSelection === next.hasSelection &&
+      current.blockProtected === next.blockProtected
         ? current
         : next
     ))
+  }
+
+  const closeContextMenu = () => {
+    contextMenuAnchorRef.current = null
+    setContextMenu(null)
+  }
+
+  const positionContextMenu = (
+    view: EditorView,
+    anchor: ContextMenuAnchor,
+    closeOutsideViewport = false,
+  ) => {
+    const hostBounds = hostRef.current?.getBoundingClientRect()
+    const anchorBounds = editorCoordsAtPos(view, anchor.position)
+    if (hostBounds === undefined || anchorBounds === null) {
+      closeContextMenu()
+      return
+    }
+    const viewport = view.scrollDOM.getBoundingClientRect()
+    const hasViewportBounds = viewport.width > 0 && viewport.height > 0
+    const outsideViewport = anchorBounds.bottom <= viewport.top ||
+      anchorBounds.top >= viewport.bottom ||
+      anchorBounds.right <= viewport.left ||
+      anchorBounds.left >= viewport.right
+    if (closeOutsideViewport && hasViewportBounds && outsideViewport) {
+      closeContextMenu()
+      return
+    }
+    setContextMenu({
+      x: anchorBounds.left + anchor.offsetX - hostBounds.left,
+      y: anchorBounds.top + anchor.offsetY - hostBounds.top,
+    })
   }
 
   const configureEditable = (view: EditorView | null) => {
@@ -228,7 +299,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     },
     endEditBarrier: () => {
       barrierDepthRef.current = Math.max(0, barrierDepthRef.current - 1)
-      authorizedPasteTokensRef.current.clear()
+      // Every barrier owner releases only its own depth. Pending paste tokens
+      // remain authorized until the final owner unlocks the editor.
+      if (barrierDepthRef.current === 0) authorizedPasteTokensRef.current.clear()
       configureEditable(viewRef.current)
     },
     insertInternalLink: (target) => {
@@ -268,6 +341,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             view.dispatch({
               changes: { from, to, insert: tableMarkdown },
               selection: { anchor: from + tableMarkdown.length },
+              annotations: documentTableEdit.of(true),
             })
             view.focus()
           },
@@ -303,10 +377,21 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
               ? transaction
               : []
           }
-          return readOnlyRef.current && !reconcilingRef.current ? [] : transaction
+          if (readOnlyRef.current && !reconcilingRef.current) return []
+          if (
+            !reconcilingRef.current &&
+            presentationRef.current === 'document' &&
+            transaction.annotation(documentTableEdit) !== true &&
+            changesTouchDocumentTable(transaction.startState, transaction.changes)
+          ) {
+            return []
+          }
+          return transaction
         }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
+            const anchor = contextMenuAnchorRef.current
+            if (anchor !== null) anchor.position = update.changes.mapPos(anchor.position, 1)
             for (const entry of pendingPastesRef.current.values()) {
               if (entry.from === entry.to) {
                 entry.from = update.changes.mapPos(entry.from, 1)
@@ -332,6 +417,10 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           if (selectionNeedsSync || (!update.docChanged && (update.viewportChanged || update.geometryChanged)) || movedToAnotherLine) {
             syncSurfaceControls(update.view)
           }
+          if (update.docChanged || update.viewportChanged || update.geometryChanged) {
+            const anchor = contextMenuAnchorRef.current
+            if (anchor !== null) positionContextMenu(update.view, anchor, true)
+          }
         }),
         EditorView.domEventHandlers({
           click: (event) => {
@@ -347,10 +436,24 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             event.preventDefault()
             const bounds = hostRef.current?.getBoundingClientRect()
             contextViewRef.current = contextView
-            setContextMenu({
-              x: event.clientX - (bounds?.left ?? 0),
-              y: event.clientY - (bounds?.top ?? 0),
-            })
+            if (bounds === undefined) return true
+            const position = editorPosAtCoords(contextView, { x: event.clientX, y: event.clientY })
+            const anchorBounds = position === null ? null : editorCoordsAtPos(contextView, position)
+            if (position === null || anchorBounds === null) {
+              contextMenuAnchorRef.current = null
+              setContextMenu({
+                x: event.clientX - bounds.left,
+                y: event.clientY - bounds.top,
+              })
+              return true
+            }
+            const anchor = {
+              position,
+              offsetX: event.clientX - anchorBounds.left,
+              offsetY: event.clientY - anchorBounds.top,
+            }
+            contextMenuAnchorRef.current = anchor
+            positionContextMenu(contextView, anchor)
             return true
           },
           paste: (event, pasteView) => {
@@ -409,6 +512,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     const handleScroll = () => {
       onScrollRef.current?.(view.scrollDOM.scrollTop)
       syncSurfaceControls(view)
+      const anchor = contextMenuAnchorRef.current
+      if (anchor !== null) positionContextMenu(view, anchor, true)
     }
     view.scrollDOM.addEventListener('scroll', handleScroll)
     onScrollElementRef.current?.(view.scrollDOM)
@@ -440,7 +545,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   useEffect(() => {
     if (contextMenu === null && tableDialog === null) return
-    const close = () => { setContextMenu(null); setTableDialog(null) }
+    const close = () => { closeContextMenu(); setTableDialog(null) }
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') close()
     }
@@ -454,20 +559,39 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   const insertSnippet = (snippet: string) => {
     const view = contextViewRef.current ?? viewRef.current
+    closeContextMenu()
     if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
     const selection = view.state.selection.main
     const before = selection.from > 0 && view.state.doc.sliceString(selection.from - 1, selection.from) !== '\n' ? '\n\n' : ''
     const after = selection.to < view.state.doc.length && view.state.doc.sliceString(selection.to, selection.to + 1) !== '\n' ? '\n\n' : ''
     const insert = `${before}${snippet}${after}`
     view.dispatch({ changes: { from: selection.from, to: selection.to, insert }, selection: { anchor: selection.from + insert.length } })
-    setContextMenu(null)
   }
 
-  const openInsertionMenu = () => {
+  const openInsertionMenu = (handle: HTMLElement) => {
     const view = viewRef.current
     if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
     contextViewRef.current = view
-    setContextMenu({ x: 38, y: surfaceControls.blockTop + 28 })
+    const position = view.state.selection.main.head
+    const anchorBounds = editorCoordsAtPos(view, position)
+    const handleBounds = handle.getBoundingClientRect()
+    if (anchorBounds === null) {
+      const hostBounds = hostRef.current?.getBoundingClientRect()
+      if (hostBounds === undefined) return
+      contextMenuAnchorRef.current = null
+      setContextMenu({
+        x: handleBounds.right + 8 - hostBounds.left,
+        y: handleBounds.top - hostBounds.top,
+      })
+      return
+    }
+    const anchor = {
+      position,
+      offsetX: handleBounds.right + 8 - anchorBounds.left,
+      offsetY: handleBounds.top - anchorBounds.top,
+    }
+    contextMenuAnchorRef.current = anchor
+    positionContextMenu(view, anchor)
   }
 
   const formatSelection = (style: MarkdownSelectionStyle) => {
@@ -487,6 +611,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     view.dispatch({
       changes: { from: sourceRange.from, to: sourceRange.to, insert: tableMarkdown },
       selection: { anchor: sourceRange.from + tableMarkdown.length },
+      annotations: documentTableEdit.of(true),
     })
     setTableDialog(null)
     view.focus()
@@ -507,7 +632,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   return (
     <div className="markdown-source" ref={hostRef}>
-      {!readOnly && showBlockHandle && (
+      {!readOnly && showBlockHandle && !surfaceControls.blockProtected && (
         <button
           type="button"
           className="markdown-block-handle"
@@ -515,7 +640,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           title="添加内容块"
           style={{ top: surfaceControls.blockTop }}
           onPointerDown={(event) => event.preventDefault()}
-          onClick={openInsertionMenu}
+          onClick={(event) => openInsertionMenu(event.currentTarget)}
         >
           +
         </button>
@@ -537,8 +662,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       )}
       {contextMenu && (
         <div className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); setContextMenu(null) }}>插入表格</button>
-          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { setContextMenu(null); onInsertInternalLinkRequest() }}>插入内部链接</button>}
+          <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); closeContextMenu() }}>插入表格</button>
+          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { closeContextMenu(); onInsertInternalLinkRequest() }}>插入内部链接</button>}
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.link)}>插入超链接</button>
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.image)}>插入图片</button>
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.code)}>插入代码块</button>

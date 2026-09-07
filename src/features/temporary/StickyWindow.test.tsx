@@ -1,8 +1,9 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteDocument, NoteId } from '../../domain/model'
+import type { LifecycleParticipantPort, LifecycleRequest } from '../../domain/ports'
 import { pngBytes } from '../../test/fakes'
 import { shouldHandleTemporaryClose, StickyWindow } from './StickyWindow'
 
@@ -23,7 +24,7 @@ const capture: NoteDocument = {
   updatedAt: '2026-07-30T08:00:00Z',
 }
 
-function setup(save = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 1 }))) {
+function setup(save = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 1 })), lifecycle?: LifecycleParticipantPort) {
   const temporary = { save }
   const windows = {
     hide: vi.fn().mockResolvedValue(undefined),
@@ -44,6 +45,7 @@ function setup(save = vi.fn(async (document: NoteDocument) => ({ ...document, re
       temporary={temporary}
       windows={windows}
       autosaveDelayMs={400}
+      lifecycle={lifecycle}
     />,
   )
   const textbox = screen.getByRole('textbox', { name: 'Markdown source' })
@@ -53,6 +55,72 @@ function setup(save = vi.fn(async (document: NoteDocument) => ({ ...document, re
 }
 
 describe('StickyWindow', () => {
+  it('releases the edit barrier on cancellation while a save is still pending', async () => {
+    let prepare!: (request: LifecycleRequest) => void
+    let release!: (request: { generation: number }) => void
+    let finish!: (document: NoteDocument) => void
+    const lifecycle: LifecycleParticipantPort = {
+      beginRegistration: vi.fn().mockResolvedValue(4),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      onPrepare: async (handler) => { prepare = handler; return () => undefined },
+      onRelease: async (handler) => { release = handler; return () => undefined },
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    }
+    const save = vi.fn(() => new Promise<NoteDocument>(resolve => { finish = resolve }))
+    const { editor } = setup(save, lifecycle)
+    act(() => editor.dispatch({ changes: { from: 0, to: 3, insert: 'pending draft' } }))
+    await waitFor(() => expect(lifecycle.setReady).toHaveBeenCalledWith(true, 4))
+    act(() => prepare({ generation: 2, intent: 'exit' }))
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    act(() => release({ generation: 2 }))
+    expect(editor.state.facet(EditorView.editable)).toBe(true)
+    await act(async () => finish({ ...capture, markdown: 'pending draft', revision: 1 }))
+    expect(lifecycle.acknowledge).not.toHaveBeenCalled()
+  })
+
+  it('keeps a hidden draft locked until global save coordination releases it', async () => {
+    let prepare!: (request: LifecycleRequest) => void
+    let release!: (request: { generation: number }) => void
+    const lifecycle: LifecycleParticipantPort = {
+      beginRegistration: vi.fn().mockResolvedValue(4),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      onPrepare: async (handler) => { prepare = handler; return () => undefined },
+      onRelease: async (handler) => { release = handler; return () => undefined },
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    }
+    const save = vi.fn(async (document: NoteDocument) => ({ ...document, revision: 1 }))
+    const { editor } = setup(save, lifecycle)
+    act(() => editor.dispatch({ changes: { from: 0, to: 3, insert: 'hidden draft' } }))
+    await waitFor(() => expect(lifecycle.setReady).toHaveBeenCalledWith(true, 4))
+    await act(async () => prepare({ generation: 2, intent: 'exit' }))
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ markdown: 'hidden draft' }))
+    expect(lifecycle.acknowledge).toHaveBeenCalledWith(2, 4, true)
+    expect(editor.state.facet(EditorView.editable)).toBe(false)
+    act(() => release({ generation: 2 }))
+    expect(editor.state.facet(EditorView.editable)).toBe(true)
+  })
+
+  it('rejects global exit on failed sticky save and retains an editable draft', async () => {
+    let prepare!: (request: LifecycleRequest) => void
+    const lifecycle: LifecycleParticipantPort = {
+      beginRegistration: vi.fn().mockResolvedValue(4),
+      setReady: vi.fn().mockResolvedValue(undefined),
+      onPrepare: async (handler) => { prepare = handler; return () => undefined },
+      onRelease: async () => () => undefined,
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    }
+    const save = vi.fn().mockRejectedValue(new Error('disk full'))
+    const { editor, windows } = setup(save, lifecycle)
+    act(() => editor.dispatch({ changes: { from: 0, to: 3, insert: 'unsaved draft' } }))
+    await waitFor(() => expect(lifecycle.setReady).toHaveBeenCalledWith(true, 4))
+    await act(async () => prepare({ generation: 2, intent: 'exit' }))
+    expect(lifecycle.acknowledge).toHaveBeenCalledWith(2, 4, false)
+    expect(editor.state.doc.toString()).toBe('unsaved draft')
+    expect(editor.state.facet(EditorView.editable)).toBe(true)
+    expect(windows.hide).not.toHaveBeenCalled()
+  })
+
   it('contains capture controls only and uses the shared theme color', () => {
     const { windows } = setup()
 

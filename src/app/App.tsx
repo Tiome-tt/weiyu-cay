@@ -17,6 +17,8 @@ import { APP_NAME } from '../shared/brand'
 import { AppChrome } from '../shared/AppChrome'
 import { GlobalToolbar, type ToolbarSaveState } from '../features/library/GlobalToolbar'
 import type { UpdateController, UpdateViewState } from '../features/settings/UpdateSettings'
+import { useLifecycleParticipant } from '../features/lifecycle/useLifecycleParticipant'
+import { CloseBehaviorDialog, type CloseBehaviorChoice } from '../features/lifecycle/CloseBehaviorDialog'
 
 const defaultServices = createAppServices()
 
@@ -45,9 +47,9 @@ function MainApplication({ services }: { services: AppServices }) {
   const exportController = useExportLibraryController(services.exporter, chooseExportDestination)
   const [updateState, setUpdateState] = useState<UpdateViewState>({ status: 'idle' })
   const [closeNotice, setCloseNotice] = useState<StatusNoticeState>({ status: 'idle' })
+  const [closeChoice, setCloseChoice] = useState<{ trayAvailable: boolean; busy: boolean; error: string | null } | null>(null)
   const [saveState, setSaveState] = useState<ToolbarSaveState>('hidden')
   const [searchDismissSignal, setSearchDismissSignal] = useState(0)
-  const closeBusy = useRef(false)
   const dismissSearch = useCallback(() => {
     setSearchDismissSignal((current) => current + 1)
   }, [])
@@ -74,14 +76,9 @@ function MainApplication({ services }: { services: AppServices }) {
   const restartAfterUpdate = useCallback(async () => {
     if (services.updater === undefined || (updateState.status !== 'installed' && updateState.status !== 'restart-error')) return
     setUpdateState({ status: 'restarting', update: updateState.update })
-    let release: (() => void) | null = null
     try {
-      release = await libraryRef.current?.prepareExit() ?? null
-      if (release === null) throw new Error('editor flush failed')
       await services.updater.restart()
-      release = null
     } catch {
-      release?.()
       setUpdateState({ status: 'restart-error', update: updateState.update })
     }
   }, [services.updater, updateState])
@@ -166,71 +163,118 @@ function MainApplication({ services }: { services: AppServices }) {
     }
   }, [services.recovery])
   useEffect(() => {
-    const lifecycle = services.lifecycle
-    if (lifecycle === undefined) return
+    if (services.lifecycle?.onCloseChoiceRequested === undefined) return
     let active = true
     let unlisten: (() => void) | undefined
-    let registrationToken: number | undefined
-    let registrationReleased = false
-    const close = async (generation: number) => {
-      if (closeBusy.current) return
-      closeBusy.current = true
-      setCloseNotice({ status: 'status', message: '正在安全保存并退出…' })
-      let release: (() => void) | null = null
-      try {
-        release = await libraryRef.current?.prepareExit() ?? null
-        if (release === null) {
-          setCloseNotice({ status: 'error', message: '无法退出：请先解决保存错误，然后重试关闭。' })
-          await lifecycle.completeClose(generation, false)
-          return
-        }
-        await lifecycle.completeClose(generation, true)
-        release = null
-      } catch {
-        if (active) setCloseNotice({ status: 'error', message: '无法退出：保存确认失败，请重试关闭。' })
-        await lifecycle.completeClose(generation, false).catch(() => undefined)
-      } finally {
-        release?.()
-        closeBusy.current = false
-      }
-    }
-    const releaseRegistration = async () => {
-      if (registrationToken === undefined || registrationReleased) return
-      registrationReleased = true
-      await lifecycle.setListenerReady(false, registrationToken).catch(() => undefined)
-    }
-    const registration = lifecycle.beginCloseListenerRegistration().then(async (token) => {
-      registrationToken = token
+    void services.lifecycle.onCloseChoiceRequested((request) => {
+      if (active) setCloseChoice({ trayAvailable: request.trayAvailable, busy: false, error: null })
+    }).then((stop) => {
+      if (!active) stop()
+      else unlisten = stop
+    }).catch(() => {
+      if (active) setCloseNotice({ status: 'error', message: '无法确认窗口关闭方式，窗口保持打开。' })
+    })
+    return () => { active = false; unlisten?.() }
+  }, [services.lifecycle])
+  useEffect(() => {
+    if (services.navigation === undefined) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    void services.navigation.onRequested((action) => {
       if (!active) return
-      const stop = await lifecycle.onCloseRequested((request) => void close(request.generation))
-      unlisten = stop
-      if (!active) return
-      try {
-        await lifecycle.setListenerReady(true, token)
-      } catch {
-        // Rust marks the token ready before re-emitting any pending close. A
-        // failed emit must keep the installed listener registered for retry.
-        if (active) setCloseNotice({ status: 'error', message: '无法监听安全退出请求，请保存后重试。' })
+      dismissSearch()
+      if (action === 'settings') {
+        if (services.settings !== undefined) setSettingsOpen(true)
+      } else {
+        libraryRef.current?.openTemporaryInbox()
       }
-    }).catch(async () => {
-      unlisten?.()
-      unlisten = undefined
-      await releaseRegistration()
-      if (active) setCloseNotice({ status: 'error', message: '无法监听安全退出请求，请保存后重试。' })
+    }).then((stop) => {
+      if (!active) stop()
+      else {
+        unlisten = stop
+        void services.navigation?.setReady?.(true).catch(() => {
+          if (active) setCloseNotice({ status: 'error', message: '托盘导航尚未就绪，请在主窗口中重试。' })
+        })
+      }
+    }).catch(() => {
+      if (active) setCloseNotice({ status: 'error', message: '无法响应托盘操作，请在主窗口中重试。' })
     })
     return () => {
       active = false
-      void registration.finally(async () => {
-        await releaseRegistration()
-        unlisten?.()
+      void services.navigation?.setReady?.(false).catch(() => undefined)
+      unlisten?.()
+    }
+  }, [dismissSearch, services.navigation, services.settings])
+  useEffect(() => {
+    if (services.navigation?.onFailure === undefined) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    void services.navigation.onFailure((failure) => {
+      if (!active) return
+      setCloseNotice({
+        status: 'error',
+        message: failure.action === 'setup'
+          ? '系统托盘暂时不可用，主窗口将保持可见。'
+          : '无法新建临时便笺，请在主窗口中重试。',
+      })
+    }).then((stop) => {
+      if (!active) stop()
+      else unlisten = stop
+    }).catch(() => undefined)
+    return () => { active = false; unlisten?.() }
+  }, [services.navigation])
+  const chooseCloseBehavior = useCallback(async (choice: CloseBehaviorChoice, remember: boolean) => {
+    if (closeChoice?.busy || services.lifecycle?.resolveCloseChoice === undefined) return
+    setCloseChoice((current) => current === null ? null : { ...current, busy: true, error: null })
+    try {
+      if (remember) {
+        if (services.settings === undefined) throw new Error('settings unavailable')
+        const persisted = normalizeSettings(await services.settings.update({
+          closeToTray: choice === 'hide',
+          closeBehaviorConfirmed: true,
+        }))
+        settingsRevision.current += 1
+        setSettings(persisted)
+      }
+      await services.lifecycle.resolveCloseChoice(choice)
+      setCloseChoice(null)
+    } catch {
+      setCloseChoice((current) => current === null ? null : {
+        ...current,
+        busy: false,
+        error: remember ? '设置未能保存，窗口保持打开。请重试或取消。' : '无法执行关闭操作，窗口保持打开。',
       })
     }
-  }, [services.lifecycle])
+  }, [closeChoice?.busy, services.lifecycle, services.settings])
+  useLifecycleParticipant(services.lifecycle, {
+    prepare: async (signal) => {
+      setCloseNotice({ status: 'status', message: '正在安全保存…' })
+      const release = await libraryRef.current?.prepareExit(signal) ?? null
+      if (release === null) {
+        if (!signal.aborted) setCloseNotice({ status: 'error', message: '无法继续：请先解决保存错误，然后重试。' })
+        return null
+      }
+      setCloseNotice({ status: 'idle' })
+      return release
+    },
+  }, () => setCloseNotice({ status: 'error', message: '无法确认安全保存，请重试。' }), (failure) => {
+    const failedSticky = temporaryIdFromLifecycleParticipant(failure.participant)
+    if (failedSticky === null || services.temporaryWindows === undefined) {
+      setCloseNotice({ status: 'error', message: '未能安全保存全部编辑内容，窗口保持打开，请检查后重试。' })
+      return
+    }
+    setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，正在重新打开…' })
+    void services.temporaryWindows.show(failedSticky).then(() => {
+      setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，已重新打开，请检查后重试。' })
+    }).catch(() => {
+      setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，请从临时便笺中打开并检查。' })
+    })
+  })
   const content = <>
       {settingsError && <SettingsLoadError onRetry={loadSettings} />}
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
       <StatusNotice state={closeNotice} className="startup-recovery-notice" />
-      <div className="app-workspace" aria-hidden={restartRequired || undefined} inert={restartRequired}>
+      <div className="app-workspace" aria-hidden={restartRequired || closeChoice !== null || undefined} inert={restartRequired || closeChoice !== null}>
         <GlobalToolbar
           search={services.search}
           searchDismissSignal={searchDismissSignal}
@@ -246,7 +290,23 @@ function MainApplication({ services }: { services: AppServices }) {
         />
         <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
       </div>
-      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={() => libraryRef.current?.prepareStorageMove() ?? Promise.resolve(null)} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} updateController={services.updater === undefined ? undefined : { state: updateState, check: checkForUpdates, install: installUpdate, restart: restartAfterUpdate } satisfies UpdateController} />}
+      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} platform={services.windowChrome.platform} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={async () => {
+        if (services.lifecycle?.prepareRelocation === undefined || services.lifecycle.cancelRelocation === undefined) return null
+        const generation = await services.lifecycle.prepareRelocation()
+        let active = true
+        return () => {
+          if (!active) return
+          active = false
+          void services.lifecycle?.cancelRelocation?.(generation)
+        }
+      }} onRestartRequired={() => setRestartRequired(true)} exportController={services.exporter !== undefined && services.exportDestinationPicker !== undefined ? exportController : undefined} updateController={services.updater === undefined ? undefined : { state: updateState, check: checkForUpdates, install: installUpdate, restart: restartAfterUpdate } satisfies UpdateController} />}
+      {closeChoice !== null && <CloseBehaviorDialog
+        trayAvailable={closeChoice.trayAvailable}
+        busy={closeChoice.busy}
+        error={closeChoice.error}
+        onCancel={() => setCloseChoice(null)}
+        onChoose={(choice, remember) => void chooseCloseBehavior(choice, remember)}
+      />}
     </>
   return (
     <main role="application" aria-label={APP_NAME} className="app-shell main-window" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
@@ -345,6 +405,13 @@ function stickyRoute(): StickyRoute | null {
   }
 }
 
+function temporaryIdFromLifecycleParticipant(participant: string | null): NoteId | null {
+  const prefix = 'temporary-'
+  if (participant === null || !participant.startsWith(prefix)) return null
+  const value = participant.slice(prefix.length)
+  return isCanonicalUuidV7(value) ? value as NoteId : null
+}
+
 function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: AppServices; route: StickyRoute; autosaveDelayMs: number }) {
   const [note, setNote] = useState<NoteDocument | null>(null)
   const [error, setError] = useState(false)
@@ -378,6 +445,7 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
       assets={services.assets}
       initialWindowState={route.state}
       autosaveDelayMs={autosaveDelayMs}
+      lifecycle={services.lifecycle}
     />
   )
 }

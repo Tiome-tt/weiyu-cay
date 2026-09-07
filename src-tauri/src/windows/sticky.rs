@@ -793,6 +793,12 @@ impl TauriTemporaryWindowBackend {
         self.shutting_down.store(true, Ordering::SeqCst);
     }
 
+    pub fn acquire_lifecycle_mutation_permit(
+        &self,
+    ) -> Result<super::main::LifecycleMutationPermit, CommandError> {
+        super::main::acquire_lifecycle_mutation_permit(&self.app)
+    }
+
     fn window(&self, label: &str) -> Result<tauri::WebviewWindow, CommandError> {
         self.app
             .get_webview_window(label)
@@ -807,6 +813,7 @@ impl TemporaryWindowBackend for TauriTemporaryWindowBackend {
         note_id: NoteId,
         state: TemporaryWindowState,
     ) -> Result<(), CommandError> {
+        let _lifecycle_permit = self.acquire_lifecycle_mutation_permit()?;
         if parse_temporary_window_label(label)? != note_id {
             return Err(CommandError::validation(
                 "temporary window label does not match its note",

@@ -253,18 +253,86 @@ describe('TauriClient', () => {
     ])
   })
 
-  it('maps close listener readiness and generation acknowledgements to main-only commands', async () => {
+  it('maps lifecycle readiness and authenticated generation acknowledgements', async () => {
     invokeMock.mockResolvedValueOnce(17).mockResolvedValue(undefined)
     const { lifecycle } = createTauriPorts()
 
-    const token = await lifecycle.beginCloseListenerRegistration()
-    await lifecycle.setListenerReady(true, token)
-    await lifecycle.completeClose(9, false)
+    const token = await lifecycle.beginRegistration()
+    await lifecycle.setReady(true, token)
+    await lifecycle.acknowledge(9, token, false)
 
     expect(invokeMock.mock.calls).toEqual([
       ['begin_main_window_close_listener_registration', undefined],
       ['set_main_window_close_listener_ready', { ready: true, registrationToken: 17 }],
-      ['complete_main_window_close', { generation: 9, saved: false }],
+      ['complete_main_window_close', { generation: 9, registrationToken: 17, saved: false }],
+    ])
+  })
+
+  it('prepares and cancels storage relocation through an authenticated native lifecycle generation', async () => {
+    const listeners = new Map<string, (event: { payload: unknown }) => void>()
+    nativeWindow.listen.mockImplementation(async (...args: unknown[]) => {
+      const [event, handler] = args as [string, (event: { payload: unknown }) => void]
+      listeners.set(event, handler)
+      return () => { listeners.delete(event) }
+    })
+    invokeMock.mockImplementation(async (command) => {
+      if (command === 'request_storage_relocation') {
+        queueMicrotask(() => listeners.get('app-lifecycle-prepared')?.({ payload: { generation: 23 } }))
+      }
+      return undefined
+    })
+    const { lifecycle } = createTauriPorts()
+
+    const generation = await lifecycle.prepareRelocation?.()
+    await lifecycle.cancelRelocation?.(generation ?? 0)
+
+    expect(generation).toBe(23)
+    expect(invokeMock.mock.calls).toEqual([
+      ['request_storage_relocation', undefined],
+      ['cancel_storage_relocation', { generation: 23 }],
+    ])
+    expect(listeners.size).toBe(0)
+  })
+
+  it('accepts an authoritative prepared event when the relocation command response is lost', async () => {
+    const listeners = new Map<string, (event: { payload: unknown }) => void>()
+    nativeWindow.listen.mockImplementation(async (...args: unknown[]) => {
+      const [event, handler] = args as [string, (event: { payload: unknown }) => void]
+      listeners.set(event, handler)
+      return () => { listeners.delete(event) }
+    })
+    invokeMock.mockImplementation((command) => {
+      if (command === 'request_storage_relocation') {
+        queueMicrotask(() => listeners.get('app-lifecycle-prepared')?.({ payload: { generation: 31 } }))
+        return Promise.reject(new Error('response channel closed'))
+      }
+      return Promise.resolve(undefined)
+    })
+    const { lifecycle } = createTauriPorts()
+
+    await expect(lifecycle.prepareRelocation?.()).resolves.toBe(31)
+    expect(listeners.size).toBe(0)
+  })
+
+  it('maps the first-close choice to the dedicated main-window command', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const { lifecycle } = createTauriPorts()
+
+    await lifecycle.resolveCloseChoice?.('hide')
+
+    expect(invokeMock).toHaveBeenCalledWith('resolve_main_window_close_choice', { choice: 'hide' })
+  })
+
+  it('maps tray navigation readiness to its main-window command', async () => {
+    invokeMock.mockResolvedValue(undefined)
+    const { navigation } = createTauriPorts()
+
+    await navigation.setReady?.(true)
+    await navigation.setReady?.(false)
+
+    expect(invokeMock.mock.calls).toEqual([
+      ['set_tray_navigation_ready', { ready: true }],
+      ['set_tray_navigation_ready', { ready: false }],
     ])
   })
 

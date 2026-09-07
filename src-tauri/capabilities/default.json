@@ -65,6 +65,10 @@
     "allow-begin-main-window-close-listener-registration",
     "allow-set-main-window-close-listener-ready",
     "allow-complete-main-window-close",
+    "allow-resolve-main-window-close-choice",
+    "allow-request-storage-relocation",
+    "allow-cancel-storage-relocation",
+    "allow-set-tray-navigation-ready",
     "allow-export-library"
   ]
 }

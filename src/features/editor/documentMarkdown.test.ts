@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { GFM } from '@lezer/markdown'
@@ -6,6 +6,7 @@ import {
   analyzeLiveMarkdown,
   classifyDocumentLine,
   isLiveNodeActive,
+  selectionTouchesDocumentTable,
   visibleDocumentLineNumbers,
   type LiveMarkdownNode,
 } from './documentMarkdown'
@@ -122,6 +123,18 @@ describe('live Markdown syntax model', () => {
       kind: 'table', from: 10, to: 40, contentFrom: 10, contentTo: 40, blockFrom: 10, blockTo: 40,
     } as LiveMarkdownNode
     expect(isLiveNodeActive(node, EditorSelection.range(20, 20))).toBe(false)
+  })
+
+  it('finds a selected table without materializing the entire Markdown document', () => {
+    const before = Array.from({ length: 100 }, (_, index) => `paragraph ${index}`).join('\n')
+    const after = Array.from({ length: 100 }, (_, index) => `tail ${index}`).join('\n')
+    const source = `${before}\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n${after}`
+    const state = EditorState.create({ doc: source, extensions: [markdown({ extensions: GFM })] })
+    const tablePosition = source.indexOf('| A | B |')
+    const toString = vi.spyOn(state.doc, 'toString')
+
+    expect(selectionTouchesDocumentTable(state, EditorSelection.cursor(tablePosition))).toBe(true)
+    expect(toString).not.toHaveBeenCalled()
   })
 
   it('limits line decoration work to the viewport plus the active line', () => {
