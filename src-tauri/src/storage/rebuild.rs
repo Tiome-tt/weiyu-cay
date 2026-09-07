@@ -376,6 +376,11 @@ fn read_folders(paths: &StoragePaths) -> Result<Vec<FolderRecord>, CommandError>
                 "could not inspect folders manifest: {source}"
             )))
         }
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(CommandError::validation(
+                "folders manifest must be a regular file",
+            ));
+        }
         Ok(_) => {}
     }
     let directory = platform::SafeDirectory::open(paths.root(), &[], false)?;
