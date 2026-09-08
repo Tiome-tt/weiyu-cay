@@ -36,6 +36,25 @@ describe('validateReleaseMetadata', () => {
     expect(() => validateReleaseMetadata({ metadata: metadata(), repository, tag, releaseAssets: updaterAssets, downloadedAssets: downloaded })).not.toThrow()
   })
 
+  it.each([
+    '微屿_0.1.1_x64_en-US.msi',
+    '微屿_0.1.1_x64-setup.exe',
+  ])('accepts a Tauri Windows updater asset with the %s extension', (windowsName) => {
+    const originalName = updaterAssets[0].name
+    const assets = updaterAssets.map((asset) => asset.name === originalName
+      ? { ...asset, name: windowsName }
+      : asset.name === `${originalName}.sig`
+        ? { ...asset, name: `${windowsName}.sig` }
+        : asset)
+    const files = new Map(downloaded)
+    files.delete(originalName)
+    files.delete(`${originalName}.sig`)
+    files.set(windowsName, Buffer.from('installer'))
+    files.set(`${windowsName}.sig`, Buffer.from('windows-signature\n'))
+
+    expect(() => validateReleaseMetadata({ metadata: metadata(), repository, tag, releaseAssets: assets, downloadedAssets: files })).not.toThrow()
+  })
+
   it('rejects an API asset URL for another repository even when its filename exists locally', () => {
     expect(() => validateReleaseMetadata({ metadata: metadata('acme/other'), repository, tag, releaseAssets: updaterAssets, downloadedAssets: downloaded }))
       .toThrow('does not identify this release asset')

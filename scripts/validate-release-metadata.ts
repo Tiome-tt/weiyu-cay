@@ -142,9 +142,9 @@ function isPlatformAsset(platform: typeof REQUIRED_PLATFORMS[number], name: stri
   const arm64 = /(?:^|[_-])(?:arm64|aarch64)(?:[_.-]|$)/i
   const architecture = platform === 'darwin-aarch64' ? arm64 : x64
   const oppositeArchitecture = platform === 'darwin-aarch64' ? x64 : arm64
-  const extension = platform === 'windows-x86_64' ? /\.msi\.zip$/i : /\.app\.tar\.gz$/i
+  const extension = platform === 'windows-x86_64' ? /\.(?:msi|msi\.zip|exe)$/i : /\.app\.tar\.gz$/i
   const wrongPlatform = platform === 'windows-x86_64'
-    ? /(?:^|[_.-])(?:apple|darwin|linux|macos|osx)(?:[_.-]|$)/i
+    ? /(?:^|[_.-])(?:apple|darwin|linux|macos|osx|windows)(?:[_.-]|$)/i
     : /(?:^|[_.-])(?:exe|linux|msi|nsis|win32|win64|windows)(?:[_.-]|$)/i
   return architecture.test(name) && !oppositeArchitecture.test(name) && extension.test(name) && !wrongPlatform.test(name)
 }
