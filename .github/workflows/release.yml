@@ -216,12 +216,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       verified-bundle-name: ${{ steps.bundle-name.outputs.name }}
+      candidate-release: ${{ steps.release-metadata.outputs.candidate-release }}
     steps:
       - name: Check out release validation scripts
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - name: Download draft release assets
+        id: release-metadata
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
@@ -229,7 +231,8 @@ jobs:
         run: |
           mkdir release-assets
           gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets
-          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release-assets.json"
+          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json assets,isDraft,isPrerelease,tagName > "$RUNNER_TEMP/release-assets.json"
+          echo "candidate-release=$(jq -c '{isDraft,isPrerelease,tagName}' "$RUNNER_TEMP/release-assets.json")" >> "$GITHUB_OUTPUT"
       - name: Validate complete updater metadata and matching signatures
         env:
           TAG_NAME: ${{ github.ref_name }}
@@ -353,10 +356,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           TAG_NAME: ${{ github.ref_name }}
+          CANDIDATE_RELEASE: ${{ needs.checksums.outputs.candidate-release }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "$TAG_NAME" --repo "$REPOSITORY" --json isDraft,isPrerelease,tagName > "$RUNNER_TEMP/candidate-stable-release.json"
+          printf '%s\n' "$CANDIDATE_RELEASE" > "$RUNNER_TEMP/candidate-stable-release.json"
           curl --fail --silent --show-error "https://github.com/$REPOSITORY/releases/latest/download/latest.json" -o "$RUNNER_TEMP/previous-stable-latest.json"
           node --experimental-strip-types scripts/prepare-stable-promotion.ts --candidate release-assets/latest.json --previous "$RUNNER_TEMP/previous-stable-latest.json" --release "$RUNNER_TEMP/candidate-stable-release.json" --repository "$REPOSITORY" --tag "$TAG_NAME" --output stable-promotion-plan.json
       - name: Upload stable promotion and rollback plan
