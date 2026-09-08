@@ -345,7 +345,7 @@ fn checked_in_updater_configuration_is_a_valid_fail_closed_plugin_object() {
         .expect("checked-in updater configuration must be an object");
     assert_eq!(updater.get("endpoints"), Some(&serde_json::json!([])));
     assert_eq!(updater.get("pubkey"), Some(&serde_json::json!("")));
-    assert_eq!(updater.get("windows"), Some(&serde_json::Value::Null));
+    assert!(!updater.contains_key("windows"));
     assert_eq!(config["productName"], "微屿");
     assert_eq!(config["app"]["windows"][0]["title"], "微屿");
     assert_eq!(config["identifier"], "app.simplenotes.desktop");
