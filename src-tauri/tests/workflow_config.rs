@@ -461,6 +461,20 @@ fn stable_releases_do_not_require_rc_staging_configuration() {
         source.contains("https://github.com/${repository}/releases/latest/download/latest.json")
     );
 }
+
+#[test]
+fn checked_in_updater_config_can_be_extended_for_release_bundles() {
+    let config: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string("tauri.conf.json").expect("checked-in Tauri configuration"),
+    )
+    .expect("valid Tauri configuration JSON");
+    assert!(
+        config
+            .pointer("/plugins/updater/windows")
+            .map_or(true, serde_json::Value::is_object),
+        "the updater Windows configuration must not be null when release overrides enable updater artifacts"
+    );
+}
 fn parse(path: &str) -> Workflow {
     serde_yml::from_str(&fs::read_to_string(path).expect("workflow source"))
         .expect("valid workflow YAML")
