@@ -83,11 +83,15 @@ fn validated_parent(path: &Path) -> Result<(SafeDirectory, String), CommandError
     let parent = path
         .parent()
         .ok_or_else(|| CommandError::validation("file has no parent"))?;
-    // Resolve platform aliases such as macOS /var before opening ancestors with NOFOLLOW.
-    // The final filename remains opened with NOFOLLOW, so a selected symlink file is still rejected.
-    let parent = parent.canonicalize().map_err(|source| {
-        CommandError::io(format!("could not resolve import source parent: {source}"))
-    })?;
+    // macOS exposes /var as a system symlink to /private/var. Normalize only this
+    // platform alias; arbitrary user symlink parents remain rejected by NOFOLLOW.
+    #[cfg(target_os = "macos")]
+    let parent = parent
+        .strip_prefix("/var")
+        .map(|suffix| Path::new("/private/var").join(suffix))
+        .unwrap_or_else(|_| parent.to_path_buf());
+    #[cfg(not(target_os = "macos"))]
+    let parent = parent.to_path_buf();
     // Pin every ancestor from the volume root so an exchanged parent cannot redirect import or export.
     let mut anchor = PathBuf::new();
     let mut segments = Vec::new();
