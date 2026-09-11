@@ -11,6 +11,10 @@ fn unauthorized_import_sources_fail_individually_without_blocking_selected_files
     let denied = sources.path().join("private.txt");
     std::fs::write(&selected, "selected content").unwrap();
     std::fs::write(&denied, "private content").unwrap();
+    // macOS temporary roots can include symlinked path components. Normalize the
+    // fixture paths so authorization checks use the selected file identity.
+    let selected = selected.canonicalize().unwrap();
+    let denied = denied.canonicalize().unwrap();
     let paths = StoragePaths::open(root.path()).unwrap();
     let result = import_files_with_scope(
         &paths,
@@ -21,7 +25,11 @@ fn unauthorized_import_sources_fail_individually_without_blocking_selected_files
             ],
             folder_id: None,
         },
-        |path| path == selected,
+        |path| {
+            path.canonicalize()
+                .map(|candidate| candidate == selected)
+                .unwrap_or(false)
+        },
     )
     .unwrap();
     assert_eq!(result.imported.len(), 1);
