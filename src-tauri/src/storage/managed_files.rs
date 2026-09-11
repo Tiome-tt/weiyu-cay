@@ -209,7 +209,7 @@ fn decode_text(bytes: &[u8]) -> Option<String> {
         }
         let little = bytes[0] == 0xff;
         let units = bytes[2..]
-            .chunks_exact(2)
+            .chunks(2)
             .map(|c| {
                 if little {
                     u16::from_le_bytes([c[0], c[1]])
