@@ -83,6 +83,11 @@ fn validated_parent(path: &Path) -> Result<(SafeDirectory, String), CommandError
     let parent = path
         .parent()
         .ok_or_else(|| CommandError::validation("file has no parent"))?;
+    // Resolve platform aliases such as macOS /var before opening ancestors with NOFOLLOW.
+    // The final filename remains opened with NOFOLLOW, so a selected symlink file is still rejected.
+    let parent = parent.canonicalize().map_err(|source| {
+        CommandError::io(format!("could not resolve import source parent: {source}"))
+    })?;
     // Pin every ancestor from the volume root so an exchanged parent cannot redirect import or export.
     let mut anchor = PathBuf::new();
     let mut segments = Vec::new();
