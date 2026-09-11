@@ -1801,6 +1801,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-create-note",
             "allow-import-files",
             "allow-read-managed-file",
+            "allow-read-managed-file-bytes",
             "allow-export-managed-file",
             "allow-open-managed-file",
             "allow-save-document-export",
