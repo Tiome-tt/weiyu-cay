@@ -1160,6 +1160,7 @@ fn join_relative(components: &[String]) -> String {
 }
 
 fn validate_destination(data_root: &Path, destination: &Path) -> Result<PathBuf, CommandError> {
+    let destination = normalize_macos_alias(destination);
     if !destination.is_absolute()
         || destination
             .components()
@@ -1169,7 +1170,7 @@ fn validate_destination(data_root: &Path, destination: &Path) -> Result<PathBuf,
             "export destination must be an absolute path without traversal",
         ));
     }
-    reject_link_components(destination)?;
+    reject_link_components(&destination)?;
     let canonical = destination.canonicalize().map_err(|source| {
         CommandError::io(format!("could not resolve export destination: {source}"))
     })?;
@@ -1187,6 +1188,18 @@ fn validate_destination(data_root: &Path, destination: &Path) -> Result<PathBuf,
         ));
     }
     Ok(canonical)
+}
+
+fn normalize_macos_alias(path: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        return path
+            .strip_prefix("/var")
+            .map(|suffix| Path::new("/private/var").join(suffix))
+            .unwrap_or_else(|_| path.to_path_buf());
+    }
+    #[cfg(not(target_os = "macos"))]
+    path.to_path_buf()
 }
 
 fn reject_link_components(path: &Path) -> Result<(), CommandError> {
