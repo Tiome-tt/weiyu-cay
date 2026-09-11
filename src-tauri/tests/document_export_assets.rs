@@ -33,7 +33,7 @@ fn native_document_export_counts_and_preserves_owned_images() {
         },
     )
     .unwrap();
-    let report = export_library(&paths, destination.path(), "1.1.0").unwrap();
+    let report = export_library(&paths, &destination.path().canonicalize().unwrap(), "1.1.0").unwrap();
     assert!(report.completed, "{report:?}");
     assert_eq!(report.assets_exported, 1);
     let output = std::path::Path::new(report.output_root.as_ref().unwrap());
