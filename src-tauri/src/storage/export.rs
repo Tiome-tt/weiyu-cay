@@ -1193,10 +1193,9 @@ fn validate_destination(data_root: &Path, destination: &Path) -> Result<PathBuf,
 fn normalize_macos_alias(path: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        return path
-            .strip_prefix("/var")
+        path.strip_prefix("/var")
             .map(|suffix| Path::new("/private/var").join(suffix))
-            .unwrap_or_else(|_| path.to_path_buf());
+            .unwrap_or_else(|_| path.to_path_buf())
     }
     #[cfg(not(target_os = "macos"))]
     path.to_path_buf()
