@@ -1,0 +1,17 @@
+{
+  "richDocument": {
+    "schemaVersion": 1,
+    "root": {
+      "type": "doc",
+      "content": [
+        {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"项目概览"}]},
+        {"type":"paragraph","content":[{"type":"text","text":"参见 "},{"type":"internalLink","attrs":{"noteId":"019c0000-0000-7000-8000-000000000002","label":"认证流程"}},{"type":"hardBreak"},{"type":"text","text":"下一行"}]},
+        {"type":"rawMarkdown","attrs":{"source":":::unknown\n保留原文\n:::"}},
+        {"type":"attachment","attrs":{"entryId":"019c0000-0000-7000-8000-000000000003","label":"预算附件","fileName":"budget.xlsx","mediaType":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}},
+        {"type":"table","content":[{"type":"tableRow","content":[{"type":"tableCell","attrs":{"colspan":2,"rowspan":1,"colwidth":[180,220],"backgroundColor":"green"},"content":[{"type":"paragraph","content":[{"type":"text","text":"第一段"}]},{"type":"paragraph","content":[{"type":"text","text":"第二段"}]}]}]}]}
+      ]
+    }
+  },
+  "expectedText":"项目概览\n参见 认证流程\n下一行\n:::unknown\n保留原文\n:::\n预算附件\n第一段\n第二段",
+  "targetIds":["019c0000-0000-7000-8000-000000000002","019c0000-0000-7000-8000-000000000003"]
+}

@@ -480,6 +480,7 @@ fn resolve_returns_only_formal_non_deleted_notes() {
             title: "Temporary".into(),
             folder_id: None,
             tags: vec![],
+            content: None,
             markdown: "body".into(),
             revision: 0,
             created_at: "2026-07-30T08:00:00Z".into(),

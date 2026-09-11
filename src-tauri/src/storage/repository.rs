@@ -6,20 +6,20 @@ use crate::{
     storage::{
         atomic_file::{PublishFailure, PublishResult, PublishState},
         database::Database,
-        markdown::{commonmark_prose_ranges, plain_text_from_markdown},
+        markdown::commonmark_prose_ranges,
         paths::StoragePaths,
     },
 };
 use chrono::DateTime;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, io::ErrorKind, path::PathBuf};
+use std::{collections::HashSet, fs, io::ErrorKind};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 const REBUILD_MARKER: &str = "rebuild-needed.json";
 const RECOVERY_MARKER: &str = "recovery-needed.json";
-const NOTE_RECOVERY_DESCRIPTOR: &str = ".note.md.replace-recovery.json";
+
 const MAX_RAW_DOCUMENT_BYTES: usize = 63 * 1024 * 1024;
 const MAX_SERIALIZED_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -143,24 +143,24 @@ impl NoteRepository {
                 &[collection, id_string.as_str()],
                 false,
             )?;
-            let recovery_pending = directory.regular_file_exists(NOTE_RECOVERY_DESCRIPTOR)?;
-            directory.recover("note.md")?;
+            let mut recovery_pending = false;
+            for name in super::entry::ENTRY_NAMES {
+                recovery_pending |=
+                    directory.regular_file_exists(&format!(".{name}.replace-recovery.json"))?;
+            }
+            let document = match super::entry::read(&directory) {
+                Ok(document) => document,
+                Err(error) if error.code() == crate::error::CommandErrorCode::NotFound => continue,
+                Err(error) => return Err(error),
+            };
             if recovery_pending {
                 self.consume_recovery_marker(id)?;
             }
-            if !directory.regular_file_exists("note.md")? {
-                continue;
-            }
-            let bytes = directory.read("note.md", 64 * 1024 * 1024)?;
-            let contents = String::from_utf8(bytes).map_err(|source| {
-                CommandError::validation(format!("note document is not UTF-8: {source}"))
-            })?;
             if found.is_some() {
                 return Err(CommandError::conflict(
                     "note exists in multiple storage roots",
                 ));
             }
-            let document = parse_document(&contents)?;
             if document.id != id || document.kind != kind {
                 return Err(CommandError::validation(
                     "note metadata does not match its canonical path",
@@ -195,6 +195,20 @@ impl NoteRepository {
                 "stale revision: expected {expected_revision}, durable revision is {}",
                 current.revision
             )));
+        }
+        if super::entry::format(&document) != super::entry::format(&current) {
+            return Err(CommandError::validation(
+                "save cannot change content format; create a converted copy",
+            ));
+        }
+        if let (
+            Some(crate::domain::NoteContent::File { file }),
+            Some(crate::domain::NoteContent::File { file: current_file }),
+        ) = (&document.content, &current.content)
+        {
+            if file != current_file {
+                return Err(CommandError::validation("managed payload is immutable"));
+            }
         }
         if document.kind != current.kind {
             return Err(CommandError::validation("save cannot change note kind"));
@@ -235,6 +249,10 @@ impl NoteRepository {
         for bytes in ids {
             let id = note_id_from_blob(&bytes)?;
             let document = self.load_locked(id, &guard)?;
+            let excerpt = super::rich_document::plain_text(&document)
+                .chars()
+                .take(160)
+                .collect();
             summaries.push(NoteSummary {
                 id: document.id,
                 kind: document.kind,
@@ -244,7 +262,8 @@ impl NoteRepository {
                 revision: document.revision,
                 created_at: document.created_at,
                 updated_at: document.updated_at,
-                excerpt: document.markdown.chars().take(160).collect(),
+                excerpt,
+                content: document.content,
             });
         }
         Ok(summaries)
@@ -274,6 +293,10 @@ impl NoteRepository {
         for bytes in ids {
             let id = note_id_from_blob(&bytes)?;
             let document = self.load_locked(id, &guard)?;
+            let excerpt = super::rich_document::plain_text(&document)
+                .chars()
+                .take(160)
+                .collect();
             summaries.push(NoteSummary {
                 id: document.id,
                 kind: document.kind,
@@ -283,7 +306,8 @@ impl NoteRepository {
                 revision: document.revision,
                 created_at: document.created_at,
                 updated_at: document.updated_at,
-                excerpt: document.markdown.chars().take(160).collect(),
+                excerpt,
+                content: document.content,
             });
         }
         Ok(summaries)
@@ -407,33 +431,20 @@ impl NoteRepository {
 
     fn document_exists(&self, id: NoteId) -> Result<bool, CommandError> {
         for kind in [NoteKind::Formal, NoteKind::Temporary] {
-            let path = self.document_path(id, kind)?;
-            match fs::symlink_metadata(path) {
-                Ok(_) => return Ok(true),
-                Err(source) if source.kind() == ErrorKind::NotFound => {}
-                Err(source) => {
-                    return Err(CommandError::io(format!(
-                        "could not inspect note identity: {source}"
-                    )))
+            let path = self.paths.note_dir(id, kind)?;
+            for name in super::entry::ENTRY_NAMES {
+                match fs::symlink_metadata(path.join(name)) {
+                    Ok(_) => return Ok(true),
+                    Err(source) if source.kind() == ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(CommandError::io(format!(
+                            "could not inspect note identity: {source}"
+                        )))
+                    }
                 }
             }
         }
         Ok(false)
-    }
-
-    fn document_path(&self, id: NoteId, kind: NoteKind) -> Result<PathBuf, CommandError> {
-        let directory = self.paths.note_dir(id, kind)?;
-        if directory.exists() {
-            let resolved = directory.canonicalize().map_err(|source| {
-                CommandError::io(format!("could not resolve note directory: {source}"))
-            })?;
-            if !resolved.starts_with(self.paths.root()) {
-                return Err(CommandError::validation(
-                    "note directory escapes the data root",
-                ));
-            }
-        }
-        Ok(directory.join("note.md"))
     }
 
     fn persist_after_content(
@@ -546,6 +557,7 @@ impl NoteRepository {
     }
 
     fn write_document(&self, document: &NoteDocument) -> Result<(), CommandError> {
+        super::entry::prepare_payload(&self.paths, document)?;
         let bytes = serialize_document(document)?;
         match (self.writer)(&self.paths, document.id, document.kind, bytes.as_bytes()) {
             Ok(PublishState::Published) => Ok(()),
@@ -757,7 +769,7 @@ impl LinkRepository {
             match notes.load_locked(source_id, guard) {
                 Ok(document)
                     if document.kind == NoteKind::Formal
-                        && parse_links(&document.markdown)
+                        && super::rich_document::links(&document)
                             .iter()
                             .any(|link| link.target == target_id) =>
                 {
@@ -783,7 +795,16 @@ impl LinkRepository {
         guard: &crate::platform::IndexMutationLock,
     ) -> Result<Option<NoteDocument>, CommandError> {
         let mut document = notes.load_locked(source_id, guard)?;
-        let (markdown, changed) = rewrite_target_labels(&document.markdown, target_id, title);
+        let (markdown, markdown_changed) =
+            rewrite_target_labels(&document.markdown, target_id, title);
+        let rich_changed = if let Some(crate::domain::NoteContent::Document { document }) =
+            &mut document.content
+        {
+            super::rich_document::rewrite_labels(&mut document.root, target_id, title)
+        } else {
+            false
+        };
+        let changed = markdown_changed || rich_changed;
         if changed {
             let revision = document.revision;
             document.markdown = markdown;
@@ -806,6 +827,10 @@ fn open_database(paths: &StoragePaths) -> Result<Database, CommandError> {
 }
 
 fn note_summary(document: NoteDocument) -> NoteSummary {
+    let excerpt = super::rich_document::plain_text(&document)
+        .chars()
+        .take(160)
+        .collect();
     NoteSummary {
         id: document.id,
         kind: document.kind,
@@ -815,7 +840,8 @@ fn note_summary(document: NoteDocument) -> NoteSummary {
         revision: document.revision,
         created_at: document.created_at,
         updated_at: document.updated_at,
-        excerpt: document.markdown.chars().take(160).collect(),
+        excerpt,
+        content: document.content,
     }
 }
 
@@ -829,12 +855,15 @@ fn default_document_writer(
     crate::storage::atomic_file::atomic_replace_contained(
         paths.root(),
         &[kind_directory(kind), id.as_str()],
-        "note.md",
+        super::entry::filename_from_bytes(bytes),
         bytes,
     )
 }
 
 pub(crate) fn serialize_document(document: &NoteDocument) -> Result<String, CommandError> {
+    if document.content.is_some() {
+        return super::entry::serialize(document);
+    }
     let metadata = NoteMetadata {
         id: document.id,
         kind: document.kind,
@@ -862,6 +891,9 @@ pub(crate) fn serialize_document(document: &NoteDocument) -> Result<String, Comm
 }
 
 pub(crate) fn parse_document(contents: &str) -> Result<NoteDocument, CommandError> {
+    if contents.starts_with('{') {
+        return super::entry::parse(contents.as_bytes(), None);
+    }
     let normalized_start = contents
         .strip_prefix("---\n")
         .ok_or_else(|| CommandError::validation("note frontmatter opening delimiter is missing"))?;
@@ -877,6 +909,7 @@ pub(crate) fn parse_document(contents: &str) -> Result<NoteDocument, CommandErro
         title: metadata.title,
         folder_id: metadata.folder_id,
         tags: metadata.tags,
+        content: None,
         markdown: markdown.to_owned(),
         revision: metadata.revision,
         created_at: metadata.created_at,
@@ -907,7 +940,7 @@ pub(crate) fn persist_document_in_transaction(
     let id = note_id_blob(document.id);
     let folder_id = document.folder_id.map(folder_id_blob);
     let relative_path = format!("{}/{}", kind_directory(document.kind), document.id);
-    let plain_text = plain_text_from_markdown(&document.markdown);
+    let plain_text: String = super::rich_document::plain_text(document).nfkc().collect();
     let search_title: String = document.title.nfkc().collect();
     transaction
         .execute(
@@ -929,6 +962,13 @@ pub(crate) fn persist_document_in_transaction(
             ],
         )
         .map_err(database_error("could not update note metadata"))?;
+
+    transaction
+        .execute(
+            "UPDATE notes SET content_type = ?1 WHERE id = ?2",
+            params![super::entry::format(document), id],
+        )
+        .map_err(database_error("could not index entry type"))?;
 
     transaction
         .execute("DELETE FROM note_tags WHERE note_id = ?1", params![id])
@@ -965,7 +1005,7 @@ pub(crate) fn persist_document_in_transaction(
             params![id],
         )
         .map_err(database_error("could not clear note links"))?;
-    for link in parse_links(&document.markdown) {
+    for link in super::rich_document::links(document) {
         let source_start = i64::try_from(link.start).map_err(|source| {
             CommandError::validation(format!("link source start is too large: {source}"))
         })?;
@@ -1132,7 +1172,8 @@ pub(crate) fn note_id_from_blob(bytes: &[u8]) -> Result<NoteId, CommandError> {
         .map_err(|source| CommandError::database(format!("stored note ID is invalid: {source}")))
 }
 
-fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
+pub(crate) fn validate_document(document: &NoteDocument) -> Result<(), CommandError> {
+    super::entry::validate_content(document)?;
     normalized_note_title(&document.title)?;
     let aggregate = [
         document.title.len(),

@@ -1,6 +1,9 @@
+import { contentOutlineMarkdown, type NewNoteFormat } from '../../domain/content'
+import { emptyRichDocument } from '../../domain/content'
+import { docxToRichDocument, materializeDocumentImages } from '../content/officeConversion'
 import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
-import type { AssetPort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
+import type { AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import type { SaveState } from '../editor/useAutosave'
@@ -18,6 +21,7 @@ import { MainWindowEmptyState } from './MainWindowEmptyState'
 import { NoteOutline, parseNoteHeadings } from './NoteOutline'
 
 interface LibraryLayoutProps {
+  files?: FilePort
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
@@ -43,8 +47,10 @@ export interface LibraryLayoutHandle {
   openTemporaryInbox(): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ files, notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
   const library = useLibrary(notes, folders, startupGuide)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importNotice, setImportNotice] = useState<{ kind: 'status' | 'alert'; message: string } | null>(null)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
   const [trashBusy, setTrashBusy] = useState<'delete' | 'undo' | null>(null)
   const [createPopoverOpen, setCreatePopoverOpen] = useState(false)
@@ -52,6 +58,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     title: '',
     folderId: null,
     tags: '',
+    format: 'document',
     status: 'idle',
   })
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
@@ -62,6 +69,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
   const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
   const [outlineDraft, setOutlineDraft] = useState<{ noteId: NoteId; markdown: string } | null>(null)
+  const [pendingEditorAction, setPendingEditorAction] = useState<{ noteId: NoteId; kind: 'word' | 'pdf' } | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const manualCollapsedRef = useRef<LibraryCollapsedPreference>({ folder: false, noteList: false })
   const [manualCollapsed, setManualCollapsed] = useState<LibraryCollapsedPreference>(manualCollapsedRef.current)
@@ -83,10 +91,14 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const columnsRef = useRef<HTMLDivElement>(null)
   const outlineDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const outlineHeadingSignatureRef = useRef('')
+  const activeFolderIdRef = useRef<FolderId | null>(library.activeFolderId)
+  const importPathsRef = useRef<(paths: string[], position?: { x: number; y: number }) => void>(() => undefined)
+  const metadataNoticeTargetRef = useRef<NoteId | undefined>(undefined)
+  activeFolderIdRef.current = library.activeFolderId
   const responsiveCollapsed = useResponsiveColumns(columnsRef)
   const collapsed: LibraryCollapsedPreference = {
     folder: manualCollapsed.folder || responsiveCollapsed.folder,
-    noteList: manualCollapsed.noteList || responsiveCollapsed.noteList,
+    noteList: manualCollapsed.noteList || responsiveCollapsed.noteList || (activeView === 'library' && ['file', 'text'].includes(library.document?.content?.type ?? '')),
   }
   const linkCache = useMemo(
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
@@ -112,7 +124,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }, [])
   const outlineMarkdown = outlineDraft !== null && outlineDraft.noteId === library.document?.id
     ? outlineDraft.markdown
-    : library.document?.markdown ?? ''
+    : contentOutlineMarkdown(library.document ?? {})
 
   useEffect(() => {
     if (activeView !== 'library' || library.documentState !== 'ready' || library.document === null) {
@@ -132,13 +144,28 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }, [])
 
   useEffect(() => {
+    if (metadataNoticeTargetRef.current === library.activeNoteId) {
+      metadataNoticeTargetRef.current = undefined
+      return
+    }
     setMetadataNotice(null)
     setLinkRepairRetry(null)
   }, [library.activeNoteId])
 
   useEffect(() => {
-    outlineHeadingSignatureRef.current = outlineHeadingSignature(library.document?.markdown ?? '')
+    outlineHeadingSignatureRef.current = outlineHeadingSignature(contentOutlineMarkdown(library.document ?? {}))
   }, [library.document?.id])
+
+  useEffect(() => {
+    const pending = pendingEditorAction
+    if (pending === null || library.documentState !== 'ready' || library.document?.id !== pending.noteId) return
+    setPendingEditorAction(null)
+    void editorRef.current?.exportDocument(pending.kind).then((success) => {
+      if (!success && mountedRef.current) setMetadataNotice(pending.kind === 'word' ? '此笔记无法导出为 Word。' : '导出未完成，原笔记已保留。')
+    }).catch(() => {
+      if (mountedRef.current) setMetadataNotice('导出未完成，原笔记已保留。')
+    })
+  }, [library.document, library.documentState, pendingEditorAction])
 
   useEffect(() => {
     const request = ++preferenceRequest.current
@@ -252,7 +279,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const openCreatePopover = (trigger: HTMLButtonElement | null, folderId = library.activeFolderId ?? library.document?.folderId ?? library.folders[0]?.id ?? null) => {
+  const openCreatePopover = (trigger: HTMLButtonElement | null, folderId: FolderId | null = library.activeFolderId ?? library.document?.folderId ?? library.folders[0]?.id ?? null) => {
     onCreatePopoverOpen?.()
     createTriggerRef.current = trigger
     if (createOperationRef.current.status === 'idle' && createOperationRef.current.title.trim().length === 0) {
@@ -327,17 +354,19 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       }
   }
 
-  const deleteFormalNote = async (noteId: NoteId, title: string) => {
-    if (!mountedRef.current || trash === undefined || trashBusyRef.current !== null) return
+  const deleteFormalNotes = async (entries: Array<{ id: NoteId; title: string }>) => {
+    if (!mountedRef.current || trash === undefined || trashBusyRef.current !== null || entries.length === 0) return
+    const noteIds = entries.map((entry) => entry.id)
     const request = ++trashMutationRef.current
     navigationRequest.current += 1
     const editor = editorRef.current
     const activeEditorExists = activeView === 'library' && editor !== null
-    const deletingCurrentDocument = activeView === 'library' && library.activeNoteId === noteId && editor !== null
+    const activeNoteId = library.activeNoteId
+    const deletingCurrentDocument = activeView === 'library' && activeNoteId !== null && noteIds.includes(activeNoteId) && editor !== null
     let barrierHeld = false
     trashBusyRef.current = 'delete'
     setTrashBusy('delete')
-    setDeletingNoteId(noteId)
+    setDeletingNoteId(noteIds[0] ?? null)
     setTrashError(null)
     setTrashFeedback(null)
     try {
@@ -352,21 +381,22 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         setTrashError('请先解决保存错误，再删除笔记。')
         return
       }
-      const result = await trash.trash([noteId])
+      const result = await trash.trash(noteIds)
       if (!mountedRef.current || trashMutationRef.current !== request) return
-      const deleted = result.trashed.includes(noteId)
-      if (deleted) {
-        if (deletingCurrentDocument) barrierHeld = false
-        library.clearDeletedNote(noteId)
+      const deletedIds = result.trashed.filter((id) => noteIds.includes(id))
+      if (deletedIds.length > 0) {
+        if (deletingCurrentDocument && activeNoteId !== null && deletedIds.includes(activeNoteId)) barrierHeld = false
+        deletedIds.forEach((id) => library.clearDeletedNote(id))
         setRecentTrashOperationId(result.operationId)
-        setTrashFeedback(`“${title}”已移入回收站。`)
+        const deletedTitle = entries.find((entry) => entry.id === deletedIds[0])?.title ?? entries[0]?.title ?? ''
+        setTrashFeedback(deletedIds.length === 1 ? `“${deletedTitle}”已移入回收站。` : `${deletedIds.length} 项已移入回收站。`)
       }
       if (result.failed.length > 0) {
         setTrashError(result.failed.map((failure) => failure.message).join('；'))
-      } else if (!deleted) {
+      } else if (deletedIds.length === 0) {
         setTrashError('笔记未能移入回收站，请重试。')
       }
-      if (deleted) await library.refreshNotes()
+      if (deletedIds.length > 0) await library.refreshNotes()
     } catch {
       if (mountedRef.current && trashMutationRef.current === request) setTrashError('无法删除笔记，请重试。')
     } finally {
@@ -379,20 +409,22 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }
 
-  const createFormalNote = (title: string, folderId: FolderId | null, tags: string[]) => {
+  const deleteFormalNote = (noteId: NoteId, title: string) => deleteFormalNotes([{ id: noteId, title }])
+
+  const createFormalNote = (title: string, folderId: FolderId | null, tags: string[], format: NewNoteFormat) => {
     if (createInFlightRef.current !== null) return
     const request = ++createOperationRequest.current
     updateCreateOperation((current) => ({ ...current, status: 'pending' }))
     const operation = (async () => {
       try {
-        const result = await navigateAfterSave(() => library.createNote(title, folderId))
+        const result = await navigateAfterSave(() => library.createNote(title, folderId, format))
         if (result === null) throw new Error('create was blocked by an unsaved editor')
         if (tags.length > 0 && search !== undefined) {
           await search.updateTags(result.id, tags)
           library.selectNote(result.id)
         }
         if (!mountedRef.current || createOperationRequest.current !== request) return
-        updateCreateOperation(() => ({ title: '', folderId, tags: '', status: 'idle' }))
+        updateCreateOperation(() => ({ title: '', folderId, tags: '', format: 'document', status: 'idle' }))
         if (createPopoverOpenRef.current) {
           closeCreatePopover()
           createTriggerRef.current?.focus()
@@ -408,31 +440,104 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     createInFlightRef.current = operation
   }
 
-  const createQuickNote = (folderId: FolderId | null) => {
-    if (createInFlightRef.current !== null) return
-    const now = new Date()
-    const pad = (value: number) => String(value).padStart(2, '0')
-    const title = `未命名笔记 ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`
-    const request = ++createOperationRequest.current
-    updateCreateOperation(() => ({ title, folderId, tags: '', status: 'pending' }))
+  const startImport = (providedPaths?: string[], destination = activeFolderIdRef.current) => {
+    if (!files || importBusy || createInFlightRef.current || storageMoveLockedRef.current || destination === null) return
+    const folderId = destination
+    setImportBusy(true)
+    setImportNotice(null)
     const operation = (async () => {
       try {
-        const result = await navigateAfterSave(() => library.createNote(title, folderId))
-        if (result === null) throw new Error('create was blocked by an unsaved editor')
-        if (mountedRef.current && createOperationRequest.current === request) {
-          updateCreateOperation(() => ({ title: '', folderId, tags: '', status: 'idle' }))
+        const paths = providedPaths ?? await files.chooseFiles()
+        if (paths.length === 0) return
+        const result = await files.importFiles({ paths, folderId })
+        await library.refreshNotes(folderId, folderId !== activeFolderIdRef.current)
+        if (mountedRef.current) {
+          setImportNotice({
+            kind: result.failed.length > 0 ? 'alert' : 'status',
+            message: '已导入 ' + result.imported.length + ' 项' + (result.failed.length ? '；失败：' + result.failed.map(failure => failure.name + '：' + failure.message).join('；') : '。'),
+          })
         }
       } catch {
-        if (mountedRef.current && createOperationRequest.current === request) {
-          updateCreateOperation((current) => ({ ...current, status: 'error' }))
-        }
+        if (mountedRef.current) setImportNotice({ kind: 'alert', message: '导入失败，原文件已保留。' })
       } finally {
-        if (createOperationRequest.current === request) createInFlightRef.current = null
+        createInFlightRef.current = null
+        if (mountedRef.current) setImportBusy(false)
       }
     })()
     createInFlightRef.current = operation
   }
+  importPathsRef.current = (paths, position) => {
+    const folderId = position === undefined
+      ? activeFolderIdRef.current
+      : (document.elementFromPoint(position.x, position.y)?.closest<HTMLElement>('[data-folder-id]')?.dataset.folderId as FolderId | undefined) ?? activeFolderIdRef.current
+    if (folderId !== null && folderId !== undefined) startImport(paths, folderId)
+  }
 
+  useEffect(() => {
+    if (files?.onDroppedFiles === undefined) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    void files.onDroppedFiles((paths, position) => {
+      if (active && paths.length > 0) importPathsRef.current(paths, position)
+    }).then((stop) => {
+      if (active) unlisten = stop
+      else stop()
+    }).catch(() => {
+      if (active) setImportNotice({ kind: 'alert', message: '暂时无法接收拖入文件，请使用“导入文件”。' })
+    })
+    return () => {
+      active = false
+      unlisten?.()
+    }
+  }, [files])
+
+  const requestNoteExport = (note: { id: NoteId; folderId: FolderId | null }, kind: 'word' | 'pdf') => {
+    setPendingEditorAction({ noteId: note.id, kind })
+    void navigateAfterSave(() => {
+      setActiveView('library')
+      if (note.folderId !== activeFolderIdRef.current && note.folderId !== null) library.selectFolder(note.folderId)
+      library.selectNote(note.id)
+      return true
+    }).then((result) => {
+      if (result === null) setPendingEditorAction(null)
+    }).catch(() => setPendingEditorAction(null))
+  }
+
+  const convertWordFile = async (source: Awaited<ReturnType<typeof notes.loadNote>>, bytes: Uint8Array) => {
+    if (source.content?.type !== 'file' || !/\.docx?$/i.test(source.content.file.originalName)) throw new Error('仅支持 Word 文档转换。')
+    if (trash === undefined) throw new Error('回收站不可用，无法自动移除原文件。')
+    const title = source.title.replace(/\.docx?$/i, '').trim() || source.title
+    const copy = await notes.createNote({ folderId: source.folderId, title: `${title}（可编辑）`, format: 'document' })
+    if (copy.id === source.id || copy.content?.type !== 'document') throw new Error('未创建独立文档。')
+    try {
+      const converted = bytes.byteLength === 0
+        ? emptyRichDocument()
+        : await docxToRichDocument(bytes)
+      const document = await materializeDocumentImages(converted, copy.id, assets)
+      await notes.saveNote({
+        ...copy,
+        tags: [...source.tags],
+        markdown: '',
+        content: { type: 'document', document },
+      })
+    } catch (cause) {
+      try { await trash.trash([copy.id]) } catch { /* keep the original file reachable when cleanup is unavailable */ }
+      if (cause instanceof Error && cause.message.startsWith('Word 文档中的图片')) throw cause
+      throw new Error('无法解析此 Word 文件，请确认它是完整的 .docx 文件后重试。')
+    }
+    const removed = await trash.trash([source.id])
+    if (!removed.trashed.includes(source.id)) {
+      try { await trash.trash([copy.id]) } catch { /* preserve the converted copy if rollback is unavailable */ }
+      throw new Error(removed.failed[0]?.message ?? '原 Word 文件未能移入回收站，转换已取消。')
+    }
+    library.clearDeletedNote(source.id)
+    await library.refreshNotes(copy.folderId, copy.folderId !== activeFolderIdRef.current)
+    setActiveView('library')
+    if (copy.folderId !== activeFolderIdRef.current) library.selectFolder(copy.folderId)
+    metadataNoticeTargetRef.current = copy.id
+    library.selectNote(copy.id)
+    setMetadataNotice('Word 已转换为可编辑文档，原文件已移入回收站。')
+  }
   const renderFolderNotes = (folderId: FolderId | null): ReactNode | undefined => {
     const folderNotes = library.notesByFolder[folderId ?? '__unfiled__']
     const loadFailed = library.folderNoteErrors[folderId ?? '__unfiled__'] === true
@@ -447,6 +552,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         library.selectNote(noteId)
       })}
       onDelete={trash === undefined ? undefined : (noteId, title) => void deleteFormalNote(noteId, title)}
+      onDeleteSelection={trash === undefined ? undefined : (entries) => void deleteFormalNotes(entries)}
       deletingId={deletingNoteId}
       deleteError={isActiveFolder ? trashError : null}
       deleteFeedback={isActiveFolder ? trashFeedback : null}
@@ -455,9 +561,18 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       onUndoDelete={() => void undoFormalDelete()}
       onDismissFeedback={() => setTrashFeedback(null)}
       folderId={folderId}
+      folders={library.folders}
       showEmptyState={folderId !== null}
       onReorder={library.reorderNotes}
       onMoveToFolder={async (noteId, targetFolderId) => { await navigateAfterSave(() => library.moveNote(noteId, targetFolderId)) }}
+      onMoveSelection={async (noteIds, targetFolderId) => {
+        const result = await navigateAfterSave(async () => {
+          for (const noteId of noteIds) await library.moveNote(noteId, targetFolderId)
+        })
+        if (result === null) throw new Error('move was blocked by an unsaved editor')
+        setMetadataNotice(`${noteIds.length} 项已移动。`)
+      }}
+      onExport={requestNoteExport}
     />
   }
 
@@ -500,7 +615,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       {createPopoverOpen && (
         <CreateNotePopover
           folders={library.folders}
-          draft={{ title: createOperation.title, folderId: createOperation.folderId, tags: createOperation.tags }}
+          draft={{ title: createOperation.title, folderId: createOperation.folderId, tags: createOperation.tags, format: createOperation.format }}
           status={createOperation.status}
           triggerRef={createTriggerRef}
           onDraftChange={(draft) => updateCreateOperation((current) => (
@@ -569,13 +684,15 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
               setTrashFeedback('文件夹已移入回收站。')
             }
           }}
-          onCreateNote={createQuickNote}
+          onCreateNote={(folderId) => openCreatePopover(null, folderId)}
+          onImportFiles={files === undefined ? undefined : (folderId) => startImport(undefined, folderId)}
           onToggleStar={library.toggleFolderStar}
           onMoveNote={async (noteId, folderId) => {
             await navigateAfterSave(() => library.moveNote(noteId, folderId))
           }}
           folderContents={activeView === 'library' ? renderFolderNotes : undefined}
         />
+        {importNotice && <p className={`library-status${importNotice.kind === 'alert' ? ' library-status--error' : ''}`} role={importNotice.kind}>{importNotice.message}</p>}
         </div>
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
@@ -620,7 +737,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         )}
         {activeView === 'library' && library.document && (
           <EditorPane
-            key={`${library.document.id}:${library.document.revision}`}
+            files={files}
+            key={library.document.id}
             ref={editorRef}
             document={library.document}
             notes={notes}
@@ -649,6 +767,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             }}
             external={system}
             onDocumentAdopt={library.adoptDocument}
+            onConvertFileToDocument={convertWordFile}
             initialMode={defaultEditorMode}
             autosaveDelayMs={autosaveDelayMs}
             onSaveStateChange={reportEditorSaveState}

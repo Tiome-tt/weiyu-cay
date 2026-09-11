@@ -53,6 +53,9 @@ describe('live Markdown syntax model', () => {
     expect(analyze(source)).toContainEqual(expect.objectContaining(expected))
   })
 
+  it('keeps a marker-only ordered item in the syntax model', () => {
+    expect(analyze('3.\n')).toContainEqual(expect.objectContaining({ kind: 'list-marker', from: 0, to: 2 }))
+  })
   it('maps a standard link without treating its destination as visible content', () => {
     expect(analyze('[site](https://x.test)')).toContainEqual(expect.objectContaining({
       kind: 'link',
@@ -135,6 +138,15 @@ describe('live Markdown syntax model', () => {
 
     expect(selectionTouchesDocumentTable(state, EditorSelection.cursor(tablePosition))).toBe(true)
     expect(toString).not.toHaveBeenCalled()
+  })
+
+  it('treats the position immediately after a table as the following block', () => {
+    const source = '| A | B |\n| --- | --- |\n| 1 | 2 |\n\n后文'
+    const state = EditorState.create({ doc: source, extensions: [markdown({ extensions: GFM })] })
+    const tableEnd = source.indexOf('\n\n后文')
+
+    expect(selectionTouchesDocumentTable(state, EditorSelection.cursor(source.indexOf('| A')))).toBe(true)
+    expect(selectionTouchesDocumentTable(state, EditorSelection.cursor(tableEnd))).toBe(false)
   })
 
   it('limits line decoration work to the viewport plus the active line', () => {

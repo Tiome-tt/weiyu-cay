@@ -505,6 +505,7 @@ fn create_formal_note(
             title: title.to_owned(),
             folder_id,
             tags: Vec::new(),
+            content: None,
             markdown: markdown.to_owned(),
             revision: 0,
             created_at: "2026-07-30T08:00:00Z".to_owned(),

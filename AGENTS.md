@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Cay (微屿) is a local-first Markdown note application for Windows and macOS. The product favors a small, reliable feature set over an all-in-one workspace. Users can work fully offline without an account. A future account will be optional and used only for synchronization.
+Cay (微屿) is a local-first Markdown note application with typed document entries for Windows and macOS. The product favors a small, reliable feature set over an all-in-one workspace. Users can work fully offline without an account. A future account will be optional and used only for synchronization.
 
 Read `docs/superpowers/specs/2026-07-30-simple-notes-design.md` before changing product behavior or architecture. Keep that specification and this file aligned when an approved design decision changes.
 
@@ -18,8 +18,9 @@ Read `docs/superpowers/specs/2026-07-30-simple-notes-design.md` before changing 
 - Tauri 2 for desktop windows, operating-system integration, packaging, and privileged commands.
 - React, TypeScript, and Vite for the UI.
 - CodeMirror 6 for Markdown source editing.
+- Tiptap for rich document editing, with PDF.js and DOCX generation kept local for viewing and export.
 - SQLite for metadata, tags, links, window state, and rebuildable search indexes.
-- Markdown files and image assets are the durable note content.
+- Markdown, typed document/text/file entries, managed payloads, and image assets are durable content; SQLite remains a rebuildable index.
 - `pnpm` is the JavaScript package manager.
 
 Do not replace the stack or add a second state, editor, database, styling, or component framework without an approved design change.
@@ -27,7 +28,7 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 ## Product invariants
 
 - Core note features must work without an account or network connection.
-- Markdown and assets are durable content. SQLite is an index and metadata store that can be rebuilt from the files.
+- Markdown and typed entry payloads/assets are durable content. SQLite is an index and metadata store that can be rebuilt from those entries.
 - Every note and temporary capture has an immutable UUIDv7. A title, folder, or file-path change must never break an internal link.
 - The persisted internal-link form is `[[Visible title|UUID]]`; the editor displays only `[[Visible title]]` as an atomic decoration.
 - Inside a persisted link label, `\`, `|`, `[`, and `]` are escaped as `\\`, `\|`, `\[`, and `\]`; TypeScript and Rust must parse and serialize this grammar identically.
@@ -49,7 +50,7 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 
 ## Data-safety rules
 
-- Save Markdown by writing a sibling temporary file, flushing it, and atomically replacing the previous file only after a successful write.
+- Save Markdown and typed entry metadata/payloads by writing sibling temporary files, flushing them, and atomically publishing the previous entry only after a successful write.
 - Update SQLite indexes only after durable content succeeds. A failed content write must not publish new index state.
 - Use transactions for multi-row metadata changes and for each item in a batch temporary-note conversion.
 - Keep all resolved paths inside the configured application data or export root. Reject traversal and symlink escapes.
@@ -120,6 +121,15 @@ Do not claim a command passes unless it was run in the current worktree. If scaf
 - Editor tests must cover all three views, atomic two-step link deletion, link-title refresh, scroll preservation, and split-view synchronization.
 - UI tests must cover resize boundaries, minimum widths, multi-selection, undo deletion, and window-state restoration.
 - Before releasing, cover global shortcuts, multiple sticky windows, always-on-top behavior, autostart, installers, signing, and updates on both Windows and macOS.
+
+## Version and changelog rules
+
+- `CHANGELOG.md` at the repository root is the only source of version change records; do not create or update a separate release-notes file for version history.
+- Add each new version at the top of the version records, use `MAJOR.MINOR.PATCH`, and keep the status limited to `预发布`, `稳定`, or `撤回`.
+- Every version entry must include the date, target platforms, status, commit, installer filenames, and SHA256 values. Leave an explicit `待发布` or `待发布构建生成后补录` marker only while the release is still a candidate.
+- Classify changes only as `新增`, `修复`, `变更`, or `已知问题`; write each bullet as one action plus its result.
+- Record every user-visible behavior change, bug fix, release workflow change, and verification boundary in the current unreleased version entry before declaring the work complete.
+- Never rewrite a published version entry. Keep `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and release tags on the same version.
 
 ## Scope discipline
 

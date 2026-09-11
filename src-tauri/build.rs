@@ -2,6 +2,12 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "create_note",
+            "import_files",
+            "read_managed_file",
+            "read_managed_file_bytes",
+            "export_managed_file",
+            "open_managed_file",
+            "save_document_export",
             "startup_guide_target",
             "complete_startup_guide",
             "load_note",

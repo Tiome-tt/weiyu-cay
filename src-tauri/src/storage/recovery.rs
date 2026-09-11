@@ -413,6 +413,7 @@ fn scan_collection(
 struct Candidate {
     name: String,
     revision: u64,
+    content_type: &'static str,
     bytes: Vec<u8>,
 }
 
@@ -425,15 +426,60 @@ fn recover_note_directory(
     report: &mut StartupRecoveryReport,
     candidate_hook: &impl Fn(&Path),
 ) -> Result<(), CommandError> {
+    let names = directory.entry_names()?;
+    let active_types = super::entry::ENTRY_NAMES
+        .iter()
+        .filter(|entry| {
+            names.iter().any(|name| {
+                name == **entry
+                    || (name.starts_with(&format!(".{entry}.")) && is_abandoned_candidate(name))
+            })
+        })
+        .count();
+    if active_types > 1 {
+        return Err(CommandError::conflict(
+            "multiple entry formats found during recovery",
+        ));
+    }
+    for entry_name in super::entry::ENTRY_NAMES {
+        recover_entry_candidates(
+            paths,
+            collection_name,
+            directory,
+            owner_id,
+            expected_kind,
+            report,
+            candidate_hook,
+            entry_name,
+        )?;
+    }
+    Ok(())
+}
+#[allow(clippy::too_many_arguments)]
+fn recover_entry_candidates(
+    paths: &StoragePaths,
+    collection_name: &str,
+    directory: &SafeDirectory,
+    owner_id: NoteId,
+    expected_kind: NoteKind,
+    report: &mut StartupRecoveryReport,
+    candidate_hook: &impl Fn(&Path),
+    entry_name: &str,
+) -> Result<(), CommandError> {
     // Complete the existing Windows replace descriptor before considering unrelated orphans.
-    directory.recover("note.md")?;
-    let canonical_revision = read_candidate(directory, "note.md", owner_id, expected_kind)
-        .ok()
-        .map(|candidate| candidate.revision);
+    directory.recover(entry_name)?;
+    let canonical = match read_candidate(directory, entry_name, owner_id, expected_kind) {
+        Ok(candidate) => Some(candidate),
+        Err(error) if entry_name != "note.md" && directory.regular_file_exists(entry_name)? => {
+            return Err(error)
+        }
+        Err(_) => None,
+    };
+    let canonical_revision = canonical.as_ref().map(|candidate| candidate.revision);
     let candidate_names = directory
         .entry_names()?
         .into_iter()
-        .filter(|name| is_abandoned_candidate(name))
+        .filter(|name| name.starts_with(&format!(".{entry_name}.")) && is_abandoned_candidate(name))
         .collect::<Vec<_>>();
     if candidate_names.is_empty() {
         return Ok(());
@@ -442,9 +488,29 @@ fn recover_note_directory(
     let mut valid = Vec::new();
     for name in &candidate_names {
         match read_candidate(directory, name, owner_id, expected_kind) {
-            Ok(candidate) if candidate.revision <= i64::MAX as u64 => valid.push(candidate),
+            Ok(candidate)
+                if candidate.revision <= i64::MAX as u64
+                    && canonical
+                        .as_ref()
+                        .is_none_or(|current| current.content_type == candidate.content_type) =>
+            {
+                valid.push(candidate)
+            }
             _ => quarantine(directory, owner_id, name, "invalid", report)?,
         }
+    }
+    if canonical.is_none()
+        && valid.iter().any(|candidate| {
+            valid
+                .first()
+                .is_some_and(|first| first.content_type != candidate.content_type)
+        })
+    {
+        report.ambiguous.push(owner_id.to_string());
+        for candidate in &valid {
+            quarantine(directory, owner_id, &candidate.name, "ambiguous", report)?;
+        }
+        return Ok(());
     }
     let Some(highest) = valid.iter().map(|candidate| candidate.revision).max() else {
         return Ok(());
@@ -481,7 +547,7 @@ fn recover_note_directory(
         match atomic_replace_contained(
             paths.root(),
             &[collection_name, owner.as_str()],
-            "note.md",
+            entry_name,
             &selected.bytes,
         ) {
             Ok(PublishState::Published) => report.recovered.push(RecoveredCandidate {
@@ -510,7 +576,20 @@ fn read_candidate(
     let bytes = directory.read(name, MAX_DOCUMENT_BYTES)?;
     let contents = String::from_utf8(bytes)
         .map_err(|_| CommandError::validation("recovery candidate is not UTF-8"))?;
-    let document = parse_document(&contents)?;
+    let document = if contents.starts_with('{') {
+        super::entry::parse(contents.as_bytes(), Some(directory))?
+    } else {
+        parse_document(&contents)?
+    };
+    super::repository::validate_document(&document)?;
+    let expected_entry = super::entry::ENTRY_NAMES
+        .iter()
+        .find(|entry| name == **entry || name.starts_with(&format!(".{entry}.")));
+    if expected_entry.copied() != Some(super::entry::filename(&document)) {
+        return Err(CommandError::validation(
+            "recovery candidate content does not match entry filename",
+        ));
+    }
     if document.id != owner_id || document.kind != expected_kind {
         return Err(CommandError::validation(
             "recovery candidate identity does not match its owner",
@@ -519,15 +598,20 @@ fn read_candidate(
     Ok(Candidate {
         name: name.to_owned(),
         revision: document.revision,
+        content_type: super::entry::format(&document),
         bytes: contents.into_bytes(),
     })
 }
 
 fn is_abandoned_candidate(name: &str) -> bool {
-    let Some(identity) = name.strip_prefix(".note.md.").and_then(|rest| {
-        rest.strip_suffix(".tmp")
-            .or_else(|| rest.strip_suffix(".save"))
-    }) else {
+    let Some(identity) = super::entry::ENTRY_NAMES
+        .iter()
+        .find_map(|entry| name.strip_prefix(&format!(".{entry}.")))
+        .and_then(|rest| {
+            rest.strip_suffix(".tmp")
+                .or_else(|| rest.strip_suffix(".save"))
+        })
+    else {
         return false;
     };
     Uuid::parse_str(identity).is_ok()

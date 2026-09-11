@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-managed-file"
+description = "Enables the export_managed_file command without any pre-configured scope."
+commands.allow = ["export_managed_file"]
+
+[[permission]]
+identifier = "deny-export-managed-file"
+description = "Denies the export_managed_file command without any pre-configured scope."
+commands.deny = ["export_managed_file"]

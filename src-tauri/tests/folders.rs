@@ -245,6 +245,7 @@ fn folder_mutations_survive_a_full_index_rebuild_with_note_associations() {
             title: "保留文件夹关联".to_owned(),
             folder_id: Some(child.id),
             tags: Vec::new(),
+            content: None,
             markdown: "rebuild me".to_owned(),
             revision: 0,
             created_at: "2026-07-31T00:00:00Z".to_owned(),

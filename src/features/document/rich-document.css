@@ -1,0 +1,194 @@
+.main-window .rich-document {
+  --document-inline-padding: clamp(24px, 4vw, 48px);
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.main-window .rich-document__toolbar,
+.main-window .rich-document__table-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 10px;
+  overflow: visible;
+  flex-wrap: wrap;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.main-window .rich-document__table-tools { position: sticky; z-index: 8; top: 0; width: min(100%, var(--document-measure)); box-sizing: border-box; margin: 0 auto; padding-right: var(--document-inline-padding); padding-left: var(--document-inline-padding); background: color-mix(in srgb, var(--color-accent-soft) 38%, var(--color-surface)); border: 1px solid var(--color-border-soft); border-radius: 10px; box-shadow: 0 3px 10px color-mix(in srgb, var(--color-text) 7%, transparent); }
+
+.main-window .rich-document__toolbar button,
+.main-window .rich-document__table-tools button,
+.main-window .rich-document__toolbar select,
+.main-window .rich-document__table-tools select,
+.main-window .rich-document__attachment-picker {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--color-text);
+  font: inherit;
+  font-size: .75rem;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.main-window .rich-document__toolbar button:hover:not(:disabled),
+.main-window .rich-document__toolbar button[aria-pressed="true"],
+.main-window .rich-document__table-tools button:hover:not(:disabled),
+.main-window .rich-document__toolbar select:hover,
+.main-window .rich-document__table-tools select:hover {
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+}
+
+.main-window .rich-document__toolbar button:disabled,
+.main-window .rich-document__table-tools button:disabled { opacity: .38; cursor: default; }
+.main-window .rich-document__toolbar-separator { width: 1px; height: 20px; margin: 0 3px; background: var(--color-border-soft); }
+.main-window .rich-document__insert-menu { position: relative; }
+.main-window .rich-document__style-select { position: relative; display: inline-flex; align-items: center; }
+.main-window .rich-document__style-select::after { content: ''; position: absolute; top: 50%; right: 10px; width: 6px; height: 6px; pointer-events: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-65%) rotate(45deg); }
+.main-window .rich-document__style-select select { appearance: none; padding-right: 21px; }
+.main-window .rich-document__insert-trigger { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; line-height: 1; color: var(--color-accent-strong); background: var(--color-accent-soft); border-color: var(--color-accent-border); }
+.main-window .rich-document__insert-trigger::after { content: ''; display: inline-block; align-self: center; width: 6px; height: 6px; margin-left: 4px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+.main-window .rich-document__table-select { position: relative; display: inline-flex; align-items: center; }
+.main-window .rich-document__table-select::after { content: ''; position: absolute; top: 50%; right: 9px; width: 6px; height: 6px; pointer-events: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-65%) rotate(45deg); }
+.main-window .rich-document__table-select select { appearance: none; padding-right: 22px; }
+.main-window .rich-document__toolbar button[aria-label="撤销"],
+.main-window .rich-document__toolbar button[aria-label="重做"] { font-size: .82rem; line-height: 1; }
+.main-window .rich-document__insert-popover { position: absolute; z-index: 25; top: calc(100% + 6px); left: 0; display: grid; min-width: 150px; gap: 2px; padding: 6px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-overlay); box-shadow: var(--shadow-overlay); }
+.main-window .rich-document__insert-popover button { width: 100%; padding: 8px 10px; text-align: left; border: 0; }
+.main-window .rich-document__insert-popover button:hover { background: var(--color-accent-soft); }
+.main-window .rich-document__insert-select { display: grid; gap: 4px; padding: 8px 10px; color: var(--color-muted); font-size: .78rem; }
+.main-window .rich-document__insert-select select { min-width: 130px; padding: 4px; color: var(--color-text); background: var(--color-panel); border: 1px solid var(--color-border-soft); border-radius: 6px; }
+.main-window .rich-document__table-picker { position: relative; }
+.main-window .rich-document__table-picker-trigger { display: block; }
+.main-window .rich-document__table-picker-grid { position: absolute; z-index: 30; top: 0; left: calc(100% + 6px); display: grid; grid-template-columns: repeat(8, 17px); gap: 3px; width: max-content; padding: 9px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-control); box-shadow: var(--shadow-overlay); }
+.main-window .rich-document__table-picker-grid button { width: 17px; min-width: 17px; height: 17px; min-height: 17px; padding: 0; background: var(--color-panel); border: 1px solid var(--color-border-soft); border-radius: 2px; cursor: pointer; }
+.main-window .rich-document__table-picker-grid button:hover,
+.main-window .rich-document__table-picker-grid button:focus-visible,
+.main-window .rich-document__table-picker-grid button.is-selected { background: var(--color-accent-soft); border-color: var(--color-accent); outline: none; }
+.main-window .rich-document__table-picker-grid output { grid-column: 1 / -1; padding-top: 5px; color: var(--color-muted); font-size: .72rem; text-align: center; }
+
+.main-window .rich-document > .tiptap-react-renderer,
+.main-window .rich-document > div:has(> .rich-document__content) { min-height: 0; flex: 1 1 auto; overflow: auto; }
+
+.main-window .rich-document__content {
+  box-sizing: border-box;
+  width: min(100%, var(--document-measure));
+  min-height: 100%;
+  margin: 0 auto;
+  padding: clamp(18px, 2.8vh, 26px) var(--document-inline-padding) 90px;
+  color: var(--color-text);
+  font-family: var(--body-font);
+  font-size: var(--body-font-size);
+  line-height: var(--body-line-height);
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.main-window .rich-document__content > :first-child { margin-top: 0; }
+.main-window .rich-document__content h1,
+.main-window .rich-document__content h2,
+.main-window .rich-document__content h3,
+.main-window .rich-document__content h4,
+.main-window .rich-document__content h5,
+.main-window .rich-document__content h6 { color: var(--color-heading); line-height: 1.28; }
+.main-window .rich-document__content blockquote { margin: 1em 0; padding: 10px 15px; background: color-mix(in srgb, var(--color-accent-soft) 52%, transparent); border-left: 3px solid var(--color-accent); border-radius: 0 8px 8px 0; }
+.main-window .rich-document__content pre { padding: 13px 15px; overflow: auto; font-family: var(--code-font); background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 9px; }
+.main-window .rich-document__content :not(pre) > code { padding: .12em .34em; font-family: var(--code-font); background: var(--color-panel-warm); border-radius: 5px; }
+.main-window .rich-document__content img { display: block; max-width: 100%; max-height: 70vh; height: auto; margin: 16px auto; object-fit: contain; }
+.main-window .rich-document__content a { color: var(--color-accent-strong); text-underline-offset: 2px; cursor: pointer; }
+.main-window .rich-document__content .tableWrapper { width: 100%; margin: 1.35em 0; overflow-x: auto; scrollbar-width: none; border: 1px solid var(--color-border); border-radius: 10px; box-shadow: 0 3px 12px color-mix(in srgb, var(--color-text) 6%, transparent); }
+.main-window .rich-document__content .tableWrapper::-webkit-scrollbar { width: 0; height: 0; }
+.main-window .rich-document__content .tableWrapper:hover { scrollbar-width: thin; }
+.main-window .rich-document__content .tableWrapper:hover::-webkit-scrollbar { width: 8px; height: 8px; }
+.main-window .rich-document__content .tableWrapper:hover::-webkit-scrollbar-thumb { background: var(--color-accent-border); border-radius: 999px; }
+.main-window .rich-document__content .tableWrapper:hover::-webkit-scrollbar-track { background: color-mix(in srgb, var(--color-panel-warm) 72%, transparent); border-radius: 999px; }
+.main-window .rich-document__content table { width: 100%; min-width: 560px; border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--color-surface); }
+.main-window .rich-document__content th,
+.main-window .rich-document__content td { position: relative; min-width: 110px; min-height: 38px; padding: 9px 11px; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; cursor: cell; user-select: text; border-right: 1px solid var(--color-border-soft); border-bottom: 1px solid var(--color-border-soft); transition: background .15s ease, box-shadow .15s ease; }
+.main-window .rich-document__content :is(th, td) > p { max-height: 7rem; margin: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+.main-window .rich-document__content :is(th, td) > p::-webkit-scrollbar { width: 0; height: 0; }
+.main-window .rich-document__content :is(th, td):hover > p,
+.main-window .rich-document__content :is(th, td):focus-within > p { scrollbar-width: thin; }
+.main-window .rich-document__content :is(th, td):hover > p::-webkit-scrollbar,
+.main-window .rich-document__content :is(th, td):focus-within > p::-webkit-scrollbar { width: 7px; height: 7px; }
+.main-window .rich-document__content :is(th, td):hover > p::-webkit-scrollbar-thumb,
+.main-window .rich-document__content :is(th, td):focus-within > p::-webkit-scrollbar-thumb { background: var(--color-accent-border); border-radius: 999px; }
+.main-window .rich-document__content :is(th, td):hover > p::-webkit-scrollbar-track,
+.main-window .rich-document__content :is(th, td):focus-within > p::-webkit-scrollbar-track { background: color-mix(in srgb, var(--color-panel-warm) 72%, transparent); border-radius: 999px; }
+.main-window .rich-document__content tr:last-child td,
+.main-window .rich-document__content tr:last-child th { border-bottom: 0; }
+.main-window .rich-document__content th:last-child,
+.main-window .rich-document__content td:last-child { border-right: 0; }
+.main-window .rich-document__content th { color: var(--color-heading); font-weight: 700; background: var(--color-panel-warm); }
+.main-window .rich-document__content td:hover,
+.main-window .rich-document__content th:hover { background: color-mix(in srgb, var(--color-accent-soft) 38%, var(--color-surface)); }
+.main-window .rich-document__content :is(th, td):focus-within { box-shadow: inset 0 0 0 2px var(--color-accent-border); }
+.main-window .rich-document__content :is(th, td)[data-text-align="center"] { text-align: center; }
+.main-window .rich-document__content :is(th, td)[data-text-align="right"] { text-align: right; }
+.main-window .rich-document__content :is(th, td)[data-background-color="green"] { background: #e1f1e9; }
+.main-window .rich-document__content :is(th, td)[data-background-color="yellow"] { background: #fff4c2; }
+.main-window .rich-document__content :is(th, td)[data-background-color="blue"] { background: #e2f0f8; }
+.main-window .rich-document__content :is(th, td)[data-background-color="pink"] { background: #f7e3e7; }
+.main-window .rich-document__content :is(th, td)[data-background-color="purple"] { background: #eee7f6; }
+.main-window .rich-document__content :is(th, td)[data-background-color="gray"] { background: #eef0ef; }
+.main-window .rich-document__content .selectedCell { background-color: var(--color-accent-haze); }
+.main-window .rich-document__content .selectedCell::after { background: var(--color-accent-haze); }
+.main-window .rich-document__content .column-resize-handle { position: absolute; top: 0; right: -3px; bottom: 0; width: 5px; cursor: col-resize; }
+.main-window .rich-document__content.resize-cursor,
+.main-window .rich-document__content .resize-cursor { cursor: col-resize; }
+
+.main-window .rich-document__internal-link { padding: 1px 3px; color: var(--color-accent-strong); text-decoration: underline; text-underline-offset: 2px; background: var(--color-accent-soft); border-radius: 5px; cursor: pointer; }
+.main-window .rich-document__attachment { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 10px 12px; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: var(--radius-control); }
+.main-window .rich-document__attachment-kind { color: var(--color-accent-strong); font-size: .68rem; font-weight: 700; }
+.main-window .rich-document__raw-markdown { white-space: pre-wrap; }
+
+.main-window .rich-document__picker {
+  position: absolute;
+  z-index: 20;
+  top: 46px;
+  left: 12px;
+  display: grid;
+  width: min(340px, calc(100% - 24px));
+  max-height: 280px;
+  gap: 2px;
+  padding: 6px;
+  overflow: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-overlay);
+}
+.main-window .rich-document__picker p { margin: 0; padding: 8px; color: var(--color-muted); font-size: .76rem; }
+.main-window .rich-document__picker button { padding: 7px 9px; color: var(--color-text); text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+.main-window .rich-document__picker button:hover { background: var(--color-accent-soft); }
+.main-window .rich-document__surface { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.main-window .rich-document__table-select-all { position: absolute; z-index: 12; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; color: var(--color-accent-strong); font: inherit; font-size: .82rem; line-height: 1; background: var(--color-accent-soft); border: 1px solid var(--color-accent-border); border-radius: 6px; box-shadow: 0 2px 6px color-mix(in srgb, var(--color-text) 10%, transparent); cursor: pointer; transform: translate(-2px, -2px); }
+.main-window .rich-document__table-select-all svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.45; }
+.main-window .rich-document__table-select-all:hover,
+.main-window .rich-document__table-select-all:focus-visible { color: var(--color-heading); background: var(--color-accent-border); outline: 2px solid var(--color-accent-border); outline-offset: 1px; }
+.main-window .rich-document__context-menu { position: fixed; z-index: 40; display: grid; min-width: 150px; gap: 2px; padding: 6px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-overlay); box-shadow: var(--shadow-overlay); }
+.main-window .rich-document__context-menu button { padding: 8px 12px; color: var(--color-text); text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+.main-window .rich-document__context-menu button:hover,
+.main-window .rich-document__context-menu button:focus-visible { background: var(--color-accent-soft); outline: none; }
+
+@media (max-width: 720px) {
+  .main-window .rich-document__content { padding-right: 32px; padding-left: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-window .rich-document * { scroll-behavior: auto !important; transition: none !important; }
+}

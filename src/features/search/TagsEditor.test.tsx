@@ -11,6 +11,7 @@ describe('TagsEditor', () => {
     const onChange = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()
     const { rerender } = render(<TagsEditor tags={['TypeScript']} onChange={onChange} />)
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     const input = screen.getByRole('textbox', { name: '添加标签' })
 
     await user.type(input, ' typescript {Enter}')
@@ -22,7 +23,7 @@ describe('TagsEditor', () => {
     expect(onChange).toHaveBeenCalledWith(['TypeScript', '后端'])
 
     rerender(<TagsEditor tags={['TypeScript', '后端']} onChange={onChange} />)
-    const remove = within(screen.getByText('TypeScript').closest('span')!).getByRole('button')
+    const remove = within(screen.getByText('#TypeScript').closest('span')!).getByRole('button')
     expect(within(remove).getByTestId('icon-close')).toBeVisible()
     expect(within(screen.getByRole('button', { name: '添加标签' })).getByTestId('icon-plus')).toBeVisible()
     await user.click(remove)
@@ -33,12 +34,12 @@ describe('TagsEditor', () => {
     const onChange = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()
     render(<TagsEditor tags={[]} onChange={onChange} />)
-    const input = screen.getByRole('textbox', { name: '添加标签' })
-
     await user.click(screen.getByRole('button', { name: '添加标签' }))
+    const input = screen.getByRole('textbox', { name: '添加标签' })
+    await user.click(screen.getByRole('button', { name: '确认添加标签' }))
     expect(screen.getByRole('alert')).toHaveTextContent('请输入标签')
     await user.type(input, 'a'.repeat(81))
-    await user.click(screen.getByRole('button', { name: '添加标签' }))
+    await user.click(screen.getByRole('button', { name: '确认添加标签' }))
     expect(screen.getByRole('alert')).toHaveTextContent('标签过长')
     expect(onChange).not.toHaveBeenCalled()
   })
@@ -51,8 +52,8 @@ describe('TagsEditor', () => {
     const onChange = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(undefined)
     const user = userEvent.setup()
     render(<TagsEditor tags={[]} onChange={onChange} />)
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     const input = screen.getByRole('textbox', { name: '添加标签' })
-
     await user.type(input, 'backend{Enter}')
     expect(input).toBeDisabled()
     expect(screen.getByRole('button', { name: '添加标签' })).toBeDisabled()

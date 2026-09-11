@@ -19,6 +19,13 @@ export type IconName =
   | 'restore'
   | 'close'
   | 'star'
+  | 'file'
+  | 'file-pdf'
+  | 'file-word'
+  | 'file-excel'
+  | 'file-powerpoint'
+  | 'file-image'
+  | 'file-text'
 
 interface IconProps {
   name: IconName
@@ -45,6 +52,13 @@ const ICON_LABELS: Record<IconName, string> = {
   restore: '还原',
   close: '关闭',
   star: '星标',
+  file: '附件',
+  'file-pdf': 'PDF 文件',
+  'file-word': 'Word 文档',
+  'file-excel': 'Excel 工作簿',
+  'file-powerpoint': 'PowerPoint 演示文稿',
+  'file-image': '图片',
+  'file-text': '文本文件',
 }
 
 function glyphFor(name: IconName): ReactNode {
@@ -85,6 +99,20 @@ function glyphFor(name: IconName): ReactNode {
       return <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" />
     case 'star':
       return <path d="m12 3.75 2.55 5.16 5.7.83-4.13 4.03.98 5.69L12 16.77l-5.1 2.69.98-5.69-4.13-4.03 5.7-.83Z" />
+    case 'file':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M9 11.5h6M9 15h4" /></>
+    case 'file-pdf':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18" /><text x="7.1" y="15.5" fill="currentColor" stroke="none" fontSize="5.2" fontWeight="700">PDF</text></>
+    case 'file-word':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M8.5 12l1 4 1.5-3 1.5 3 1-4" /></>
+    case 'file-excel':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M8.5 11h7M8.5 14h7M8.5 17h7M11 11v6M14 11v6" /></>
+    case 'file-powerpoint':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M9 16v-5h3a2 2 0 1 1 0 4H9" /></>
+    case 'file-image':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M8.5 16l2.25-2.5 1.75 1.5 1.5-1.75 1.5 2.75M9.5 10.5h.01" /></>
+    case 'file-text':
+      return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M9 11.5h6M9 14.5h6M9 17.5h4" /></>
   }
 }
 

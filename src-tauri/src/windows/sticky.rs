@@ -271,6 +271,7 @@ impl TemporaryRepository {
                 title: "Temporary capture".to_owned(),
                 folder_id: None,
                 tags: Vec::new(),
+                content: None,
                 markdown: String::new(),
                 revision: 0,
                 created_at: now.clone(),

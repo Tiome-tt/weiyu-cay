@@ -71,6 +71,24 @@ describe('useLibrary createNote', () => {
   })
 })
 
+describe('useLibrary reorderNotes', () => {
+  it('refreshes the folder that was reordered even when it is not active', async () => {
+    const reorderedId = note('').id
+    const listNotes = vi.fn(async (folderId: FolderId | null) => folderId === folderB ? [{ ...note(''), id: reorderedId, folderId: folderB, excerpt: '' }] : [])
+    const reorderNotes = vi.fn().mockResolvedValue(undefined)
+    const notes = fakeNotePort({ listNotes, reorderNotes })
+    const folders = fakeFolderPort()
+    const hook = renderHook(() => useLibrary(notes, folders))
+    await waitFor(() => expect(hook.result.current.notesByFolder['__unfiled__']).toEqual([]))
+
+    await act(async () => hook.result.current.reorderNotes(folderB, [reorderedId]))
+
+    expect(reorderNotes).toHaveBeenCalledWith(folderB, [reorderedId])
+    expect(listNotes).toHaveBeenLastCalledWith(folderB)
+    expect(hook.result.current.notesByFolder[folderB]).toHaveLength(1)
+  })
+})
+
 describe('useLibrary moveNote', () => {
   it('exposes a failed uncached destination read without inventing an incomplete list', async () => {
     const notes = fakeNotePort({
@@ -114,7 +132,21 @@ describe('useLibrary moveNote', () => {
   })
 
   it('keeps a durable move visible in cached folders even if the follow-up read fails', async () => {
-    const original = { ...note('body'), folderId: folderA, excerpt: 'body' }
+    const original = {
+      ...note('body'),
+      folderId: folderA,
+      excerpt: 'body',
+      content: {
+        type: 'file' as const,
+        file: {
+          storageName: '019c0000.pdf',
+          originalName: '资料.pdf',
+          mediaType: 'application/pdf',
+          size: 128,
+          sha256: 'abc',
+        },
+      },
+    }
     let moved = false
     const notes = fakeNotePort({
       listNotes: vi.fn(async (id) => {
@@ -132,7 +164,7 @@ describe('useLibrary moveNote', () => {
     await act(async () => hook.result.current.moveNote(original.id, folderB))
     expect(hook.result.current.notesByFolder[folderA]).toEqual([])
     expect(hook.result.current.notesByFolder[folderB]).toEqual([expect.objectContaining({
-      id: original.id, title: original.title, folderId: folderB,
+      id: original.id, title: original.title, folderId: folderB, content: original.content,
     })])
   })
 

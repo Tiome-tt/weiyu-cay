@@ -19,7 +19,7 @@ export function UpdateSettings({ controller }: { controller: UpdateController })
 
   return (
     <div className="update-settings">
-      {state.status === 'idle' && <p>更新只会在你检查时下载信息，不会在后台自动安装。</p>}
+      {state.status === 'idle' && <p>更新只会在你检查时下载信息，不会在后台自动安装。<br />开发版（pnpm tauri dev）未配置更新源，请使用正式签名安装版。</p>}
       {state.status === 'checking' && <p role="status">正在检查更新…</p>}
       {state.status === 'none' && <p role="status">{APP_NAME} 已是最新版本。</p>}
       {state.status === 'check-error' && <p role="alert">无法检查更新。你的笔记不会受到影响，请稍后重试。</p>}

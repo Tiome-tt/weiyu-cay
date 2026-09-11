@@ -57,6 +57,10 @@ export function parseMarkdownTable(source: string): MarkdownTable | null {
   if (alignments.some((alignment) => alignment === undefined)) return null
   const cells = [header]
   for (const line of lines.slice(2)) {
+    // A GFM table row must contain a pipe. Lezer can keep a plain paragraph
+    // immediately after a table in the same Table node, but that paragraph
+    // must remain editable text outside the rendered table.
+    if (!line.includes('|')) break
     const row = parseTableRow(line)
     cells.push(Array.from({ length: header.length }, (_, column) => row[column] ?? ''))
   }

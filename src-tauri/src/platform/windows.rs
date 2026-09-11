@@ -1314,6 +1314,28 @@ impl SafeDirectory {
         Ok(())
     }
 
+    pub fn open_regular(&self, name: &str, max_bytes: u64) -> Result<fs::File, CommandError> {
+        let path = self.child_path(name)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|source| {
+                CommandError::io(format!("could not open contained file: {source}"))
+            })?;
+        let metadata = file.metadata().map_err(|source| {
+            CommandError::io(format!("could not inspect contained file: {source}"))
+        })?;
+        validate_regular_file_metadata(metadata.file_attributes(), metadata.is_file())?;
+        if metadata.len() > max_bytes {
+            return Err(CommandError::validation(
+                "contained file exceeds the supported size",
+            ));
+        }
+        Ok(file)
+    }
+
     pub fn read(&self, name: &str, max_bytes: u64) -> Result<Vec<u8>, CommandError> {
         let path = self.child_path(name)?;
         recover_file(&path)?;
@@ -1882,6 +1904,7 @@ mod tests {
                 title: "Recovery".to_owned(),
                 folder_id: None,
                 tags: Vec::new(),
+                content: None,
                 markdown: "# Recovery".to_owned(),
                 revision: 0,
                 created_at: "2026-07-31T00:00:00Z".to_owned(),
@@ -2046,6 +2069,7 @@ mod tests {
             title: "Recovery load".to_owned(),
             folder_id: None,
             tags: Vec::new(),
+            content: None,
             markdown: "old canonical body".to_owned(),
             revision: 0,
             created_at: "2026-07-31T00:00:00Z".to_owned(),

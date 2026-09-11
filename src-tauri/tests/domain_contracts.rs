@@ -28,6 +28,7 @@ fn domain_note_document_round_trips_with_camel_case_fields() {
         title: "登录流程".to_owned(),
         folder_id: Some(FolderId::parse_str("019c0000-0000-7000-8000-000000000001").unwrap()),
         tags: vec!["项目 B".to_owned()],
+        content: None,
         markdown: "# 登录流程".to_owned(),
         revision: 1,
         created_at: "2026-07-30T15:30:00+08:00".to_owned(),

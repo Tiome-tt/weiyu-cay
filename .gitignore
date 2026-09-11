@@ -24,3 +24,6 @@ Thumbs.db
 
 # Isolated implementation worktrees
 .worktrees/
+
+# Offline PDF.js resources copied from the pinned dependency
+public/pdfjs/

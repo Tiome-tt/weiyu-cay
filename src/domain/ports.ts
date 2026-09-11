@@ -1,3 +1,4 @@
+import type { NewNoteFormat } from './content'
 import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } from './model'
 import type { CommandErrorCode } from './errors'
 
@@ -7,7 +8,7 @@ export type SearchQuery =
   | { kind: 'invalid'; reason: 'empty-tag' | 'control-character' | 'too-long' }
 
 export interface NotePort {
-  createNote(input: { folderId: FolderId | null; title: string }): Promise<NoteDocument>
+  createNote(input: { folderId: FolderId | null; title: string; format?: NewNoteFormat }): Promise<NoteDocument>
   loadNote(id: NoteId): Promise<NoteDocument>
   saveNote(document: NoteDocument): Promise<NoteDocument>
   listNotes(folderId: FolderId | null): Promise<NoteSummary[]>
@@ -342,4 +343,20 @@ export interface SettingsPort {
     acceptingTriggers: boolean
     startupError: { kind: string; reason: string; accelerator?: string } | null
   }>
+}
+
+export interface FileImportResult {
+  imported: NoteDocument[]
+  failed: Array<{ name: string; message: string }>
+}
+export interface FilePort {
+  saveDocumentExport?(noteId: NoteId, bytes: Uint8Array, title: string): Promise<boolean>
+  onDroppedFiles?(handler: (paths: string[], position?: { x: number; y: number }) => void): Promise<() => void>
+  chooseFiles(): Promise<string[]>
+  importFiles(input: { paths: string[]; folderId: FolderId | null }): Promise<FileImportResult>
+  readFile(noteId: NoteId): Promise<{ mediaType: string; bytes: Uint8Array }>
+  /** Reads only the payload through Tauri's binary IPC response. */
+  readFileBytes?(noteId: NoteId): Promise<Uint8Array>
+  saveFileAs(noteId: NoteId): Promise<boolean>
+  openFile(noteId: NoteId): Promise<void>
 }

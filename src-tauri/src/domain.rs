@@ -89,6 +89,8 @@ pub struct NoteDocument {
     pub folder_id: Option<FolderId>,
     pub tags: Vec<String>,
     pub markdown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<NoteContent>,
     pub revision: u64,
     pub created_at: String,
     pub updated_at: String,
@@ -106,6 +108,8 @@ pub struct NoteSummary {
     pub created_at: String,
     pub updated_at: String,
     pub excerpt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<NoteContent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,4 +335,56 @@ pub struct TemporaryWindowState {
     pub width: f64,
     pub height: f64,
     pub always_on_top: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum NoteContent {
+    Document { document: RichDocument },
+    Text { text: String },
+    File { file: ManagedFile },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RichDocument {
+    pub schema_version: u32,
+    pub root: RichNode,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RichNode {
+    #[serde(rename = "type")]
+    pub node_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<RichNode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<Vec<RichMark>>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RichMark {
+    #[serde(rename = "type")]
+    pub mark_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs: Option<serde_json::Map<String, serde_json::Value>>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManagedFile {
+    pub storage_name: String,
+    pub original_name: String,
+    pub media_type: String,
+    pub size: u64,
+    pub sha256: String,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NewNoteFormat {
+    Markdown,
+    Document,
+    Text,
 }

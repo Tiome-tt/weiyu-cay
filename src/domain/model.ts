@@ -1,3 +1,5 @@
+import type { NoteContent } from './content'
+
 export type Brand<T, Name extends string> = T & { readonly __brand: Name }
 
 export type NoteId = Brand<string, 'NoteId'>
@@ -12,6 +14,8 @@ export interface NoteDocument {
   folderId: FolderId | null
   tags: string[]
   markdown: string
+  /** Omitted for legacy Markdown; otherwise the sole body authority. */
+  content?: NoteContent
   revision: number
   createdAt: string
   updatedAt: string

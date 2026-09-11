@@ -9,3 +9,5 @@ pub mod shortcuts;
 pub mod storage;
 pub mod temporary;
 pub mod updates;
+
+pub mod files;

@@ -1,3 +1,4 @@
+import type { NewNoteFormat } from '../../domain/content'
 import '@testing-library/jest-dom/vitest'
 import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -12,14 +13,14 @@ const folders: Folder[] = [{ id: folderId, parentId: null, name: '设计', sortO
 afterEach(cleanup)
 
 function ControlledPopover({
-  initialDraft = { title: '', folderId: null, tags: '' },
+  initialDraft = { title: '', folderId: null, tags: '', format: 'document' },
   status = 'idle',
   onCreate = vi.fn(),
   onClose = vi.fn(),
 }: {
   initialDraft?: CreateNoteDraft
   status?: CreateNoteStatus
-  onCreate?: (title: string, folderId: FolderId | null, tags: string[]) => void
+  onCreate?: (title: string, folderId: FolderId | null, tags: string[], format: NewNoteFormat) => void
   onClose?: () => void
 }) {
   const [draft, setDraft] = useState(initialDraft)
@@ -41,7 +42,7 @@ function ControlledPopover({
 describe('CreateNotePopover', () => {
   it('requires a real folder instead of offering an unfiled destination', async () => {
     const onCreate = vi.fn()
-    render(<ControlledPopover initialDraft={{ title: '新笔记', folderId: null, tags: '' }} onCreate={onCreate} />)
+    render(<ControlledPopover initialDraft={{ title: '新笔记', folderId: null, tags: '', format: 'document' }} onCreate={onCreate} />)
     const select = screen.getByRole('combobox', { name: '保存到目录' })
     expect(screen.queryByRole('option', { name: '未归档笔记' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '创建笔记' })).toBeDisabled()
@@ -49,14 +50,14 @@ describe('CreateNotePopover', () => {
     expect(onCreate).not.toHaveBeenCalled()
     await userEvent.setup().selectOptions(select, folderId)
     fireEvent.submit(screen.getByRole('form', { name: '新建笔记' }))
-    expect(onCreate).toHaveBeenCalledWith('新笔记', folderId, [])
+    expect(onCreate).toHaveBeenCalledWith('新笔记', folderId, [], 'document')
   })
 
   it('retains the owner draft after failure and restores trigger focus on Escape', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     render(<ControlledPopover
-      initialDraft={{ title: '潮汐设计', folderId, tags: '' }}
+      initialDraft={{ title: '潮汐设计', folderId, tags: '', format: 'document' }}
       status="error"
       onClose={onClose}
     />)
@@ -71,7 +72,7 @@ describe('CreateNotePopover', () => {
 
   it('moves focus into the title and keeps Tab focus inside the popover', async () => {
     const user = userEvent.setup()
-    render(<ControlledPopover initialDraft={{ title: '', folderId, tags: '' }} />)
+    render(<ControlledPopover initialDraft={{ title: '', folderId, tags: '', format: 'document' }} />)
 
     const title = screen.getByRole('textbox', { name: '笔记标题' })
     expect(title).toHaveFocus()
@@ -96,7 +97,7 @@ describe('CreateNotePopover', () => {
     const onCreate = vi.fn()
     const onClose = vi.fn()
     render(<ControlledPopover
-      initialDraft={{ title: '  潮汐设计  ', folderId, tags: '' }}
+      initialDraft={{ title: '  潮汐设计  ', folderId, tags: '', format: 'document' }}
       status="pending"
       onCreate={onCreate}
       onClose={onClose}
@@ -116,4 +117,14 @@ describe('CreateNotePopover', () => {
     expect(onClose).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: '新建笔记' })).toHaveFocus()
   })
+})
+
+it('creates a document by default and preserves an explicit Markdown selection', async () => {
+ const user=userEvent.setup(); const onCreate=vi.fn()
+ render(<ControlledPopover initialDraft={{ title:'潮汐设计', folderId, tags:'', format:'document' }} onCreate={onCreate}/>)
+ const format=screen.getByRole('combobox',{name:'内容类型'})
+ expect(format).toHaveValue('document')
+ await user.selectOptions(format,'markdown')
+ await user.click(screen.getByRole('button',{name:'创建笔记'}))
+ expect(onCreate).toHaveBeenCalledWith('潮汐设计',folderId,[],'markdown')
 })

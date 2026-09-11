@@ -11,8 +11,7 @@ use crate::{
         database::Database,
         paths::StoragePaths,
         repository::{
-            folder_id_blob, note_id_blob, parse_document, persist_document, serialize_document,
-            NoteRepository,
+            folder_id_blob, note_id_blob, persist_document, serialize_document, NoteRepository,
         },
     },
 };
@@ -1303,11 +1302,7 @@ fn read_trashed_document(
     operation.validate_directory_tree(&id)?;
     let directory =
         SafeDirectory::open(paths.root(), &["trash", &manifest.operation_id, &id], false)?;
-    let bytes = directory.read("note.md", 64 * 1024 * 1024)?;
-    let text = String::from_utf8(bytes).map_err(|source| {
-        CommandError::validation(format!("trashed note is not UTF-8: {source}"))
-    })?;
-    let document = parse_document(&text)?;
+    let document = super::entry::read(&directory)?;
     if document.id != manifest.note_id
         || document.kind != manifest.kind
         || document.revision != manifest.original.revision
@@ -1550,7 +1545,7 @@ fn publish_document(
     match atomic_replace_contained(
         paths.root(),
         &[collection(document.kind), &document.id.to_string()],
-        "note.md",
+        super::entry::filename(document),
         bytes,
     ) {
         Ok(PublishState::Published) => Ok(()),

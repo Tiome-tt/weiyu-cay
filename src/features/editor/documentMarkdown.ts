@@ -403,6 +403,10 @@ function buildDocumentDecorations(
       addReplacement(ranges, node.from, node.contentFrom)
       addReplacement(ranges, node.contentTo, node.to)
     } else if (node.kind === 'list-marker') {
+      // Keep marker-only items as source text. Replacing their entire content with
+      // a widget leaves CodeMirror's editable DOM empty and Enter can reconcile it
+      // as a deletion. Once an item has content, the compact marker widget is safe.
+      if (view.state.doc.sliceString(node.to, node.blockTo).trim().length === 0) continue
       const taskLine = liveNodes.some((candidate) =>
         candidate.kind === 'task-marker' && candidate.blockFrom === node.blockFrom && candidate.blockTo === node.blockTo)
       if (!taskLine) {
@@ -441,11 +445,26 @@ function buildDocumentDecorations(
 
 function documentTableSourceRange(state: EditorState, from: number, to: number): { from: number; to: number } {
   let end = to
-  const tableLine = state.doc.lineAt(Math.max(from, to - 1))
-  const nextLineNumber = tableLine.number + 1
-  if (nextLineNumber <= state.doc.lines) {
-    const nextLine = state.doc.line(nextLineNumber)
-    if (isTableMetadataLine(nextLine.text)) end = nextLine.to
+  const firstLine = state.doc.lineAt(from)
+  const lastLine = state.doc.lineAt(Math.max(from, to - 1))
+  let contentLine = 0
+  for (let lineNumber = firstLine.number; lineNumber <= lastLine.number; lineNumber += 1) {
+    const line = state.doc.line(lineNumber)
+    if (isTableMetadataLine(line.text)) {
+      end = line.to
+      continue
+    }
+    if (contentLine >= 2 && !line.text.includes('|')) {
+      end = state.doc.line(lineNumber - 1).to
+      break
+    }
+    contentLine += 1
+  }
+  const lineAtEnd = state.doc.lineAt(Math.min(state.doc.length, Math.max(from, end)))
+  const metadataLineNumber = lineAtEnd.number + 1
+  if (metadataLineNumber <= state.doc.lines) {
+    const metadataLine = state.doc.line(metadataLineNumber)
+    if (isTableMetadataLine(metadataLine.text)) end = metadataLine.to
   }
   return { from, to: end }
 }
@@ -455,7 +474,21 @@ function documentTableRangeAtPosition(state: EditorState, position: number): { f
   for (const bias of [-1, 1] as const) {
     let node: SyntaxNode | null = syntaxTree(state).resolveInner(bounded, bias)
     while (node !== null && node.name !== 'Table') node = node.parent
-    if (node !== null) return documentTableSourceRange(state, node.from, node.to)
+    // The position immediately after a table belongs to the following block.
+    // Treating the right boundary as part of the table makes a click in the
+    // next paragraph look like a table edit and can turn normal typing into a
+    // newly parsed table row.
+    if (node !== null) {
+      const tableRange = documentTableSourceRange(state, node.from, node.to)
+      if (bounded < tableRange.to) return tableRange
+      if (bounded === tableRange.to && tableRange.to < state.doc.length) {
+        const tableLine = state.doc.lineAt(tableRange.to)
+        const nextLineNumber = tableLine.number + 1
+        if (nextLineNumber <= state.doc.lines && isTableMetadataLine(state.doc.line(nextLineNumber).text)) {
+          return tableRange
+        }
+      }
+    }
   }
   const line = state.doc.lineAt(bounded)
   if (!isTableMetadataLine(line.text) || line.number === 1) return null

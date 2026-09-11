@@ -27,6 +27,7 @@ pub struct SaveNoteInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateNoteInput {
+    pub format: Option<crate::domain::NewNoteFormat>,
     pub folder_id: Option<FolderId>,
     pub title: String,
 }
@@ -247,6 +248,7 @@ fn create_getting_started_guide(
             title: "欢迎来到微屿".to_owned(),
             folder_id: Some(folder.id),
             tags: Vec::new(),
+            content: None,
             markdown: GETTING_STARTED_MARKDOWN.to_owned(),
             revision: 0,
             created_at: now.clone(),
@@ -300,6 +302,11 @@ pub fn create_note(
             title: normalized_note_title(&input.title)?,
             folder_id: input.folder_id,
             tags: Vec::new(),
+            content: match input.format {
+                Some(crate::domain::NewNoteFormat::Document) => Some(crate::domain::NoteContent::Document { document: serde_json::from_value(serde_json::json!({"schemaVersion":1,"root":{"type":"doc","content":[{"type":"paragraph"}]}})).expect("constant document schema") }),
+                Some(crate::domain::NewNoteFormat::Text) => Some(crate::domain::NoteContent::Text { text: String::new() }),
+                _ => None,
+            },
             markdown: String::new(),
             revision: 0,
             created_at: now.clone(),

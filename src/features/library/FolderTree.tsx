@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Folder, FolderId, NoteId } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
-import { FolderActionMenu } from './FolderActionMenu'
 
 interface FolderTreeProps {
   folders: Folder[]
@@ -20,6 +19,7 @@ interface FolderTreeProps {
   onReorder?: (parentId: FolderId | null, orderedIds: FolderId[]) => Promise<void>
   onDelete: (id: FolderId) => Promise<void>
   onCreateNote?: (folderId: FolderId | null) => void
+  onImportFiles?: (folderId: FolderId) => void
   onToggleStar?: (id: FolderId, starred: boolean) => Promise<void>
   folderContents?: ReactNode | ((folderId: FolderId | null) => ReactNode | undefined)
   onMoveNote?: (id: NoteId, folderId: FolderId) => Promise<void>
@@ -331,7 +331,6 @@ export function FolderTree(props: FolderTreeProps) {
     window.addEventListener('pointerup', onUp, { once: true })
   }
 
-  const selected = props.folders.find((folder) => folder.id === props.activeId)
   const visibleKeys = useMemo<TreeItemKey[]>(
     () => [
       ...(props.showUnfiled !== false ? ['root' as const] : []),
@@ -515,31 +514,12 @@ export function FolderTree(props: FolderTreeProps) {
           <span className="library-pane__eyebrow">本地笔记</span>
           <h1>资料库</h1>
         </div>
-        <div className="library-pane__header-actions">
+          <div className="library-pane__header-actions">
           {props.onCollapse && (
             <button className="icon-button" type="button" aria-label="折叠资料库" onClick={props.onCollapse}>
               <Icon name="collapse" size={18} />
             </button>
           )}
-          <button className="icon-button" type="button" aria-label="新建文件夹" onClick={() => { setCreateParent(props.activeId); setCreating(true) }}>
-            <Icon name="plus" size={18} />
-          </button>
-          <FolderActionMenu
-            enabled={selected !== undefined}
-            starred={selected?.starred === true}
-            onRename={() => {
-              if (!selected) return
-              setRenaming(selected.id)
-              setName(selected.name)
-            }}
-            onMove={() => {
-              if (!selected) return
-              setMoving(selected.id)
-              setMoveTarget(selected.parentId)
-            }}
-            onDelete={() => props.activeId !== null && setDeleteTarget(props.activeId)}
-            onToggleStar={() => { if (selected) void runToggleStar(selected.id) }}
-          />
         </div>
       </header>
       {creating && (
@@ -551,7 +531,9 @@ export function FolderTree(props: FolderTreeProps) {
         <div ref={contextMenuRef} className="folder-context-menu" role="menu" aria-label="文件夹快捷操作" style={{ left: contextPosition?.x ?? 8, top: contextPosition?.y ?? 8 }} onContextMenu={(event) => event.preventDefault()}>
           <button type="button" role="menuitem" onClick={() => { setCreateParent(contextTarget); setCreating(true); setName(''); setContextTarget(null); setContextPosition(null) }}>新建文件夹</button>
           {props.onCreateNote && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>新建笔记</button>}
+          {props.onImportFiles && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onImportFiles?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>导入文件</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>}
+          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setMoving(folder.id); setMoveTarget(folder.parentId) }; setContextTarget(null); setContextPosition(null) }}>移动文件夹</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => void runToggleStar(contextTarget)}>{props.folders.find((folder) => folder.id === contextTarget)?.starred === true ? '取消星标' : '添加星标'}</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>删除文件夹</button>}
         </div>

@@ -44,6 +44,13 @@ describe('markdown insertion actions', () => {
     })
   })
 
+  it('leaves a plain line after a table outside the parsed rows', () => {
+    expect(parseMarkdownTable('| Name | Note |\n| --- | --- |\n| A | B |\n123')).toEqual({
+      cells: [['Name', 'Note'], ['A', 'B']],
+      alignments: [null, null],
+    })
+  })
+
   it('serializes edited cells while preserving alignment and escaping', () => {
     expect(tableMarkdownFromCells(
       [['Name', 'Note'], ['A|B', 'C\\D']],

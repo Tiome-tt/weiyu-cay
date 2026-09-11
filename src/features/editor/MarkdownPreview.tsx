@@ -130,13 +130,15 @@ export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps
 
     const activate = (event: MouseEvent<HTMLElement>) => {
       const element = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a') : null
-      const href = element?.getAttribute('href')
-      if (element !== null) event.preventDefault()
-      const externalUrl = element?.dataset.simpleNotesExternalLink
+      const href = element?.getAttribute('href') ?? undefined
+      const externalUrl = element?.dataset.simpleNotesExternalLink ?? (href !== undefined && /^(?:https?:|mailto:)/iu.test(href) ? href : undefined)
       if (externalUrl !== undefined) {
+        event.preventDefault()
+        if (!event.ctrlKey && !event.metaKey) return
         void external?.openExternal(externalUrl)
         return
       }
+      if (element !== null) event.preventDefault()
       const match = href?.match(new RegExp(`^#simple-notes-internal-${prepared.identity}-(\\d+)$`))
       if (match === undefined || match === null) return
       const link = prepared.links[Number(match[1])]

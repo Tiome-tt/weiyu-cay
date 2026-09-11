@@ -1,3 +1,4 @@
+import { TypedEditorPane } from '../content/TypedEditorPane'
 import {
   forwardRef,
   useCallback,
@@ -21,7 +22,9 @@ import { useAutosave, type SaveState } from './useAutosave'
 import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
 import { Icon, type IconName } from '../../shared/Icon'
 
-interface EditorPaneProps {
+export interface EditorPaneProps {
+  onConvertFileToDocument?(source: NoteDocument, bytes: Uint8Array): Promise<void>
+  files?: import('../../domain/ports').FilePort
   document: NoteDocument
   notes: Pick<NotePort, 'saveNote' | 'loadNote'>
   assets?: AssetPort
@@ -46,6 +49,7 @@ export interface EditorPaneHandle {
   beginEditBarrier: () => Promise<void>
   endEditBarrier: () => void
   navigateToHeading: (line: number, headingIndex: number) => void
+  exportDocument: (kind: 'word' | 'pdf') => Promise<boolean>
 }
 
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
@@ -59,7 +63,7 @@ const maximumSplitPercent = 75
 const defaultSplitPercent = 50
 const previewRefreshDelayMs = 240
 
-export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
+const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function MarkdownEditorPane(
   {
     document,
     notes,
@@ -108,7 +112,10 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const previousModeRef = useRef(mode)
   const modeRef = useRef(mode)
   const tagRequestRef = useRef(0)
-  const hasSecondaryActions = links !== undefined || (folders !== undefined && onMoveNote !== undefined) || search !== undefined
+  const exportRef = useRef<(kind: 'word' | 'pdf') => Promise<boolean>>(() => Promise.resolve(false))
+  const hasSecondaryActions = links !== undefined
+    || (folders !== undefined && onMoveNote !== undefined)
+    || search !== undefined
   const breadcrumbs = documentBreadcrumb(document, folders)
   const displayTitle = localizedDocumentTitle(document)
   modeRef.current = mode
@@ -188,7 +195,30 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       const heading = previewRef.current?.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6').item(headingIndex)
       heading?.scrollIntoView({ block: 'center' })
     },
+    exportDocument: (kind) => exportRef.current(kind),
   }), [autosave.flush])
+
+  const exportMarkdownPdf = async (): Promise<boolean> => {
+    if (metadataBusy) return false
+    setMetadataBusy(true)
+    setMetadataError(null)
+    const source = sourceRef.current
+    try {
+      await source?.beginEditBarrier()
+      if (!await autosave.flush()) throw new Error('Save failed')
+      const current = await notes.loadNote(document.id)
+      const {printMarkdown} = await import('../content/markdownPrint')
+      await printMarkdown(current, assetReader)
+      return true
+    } catch {
+      setMetadataError('操作未完成，原笔记已保留。请检查保存状态后重试。')
+      return false
+    } finally {
+      source?.endEditBarrier()
+      setMetadataBusy(false)
+    }
+  }
+  exportRef.current = (kind) => kind === 'pdf' ? exportMarkdownPdf() : Promise.resolve(false)
 
   const updateTags = async (tags: string[]) => {
     if (search === undefined) return
@@ -240,7 +270,6 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     setMetadataNotice(null)
     try {
       await onMoveNote(folderId)
-      setMetadataNotice('笔记已移动。')
     } catch {
       setMetadataError('无法移动笔记，请解决保存错误后重试。')
     } finally {
@@ -595,3 +624,9 @@ function localizedDocumentTitle(document: NoteDocument) {
     ? '临时便笺'
     : document.title
 }
+
+export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(props, ref) {
+  return props.document.content
+    ? <TypedEditorPane key={props.document.id} {...props} ref={ref} />
+    : <MarkdownEditorPane key={props.document.id} {...props} ref={ref} />
+})

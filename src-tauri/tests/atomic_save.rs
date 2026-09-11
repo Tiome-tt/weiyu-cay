@@ -25,6 +25,7 @@ fn note(markdown: &str, revision: u64) -> NoteDocument {
         title: "Atomic save".to_owned(),
         folder_id: None,
         tags: vec!["rust".to_owned(), "storage".to_owned()],
+        content: None,
         markdown: markdown.to_owned(),
         revision,
         created_at: "2026-07-30T00:00:00Z".to_owned(),

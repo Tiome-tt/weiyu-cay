@@ -288,7 +288,7 @@ function MainApplication({ services }: { services: AppServices }) {
             }
           }}
         />
-        <LibraryLayout ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
+        <LibraryLayout files={services.files} ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} platform={services.windowChrome.platform} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={async () => {
         if (services.lifecycle?.prepareRelocation === undefined || services.lifecycle.cancelRelocation === undefined) return null

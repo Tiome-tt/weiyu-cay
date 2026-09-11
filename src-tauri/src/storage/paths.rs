@@ -36,6 +36,11 @@ impl StoragePaths {
             return Err(CommandError::validation("storage root is not a directory"));
         }
 
+        crate::storage::entry::check_library_version(&platform::SafeDirectory::open(
+            &root,
+            &[],
+            false,
+        )?)?;
         let notes = ensure_directory(&root, "notes")?;
         let temporary = ensure_directory(&root, "temporary")?;
         let trash = ensure_directory(&root, "trash")?;

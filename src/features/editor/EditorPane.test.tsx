@@ -245,6 +245,7 @@ describe('EditorPane', () => {
     expect(within(menu).getByRole('menuitem', { name: '插入内部链接' })).toBeDisabled()
     expect(within(menu).getByRole('menuitem', { name: '重定向内部链接' })).toBeDisabled()
     expect(folderTarget).toBeEnabled()
+    await user.click(within(menu).getByRole('button', { name: '添加标签' }))
     expect(within(menu).getByRole('textbox', { name: '添加标签' })).toBeEnabled()
 
     await user.keyboard('{Escape}')
@@ -583,6 +584,7 @@ describe('EditorPane', () => {
     act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'draft' } }))
 
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
     await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
@@ -601,6 +603,7 @@ describe('EditorPane', () => {
       <EditorPane document={note('A')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} />,
     )
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
 
@@ -632,6 +635,7 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
     act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'saved draft' } }))
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
 
@@ -649,6 +653,7 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('kept')} notes={fakeNotePort()} search={search} />)
 
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await screen.findByRole('alert')
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveAttribute('contenteditable', 'true'))
@@ -676,6 +681,7 @@ describe('EditorPane', () => {
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
 
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     expect(search.updateTags).not.toHaveBeenCalled()
     await act(async () => resolveImage({ relativePath: 'assets/before-lock.png', width: 1, height: 1 }))
@@ -695,6 +701,7 @@ describe('EditorPane', () => {
     fireEvent.paste(view().contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     expect(search.updateTags).not.toHaveBeenCalled()
 
@@ -729,6 +736,7 @@ describe('EditorPane', () => {
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
     await act(async () => resolveSecond({ relativePath: 'assets/second.png', width: 1, height: 1 }))
@@ -761,6 +769,7 @@ describe('EditorPane', () => {
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
     openMoreActions()
+    await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
     await act(async () => resolveCursor({ relativePath: 'assets/cursor.png', width: 1, height: 1 }))

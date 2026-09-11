@@ -1,7 +1,9 @@
+import type { NewNoteFormat } from '../../domain/content'
 import { useEffect, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
 
 export interface CreateNoteDraft {
+  format: NewNoteFormat
   title: string
   folderId: FolderId | null
   tags: string
@@ -15,7 +17,7 @@ export interface CreateNotePopoverProps {
   status: CreateNoteStatus
   triggerRef: RefObject<HTMLButtonElement | null>
   onDraftChange(draft: CreateNoteDraft): void
-  onCreate(title: string, folderId: FolderId | null, tags: string[]): void
+  onCreate(title: string, folderId: FolderId | null, tags: string[], format: NewNoteFormat): void
   onClose(): void
 }
 
@@ -59,7 +61,7 @@ export function CreateNotePopover({
     event.preventDefault()
     const normalizedTitle = draft.title.trim()
     if (busy || !hasFolder || normalizedTitle.length === 0) return
-    onCreate(normalizedTitle, draft.folderId, normalizeTagText(draft.tags))
+    onCreate(normalizedTitle, draft.folderId, normalizeTagText(draft.tags), draft.format)
   }
 
   const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -119,6 +121,12 @@ export function CreateNotePopover({
               .slice()
               .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
               .map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>内容类型</span>
+          <select aria-label="内容类型" disabled={busy} value={draft.format} onChange={e => onDraftChange({...draft, format:e.target.value as NewNoteFormat})}>
+            <option value="document">文档</option><option value="markdown">Markdown</option><option value="text">纯文本</option>
           </select>
         </label>
         <label>

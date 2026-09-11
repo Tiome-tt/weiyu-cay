@@ -35,18 +35,20 @@ The application is local-first:
 - A single Markdown parser and renderer shared by preview, indexing, and export validation.
 - Rust-backed Tauri commands for privileged filesystem, SQLite, window, shortcut, autostart, export, and updater operations.
 - SQLite for metadata and rebuildable indexes.
-- Markdown files and image assets for durable content.
+- Markdown, typed document/text/file entries, managed payloads, and image assets for durable content.
 - `pnpm` for JavaScript package management.
 
 Tauri is preferred over Electron because this application values a small install and runtime footprint. It is preferred over Flutter because the web editor ecosystem is better suited to a developer-focused Markdown source editor. Rust is limited to privileged and performance-sensitive infrastructure; ordinary UI and product logic remain in TypeScript.
 
 ### 3.2 Editor model
 
-The MVP is not a WYSIWYG editor. It provides three representations of the same Markdown source:
+Markdown notes provide three representations of the same source, while v1.1.0 also adds a separate rich document entry type. Rich documents are block-based and save their structured content as a typed durable entry; they do not rewrite the original Markdown source.
 
 1. Markdown source.
 2. Markdown source and rendered preview in a resizable split.
 3. Rendered preview.
+
+Rich document entries use an editor with headings, inline marks including `==highlight==` semantics, lists, tasks, links, images, and spreadsheet-like tables with row/column operations and cell merging. Plain text entries use a focused text editor. Imported PDFs and images have safe viewers; Office files remain managed attachments with explicit external-copy actions.
 
 Switching views preserves the current note, selection where applicable, and scroll position. The split view synchronizes scrolling where a stable source-to-preview mapping exists and degrades gracefully when an exact mapping is unavailable.
 
@@ -65,6 +67,7 @@ Switching views preserves the current note, selection where applicable, and scro
 - Show backlinks for the open note.
 - Visually identify links whose target has been deleted or cannot be resolved.
 - Export the complete note library with its logical folder structure, Markdown, and images.
+- Create rich document, plain text, and managed file entries alongside legacy Markdown notes. Markdown conversion creates a new document copy, preserving the original note and UUID links.
 
 ### 4.2 Temporary sticky notes
 

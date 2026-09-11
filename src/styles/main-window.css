@@ -513,6 +513,39 @@
 .main-window .library-pane__header--compact { padding-bottom: 9px; }
 .main-window .library-pane__header-actions { display: flex; align-items: center; gap: 4px; }
 
+.main-window .library-file-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px 10px;
+}
+
+.main-window .library-file-controls select,
+.main-window .library-file-controls button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 8px;
+  color: var(--color-text);
+  font: inherit;
+  font-size: .72rem;
+  background: color-mix(in srgb, var(--color-surface) 76%, transparent);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-control);
+}
+
+.main-window .library-file-controls select { flex: 1 1 92px; }
+.main-window .library-file-controls button {
+  flex: 1 1 100%;
+  color: var(--color-accent-strong);
+  font-weight: 680;
+  cursor: pointer;
+}
+.main-window .library-file-controls button:hover,
+.main-window .library-file-controls button:focus-visible { background: var(--color-accent-soft); }
+.main-window .library-file-controls button:disabled { opacity: .48; cursor: default; }
+.main-window .library-file-controls p { flex: 1 1 100%; margin: 0; color: var(--color-muted); font-size: .7rem; line-height: 1.35; }
+.main-window .library-file-controls p[role="alert"] { color: var(--color-danger-strong, #8f3f35); }
+
 .main-window .library-pane__header h1,
 .main-window .library-pane__header h2 {
   margin: 1px 0 0;
@@ -702,7 +735,7 @@
   background: var(--color-border-soft);
 }
 .main-window .folder-tree__folder-notes .note-list,
-.main-window .folder-tree__root-notes .note-list { height: auto; min-height: 0; }
+.main-window .folder-tree__root-notes .note-list { height: auto; min-height: 0; padding: 4px 2px 5px; }
 .main-window .folder-tree__folder-notes .note-list__items,
 .main-window .folder-tree__root-notes .note-list__items { max-height: none; overflow: visible; padding-bottom: 2px; }
 .main-window .folder-tree__folder-notes .note-list__row::before {
@@ -831,14 +864,29 @@
 
 .main-window .note-list__row { position: relative; }
 .main-window .note-list__row--dragging { opacity: .48; cursor: grabbing; }
+.main-window .note-list__row--dragging .note-card { cursor: grabbing; }
+.main-window .note-list__row--drop-before::before,
+.main-window .note-list__row--drop-after::after {
+  position: absolute;
+  right: 4px;
+  left: 4px;
+  height: 2px;
+  content: "";
+  pointer-events: none;
+  background: var(--color-accent);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-soft) 78%, transparent);
+}
+.main-window .note-list__row--drop-before::before { top: -1px; }
+.main-window .note-list__row--drop-after::after { bottom: -1px; }
 
 .main-window .note-card {
   position: relative;
   display: grid;
   width: 100%;
-  gap: 2px;
+  gap: 1px;
   margin: 0;
-  padding: 5px 7px;
+  padding: 4px 7px;
   color: var(--color-text);
   text-align: left;
   background: transparent;
@@ -849,6 +897,11 @@
 
 .main-window .note-card:hover { background: color-mix(in srgb, var(--color-surface) 68%, transparent); }
 
+.main-window .note-card[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-accent-soft) 70%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-soft));
+}
+
 .main-window .note-card[aria-current="true"] {
   background: var(--color-surface);
   border-color: var(--color-border-soft);
@@ -857,9 +910,18 @@
 
 .main-window .note-card strong,
 .main-window .note-card span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.main-window .note-card strong { color: var(--color-heading); font-size: .86rem; }
-.main-window .note-card span { color: var(--color-muted); font-size: .76rem; }
+.main-window .note-card strong { color: var(--color-heading); font-size: .86rem; line-height: 1.22; }
+.main-window .note-card span { color: var(--color-muted); font-size: .76rem; line-height: 1.16; }
 .main-window .note-card time { color: var(--color-muted); font-size: .68rem; }
+.main-window .note-card__type { letter-spacing: .018em; }
+.main-window .note-list__selection-status {
+  margin: 0 3px 7px;
+  padding: 5px 8px;
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border-soft));
+  border-radius: var(--radius-control);
+}
 
 .main-window .note-outline {
   display: flex;
@@ -870,7 +932,7 @@
   background: var(--color-panel);
 }
 .main-window .note-outline__items { min-height: 0; overflow: auto; padding: 2px 0 28px; }
-.main-window .note-outline__item { display: block; width: 100%; padding: 6px 9px; overflow: hidden; color: var(--color-text); text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+.main-window .note-outline__item { display: block; width: 100%; padding: 6px 9px; overflow-wrap: anywhere; color: var(--color-text); text-align: left; white-space: normal; line-height: 1.35; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
 .main-window .note-outline__item:hover,
 .main-window .note-outline__item:focus-visible { color: var(--color-heading); background: var(--color-accent-soft); outline: none; }
 .main-window .note-outline__item--level-1 { padding-left: 9px; color: var(--color-heading); font-weight: 700; }
@@ -881,16 +943,16 @@
 .main-window .note-outline__item--level-6 { padding-left: 45px; color: var(--color-muted); font-size: .86em; }
 .main-window .note-card__title { display: flex; align-items: center; gap: 7px; }
 .main-window .note-card__title svg { flex: 0 0 auto; color: var(--color-accent-strong); }
-.main-window .note-card__tags { display: block; overflow: hidden; color: var(--color-muted); font-size: .78em; text-overflow: ellipsis; white-space: nowrap; }
+.main-window .note-card__tags { display: block; overflow: hidden; color: var(--color-muted); font-size: .74em; line-height: 1.12; text-overflow: ellipsis; white-space: nowrap; }
 .main-window .folder-tree__folder-notes .note-card {
-  min-height: 30px;
+  min-height: 28px;
   margin: 0;
-  padding: 4px 7px;
+  padding: 3px 7px;
   gap: 1px;
   border-radius: 7px;
 }
-.main-window .folder-tree__folder-notes .note-card strong { font-size: .82rem; }
-.main-window .folder-tree__folder-notes .note-card span { font-size: .7rem; }
+.main-window .folder-tree__folder-notes .note-card strong { font-size: .82rem; line-height: 1.18; }
+.main-window .folder-tree__folder-notes .note-card span { font-size: .7rem; line-height: 1.12; }
 
 .main-window .folder-tree__root-notes {
   margin-top: 6px;
@@ -1209,8 +1271,12 @@
 
 .main-window .tags-editor { position: relative; min-width: 0; gap: 4px; }
 .main-window .tags-editor__chips { flex: 1 1 auto; min-width: 0; max-width: 170px; gap: 3px; overflow: auto; }
+.main-window .typed-editor__metadata .tags-editor__chips { flex: 0 1 auto; max-width: min(170px, 35vw); }
 .main-window .tag-chip { gap: 3px; padding: 2px 4px 2px 7px; color: var(--color-muted); font-size: .68rem; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 999px; }
 .main-window .tag-chip button { padding: 0 2px; background: transparent; border: 0; cursor: pointer; }
+.main-window .typed-editor__metadata .tag-chip button { width: 0; min-width: 0; margin: 0; padding: 0; overflow: hidden; opacity: 0; transition: width .15s ease, opacity .15s ease, margin .15s ease; }
+.main-window .typed-editor__metadata .tag-chip:hover button,
+.main-window .typed-editor__metadata .tag-chip:focus-within button { width: 14px; margin-left: 2px; opacity: 1; }
 .main-window .tags-editor__form { gap: 3px; }
 .main-window .tags-editor__form input { width: 78px; height: 28px; padding: 3px 6px; font-size: .7rem; }
 .main-window .tags-editor__form button { min-height: 28px; padding: 3px 6px; color: var(--color-heading); font-size: .7rem; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 7px; cursor: pointer; }
@@ -1888,7 +1954,7 @@
 .main-window .markdown-preview th,
 .main-window .markdown-preview td { padding: 7px 9px; border: 1px solid var(--color-border-soft); }
 .main-window .markdown-preview th { color: var(--color-heading); text-align: left; background: var(--color-panel-warm); }
-.main-window .markdown-preview a:not(.internal-link) { color: var(--color-accent-strong); text-underline-offset: 2px; }
+.main-window .markdown-preview a:not(.internal-link) { color: var(--color-accent-strong); text-underline-offset: 2px; cursor: pointer; }
 
 .main-window .internal-link {
   display: inline;

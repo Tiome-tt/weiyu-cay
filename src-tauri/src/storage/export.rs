@@ -3,11 +3,7 @@ use crate::{
     domain::{FolderId, NoteId, NoteKind},
     error::CommandError,
     platform::{CreateChildFailure, CreateChildFailureState, SafeDirectory, SafeEntryKind},
-    storage::{
-        atomic_file::PublishState,
-        paths::StoragePaths,
-        repository::{parse_document, serialize_document},
-    },
+    storage::{atomic_file::PublishState, paths::StoragePaths, repository::serialize_document},
 };
 use pulldown_cmark::{Event, Parser, Tag};
 use serde::{Deserialize, Serialize};
@@ -21,7 +17,6 @@ use std::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-const MAX_NOTE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PORTABLE_COMPONENT_BYTES: usize = 120;
@@ -95,6 +90,7 @@ struct PreparedNote {
     assets_name: Option<String>,
     assets: Vec<PreparedAsset>,
     markdown: Vec<u8>,
+    extra_files: Vec<PreparedAsset>,
     renamed_paths: Vec<RenamedExportPath>,
 }
 
@@ -205,7 +201,16 @@ fn export_library_with_operations(
                     ));
                 }
                 report.notes_exported += 1;
-                report.assets_exported += prepared.assets.len();
+                report.assets_exported += prepared.assets.len()
+                    + prepared
+                        .extra_files
+                        .iter()
+                        .filter(|file| {
+                            file.destination
+                                .first()
+                                .is_some_and(|name| name == "assets")
+                        })
+                        .count();
                 report.renamed_paths.extend(prepared.renamed_paths);
                 manifest_notes.insert(note_id.to_string(), prepared.relative_path);
             }
@@ -348,11 +353,7 @@ fn prepare_note(
 ) -> Result<PreparedNote, CommandError> {
     let note_id_string = note_id.to_string();
     let source_note = notes_root.open_child(&note_id_string, false)?;
-    let bytes = source_note.read("note.md", MAX_NOTE_BYTES)?;
-    let source = std::str::from_utf8(&bytes).map_err(|source| {
-        CommandError::validation(format!("note Markdown is not UTF-8: {source}"))
-    })?;
-    let mut document = parse_document(source)?;
+    let mut document = super::entry::read(&source_note)?;
     if document.kind != NoteKind::Formal || document.id != note_id {
         return Err(CommandError::validation(
             "export source is not a matching formal note",
@@ -375,6 +376,50 @@ fn prepare_note(
         MAX_PORTABLE_COMPONENT_BYTES - "-assets".len(),
         MAX_PORTABLE_COMPONENT_UTF16 - "-assets".encode_utf16().count(),
     );
+    if document.content.is_some() {
+        let mut native_folder = folder.portable.clone();
+        native_folder.push(format!("{portable_stem}-entry"));
+        let entry_name = super::entry::filename(&document);
+        let mut files = Vec::new();
+        for name in source_note.entry_names()? {
+            if name.starts_with("payload-") {
+                files.push(PreparedAsset {
+                    destination: vec![name.clone()],
+                    bytes: source_note.read(&name, super::entry::MAX_FILE_BYTES)?,
+                    renamed_path: None,
+                });
+            }
+        }
+        for plan in plan_assets(&source_note)? {
+            let assets = source_note.open_child("assets", false)?;
+            let parent = open_existing(&assets, &plan.source[..plan.source.len() - 1])?;
+            let bytes =
+                parent.read(plan.source.last().expect("asset filename"), MAX_ASSET_BYTES)?;
+            let mut destination = vec!["assets".into()];
+            destination.extend(plan.source);
+            files.push(PreparedAsset {
+                destination,
+                bytes,
+                renamed_path: None,
+            });
+        }
+        return Ok(PreparedNote {
+            relative_path: join_relative(
+                &native_folder
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(entry_name.into()))
+                    .collect::<Vec<_>>(),
+            ),
+            folder: native_folder,
+            markdown_name: entry_name.into(),
+            assets_name: None,
+            assets: Vec::new(),
+            markdown: source_note.read(entry_name, 64 * 1024 * 1024)?,
+            extra_files: files,
+            renamed_paths: Vec::new(),
+        });
+    }
     let markdown_name = format!("{portable_stem}.md");
     validate_portable_component(&markdown_name)?;
     let original_relative = join_relative(
@@ -469,6 +514,7 @@ fn prepare_note(
         assets_name,
         assets: prepared_assets,
         markdown: serialized.into_bytes(),
+        extra_files: Vec::new(),
         renamed_paths,
     })
 }
@@ -479,6 +525,17 @@ fn write_prepared_note(
     write_file: &mut ExportFileWriter<'_>,
 ) -> Result<(), CommandError> {
     let output_folder = open_or_create(output, &note.folder)?;
+    for file in &note.extra_files {
+        let parent = open_or_create(
+            &output_folder,
+            &file.destination[..file.destination.len() - 1],
+        )?;
+        write_file(
+            &parent,
+            file.destination.last().expect("extra file name"),
+            &file.bytes,
+        )?;
+    }
     if let Some(assets_name) = &note.assets_name {
         let output_assets = output_folder.open_child(assets_name, true)?;
         for asset in &note.assets {
@@ -1196,6 +1253,7 @@ mod tests {
                 title: "Good".to_owned(),
                 folder_id: None,
                 tags: Vec::new(),
+                content: None,
                 markdown: "body".to_owned(),
                 revision: 0,
                 created_at: "2026-07-30T08:00:00Z".to_owned(),

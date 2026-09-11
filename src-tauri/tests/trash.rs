@@ -57,6 +57,7 @@ fn create_document(
             title: title.to_owned(),
             folder_id,
             tags: vec!["recovery".to_owned()],
+            content: None,
             markdown: format!("# {title}\n\nbody"),
             revision: 0,
             created_at: "2026-07-01T00:00:00Z".to_owned(),

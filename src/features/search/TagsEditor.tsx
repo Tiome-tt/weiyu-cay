@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Icon } from '../../shared/Icon'
 import { mergeTags, normalizeTag, TagValidationError } from './query'
 
@@ -10,6 +10,9 @@ interface TagsEditorProps {
 export function TagsEditor({ tags, onChange }: TagsEditorProps) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'status'; text: string } | null>(null)
 
   const persist = async (next: string[], clearInput = false) => {
@@ -46,27 +49,50 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setInput('')
+      setEditing(false)
+      return
+    }
     if (event.key !== 'Enter') return
     event.preventDefault()
     add()
   }
 
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
+
+  useEffect(() => {
+    if (!editing) return
+    const closeFromOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setEditing(false)
+        setInput('')
+      }
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    return () => document.removeEventListener('pointerdown', closeFromOutside)
+  }, [editing])
+
   return (
-    <div className="tags-editor" aria-label="笔记标签">
+    <div ref={rootRef} className="tags-editor" aria-label="笔记标签">
       <div className="tags-editor__chips">
         {tags.map((tag) => (
           <span className="tag-chip" key={normalizeTag(tag).normalized}>
-            {tag}
+            #{tag}
             <button type="button" aria-label={`移除标签 ${tag}`} disabled={busy} onClick={() => void persist(tags.filter((item) => item !== tag))}>
               <Icon name="close" size={12} />
             </button>
           </span>
         ))}
       </div>
-      <form className="tags-editor__form" onSubmit={add}>
-        <input aria-label="添加标签" value={input} disabled={busy} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} />
-        <button type="submit" aria-label="添加标签" disabled={busy}><Icon name="plus" size={13} /></button>
-      </form>
+      {editing && <form className="tags-editor__form" onSubmit={add}>
+        <input ref={inputRef} aria-label="添加标签" value={input} disabled={busy} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} placeholder="输入标签" />
+        <button type="submit" aria-label="确认添加标签" disabled={busy}>✓</button>
+      </form>}
+      <button className="tags-editor__add" type="button" aria-label="添加标签" disabled={busy} onClick={() => setEditing(true)}><Icon name="plus" size={14} /></button>
       {message && <span className="tags-editor__message" role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</span>}
     </div>
   )

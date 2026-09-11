@@ -5,7 +5,7 @@ use crate::{
     storage::{
         database::Database,
         paths::StoragePaths,
-        repository::{folder_id_blob, parse_document, persist_document_in_transaction},
+        repository::{folder_id_blob, persist_document_in_transaction},
     },
 };
 use chrono::DateTime;
@@ -487,38 +487,22 @@ fn scan_documents(paths: &StoragePaths) -> (Vec<NoteDocument>, RebuildReport) {
                 NoteKind::Formal => "notes",
                 NoteKind::Temporary => "temporary",
             };
-            let contents = match platform::SafeDirectory::open(
+            let document = match platform::SafeDirectory::open(
                 paths.root(),
                 &[collection, name.as_str()],
                 false,
             )
-            .and_then(|directory| {
-                directory.recover("note.md")?;
-                directory.read("note.md", 64 * 1024 * 1024)
-            })
-            .and_then(|bytes| {
-                String::from_utf8(bytes).map_err(|source| {
-                    CommandError::validation(format!("note document is not UTF-8: {source}"))
-                })
-            }) {
-                Ok(contents) => contents,
-                Err(_) => {
-                    report.notes_failed += 1;
-                    report.failures.push(RebuildFailure {
-                        item: name,
-                        message: "The note document is unreadable or not UTF-8.".to_owned(),
-                    });
+            .and_then(|directory| super::entry::read(&directory))
+            {
+                Ok(document) => document,
+                Err(error) if error.code() == crate::error::CommandErrorCode::NotFound => {
+                    // No manifest was published: interrupted import payloads remain invisible and intact.
+                    report.notes_skipped += 1;
                     continue;
                 }
-            };
-            let document = match parse_document(&contents) {
-                Ok(document) => document,
                 Err(_) => {
                     report.notes_failed += 1;
-                    report.failures.push(RebuildFailure {
-                        item: name,
-                        message: "The note frontmatter is malformed.".to_owned(),
-                    });
+                    report.failures.push(RebuildFailure { item: name, message: "The library entry is invalid, ambiguous, or has a missing/corrupt payload.".to_owned() });
                     continue;
                 }
             };

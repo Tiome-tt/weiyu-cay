@@ -979,6 +979,27 @@ impl SafeDirectory {
         Ok((device, stat.st_ino))
     }
 
+    pub fn open_regular(&self, name: &str, max_bytes: u64) -> Result<fs::File, CommandError> {
+        validate_child_name(name)?;
+        let fd = openat(
+            &self.fd,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|source| CommandError::io(format!("could not open contained file: {source}")))?;
+        let file: fs::File = fd.into();
+        let metadata = file.metadata().map_err(|source| {
+            CommandError::io(format!("could not inspect contained file: {source}"))
+        })?;
+        if !metadata.is_file() || metadata.len() > max_bytes {
+            return Err(CommandError::validation(
+                "contained file is unsafe or too large",
+            ));
+        }
+        Ok(file)
+    }
+
     pub fn read(&self, name: &str, max_bytes: u64) -> Result<Vec<u8>, CommandError> {
         validate_child_name(name)?;
         let fd = openat(

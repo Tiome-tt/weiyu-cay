@@ -8,6 +8,14 @@ import { UpdateSettings } from './UpdateSettings'
 describe('UpdateSettings', () => {
   afterEach(cleanup)
 
+  it('explains that development builds have no updater source', () => {
+    const controller: UpdateController = { state: { status: 'idle' }, check: vi.fn(), install: vi.fn(), restart: vi.fn() }
+    render(<UpdateSettings controller={controller} />)
+
+    expect(screen.getByText(/pnpm tauri dev/)).toBeVisible()
+    expect(screen.getByText(/正式签名安装版/)).toBeVisible()
+  })
+
   it('keeps checking explicit and reports a recoverable check failure', async () => {
     const check = vi.fn().mockResolvedValue(undefined)
     const controller: UpdateController = {

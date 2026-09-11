@@ -4,6 +4,7 @@ import { createTauriPorts } from '../infrastructure/tauri/ports'
 import { createE2EAppServices } from './e2eServices'
 
 export interface AppServices {
+  files?: import('../domain/ports').FilePort
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort

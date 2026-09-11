@@ -1,6 +1,4 @@
-// The renderer tsconfig deliberately excludes Node ambient types; Vitest still
-// executes this contract test in Node.
-// @ts-expect-error TS2307 -- no renderer dependency on Node types is intended.
+// Vitest runs this contract test in Node.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { APP_ENGLISH_NAME, APP_NAME, APP_TAGLINE } from './brand'

@@ -290,7 +290,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     beginEditBarrier: async () => {
       barrierDepthRef.current += 1
       configureEditable(viewRef.current)
-      authorizedPasteTokensRef.current.clear()
+      // Every barrier owner releases only its own depth. Pending paste tokens
+      // remain authorized until the final owner unlocks the editor.
+      if (barrierDepthRef.current === 0) authorizedPasteTokensRef.current.clear()
       for (const token of pendingPastesRef.current.keys()) {
         authorizedPasteTokensRef.current.add(token)
       }
@@ -378,6 +380,24 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
               : []
           }
           if (readOnlyRef.current && !reconcilingRef.current) return []
+          // The document presentation renders list markers as decorations.
+          // Enter on a marker-only line can reach input as a full-line deletion;
+          // restore the empty item instead of losing its marker.
+          if (transaction.isUserEvent('input')) {
+            const changedRanges: Array<[number, number, number, number]> = []
+            transaction.changes.iterChangedRanges((fromA, toA, fromB, toB) => changedRanges.push([fromA, toA, fromB, toB]))
+            const deletion = changedRanges.length === 1 ? changedRanges[0] : undefined
+            if (deletion !== undefined && deletion[2] === deletion[3] && deletion[0] < deletion[1]) {
+              const line = transaction.startState.doc.lineAt(deletion[0])
+              const markerOnly = deletion[0] === line.from && deletion[1] === line.to && /^ {0,3}\d+[.)][\t ]*$/u.test(line.text)
+              if (markerOnly) {
+                return transaction.startState.update({
+                  changes: { from: line.to, insert: '\n' },
+                  selection: { anchor: line.to + 1 },
+                })
+              }
+            }
+          }
           if (
             !reconcilingRef.current &&
             presentationRef.current === 'document' &&

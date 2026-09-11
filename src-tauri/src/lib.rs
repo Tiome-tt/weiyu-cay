@@ -18,6 +18,7 @@ pub fn run() {
             windows::main::activate_main(app);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
@@ -70,6 +71,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::notes::create_note,
+            commands::files::import_files,
+            commands::files::read_managed_file,
+            commands::files::read_managed_file_bytes,
+            commands::files::export_managed_file,
+            commands::files::open_managed_file,
+            commands::files::save_document_export,
             commands::notes::startup_guide_target,
             commands::notes::complete_startup_guide,
             commands::notes::load_note,

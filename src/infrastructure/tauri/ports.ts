@@ -1,3 +1,4 @@
+import { TauriFilePort } from './filePort'
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
@@ -496,6 +497,7 @@ class TauriStickySettingsPort implements StickySettingsPort {
 }
 
 export function createTauriPorts(): {
+  files: import('../../domain/ports').FilePort
   notes: LibraryNotePort
   folders: FolderPort
   system: SystemPort
@@ -519,6 +521,7 @@ export function createTauriPorts(): {
   const client = new TauriClient()
   return {
     notes: new TauriNotePort(client),
+    files: new TauriFilePort(client),
     folders: new TauriFolderPort(client),
     system: new TauriSystemPort(client),
     assets: new TauriAssetPort(client),

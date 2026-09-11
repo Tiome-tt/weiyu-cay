@@ -255,13 +255,10 @@ describe('FolderTree keyboard navigation', () => {
       onToggleStar: vi.fn().mockResolvedValue(undefined),
     }
     const rendered = render(<FolderTree {...props} activeId={null} />)
-    const more = screen.getByRole('button', { name: '文件夹更多操作' })
-    expect(more).toBeDisabled()
     expect(screen.queryByRole('button', { name: '重命名文件夹' })).not.toBeInTheDocument()
 
     rendered.rerender(<FolderTree {...props} activeId={folderA} />)
-    expect(more).toBeEnabled()
-    await user.click(more)
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
     expect(screen.getByRole('menuitem', { name: '重命名文件夹' })).toBeVisible()
     expect(screen.getByRole('menuitem', { name: '移动文件夹' })).toBeVisible()
     expect(screen.getByRole('menuitem', { name: '删除文件夹' })).toBeVisible()
@@ -347,7 +344,8 @@ describe('FolderTree keyboard navigation', () => {
   it('cancels a new folder draft when focus leaves the input', async () => {
     const user = userEvent.setup()
     renderTree()
-    await user.click(screen.getByRole('button', { name: '新建文件夹' }))
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
+    await user.click(screen.getByRole('menuitem', { name: '新建文件夹' }))
     const input = screen.getByRole('textbox', { name: '文件夹名称' })
     await user.click(screen.getByRole('treeitem', { name: '未归档笔记' }))
     expect(input).not.toBeInTheDocument()
@@ -357,7 +355,7 @@ describe('FolderTree keyboard navigation', () => {
     const user = userEvent.setup()
     const onDelete = vi.fn().mockResolvedValue(undefined)
     render(<FolderTree folders={rows} activeId={folderA} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={onDelete} />)
-    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
     await user.click(screen.getByRole('menuitem', { name: '删除文件夹' }))
     expect(screen.getByRole('alertdialog')).toHaveTextContent('文件夹及其全部笔记和子文件夹会移入回收站')
     await user.click(screen.getByRole('button', { name: '删除文件夹' }))
@@ -567,7 +565,7 @@ describe('FolderTree keyboard navigation', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: '文件夹更多操作' }))
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
     await user.click(screen.getByRole('menuitem', { name: '移动文件夹' }))
 
     expect(screen.getByRole('combobox', { name: '移动到' })).toHaveFocus()
@@ -599,9 +597,7 @@ describe('FolderTree keyboard navigation', () => {
     }
     const user = userEvent.setup()
     render(<DeleteHarness />)
-    const more = screen.getByRole('button', { name: '文件夹更多操作' })
-
-    await user.click(more)
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 B' }) })
     await user.click(screen.getByRole('menuitem', { name: '删除文件夹' }))
     await user.click(screen.getByRole('button', { name: '删除文件夹' }))
     expect(onDelete).toHaveBeenCalledWith(folderB)
@@ -610,6 +606,6 @@ describe('FolderTree keyboard navigation', () => {
     const unfiled = screen.getByRole('treeitem', { name: '未归档笔记' })
     await waitFor(() => expect(unfiled).toHaveFocus())
     expect(unfiled).toHaveAttribute('aria-selected', 'true')
-    expect(more).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '文件夹更多操作' })).not.toBeInTheDocument()
   })
 })

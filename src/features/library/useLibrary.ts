@@ -1,3 +1,4 @@
+import type { NewNoteFormat } from '../../domain/content'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { FolderPort, NotePort, StartupGuidePort } from '../../domain/ports'
@@ -157,9 +158,9 @@ export function useLibrary(
     [foldersPort, refreshFolders],
   )
 
-  const createNote = useCallback(async (title: string, folderId: FolderId | null = activeFolderId) => {
+  const createNote = useCallback(async (title: string, folderId: FolderId | null = activeFolderId, format?: NewNoteFormat) => {
     const request = ++noteRequest.current
-    const created = await notesPort.createNote({ folderId, title })
+    const created = await notesPort.createNote({ folderId, title, ...(format ? { format } : {}) })
     if (!mountedRef.current || noteRequest.current !== request) return created
     activeFolderRef.current = folderId
     setActiveFolderId(folderId)
@@ -208,6 +209,7 @@ export function useLibrary(
       createdAt: authoritative.createdAt,
       updatedAt: authoritative.updatedAt,
       excerpt: '',
+      content: authoritative.content,
     }
     const currentFolder = activeFolderRef.current
     setNotes((current) => {
@@ -260,7 +262,10 @@ export function useLibrary(
   const reorderNotes = useCallback(async (folderId: FolderId | null, orderedIds: NoteId[]) => {
     if (notesPort.reorderNotes === undefined) return
     await notesPort.reorderNotes(folderId, orderedIds)
-    await refreshNotes()
+    // Inline folder note lists can be reordered while another folder is active.
+    // Refresh the list that was changed; refreshing only activeFolderId leaves the
+    // dragged row visibly in its old position until the user revisits the folder.
+    await refreshNotes(folderId, folderId !== activeFolderRef.current)
   }, [notesPort, refreshNotes])
 
   const toggleFolderStar = useCallback(
@@ -302,6 +307,23 @@ export function useLibrary(
     if (authoritative.id !== activeNoteId) return
     setDocument(authoritative)
     setDocumentState('ready')
+    const summary: NoteSummary = {
+      id: authoritative.id,
+      kind: authoritative.kind,
+      title: authoritative.title,
+      folderId: authoritative.folderId,
+      tags: authoritative.tags,
+      revision: authoritative.revision,
+      createdAt: authoritative.createdAt,
+      updatedAt: authoritative.updatedAt,
+      excerpt: '',
+      content: authoritative.content,
+    }
+    setNotes((current) => current.map((note) => note.id === authoritative.id ? { ...summary, excerpt: note.excerpt } : note))
+    setNotesByFolder((current) => Object.fromEntries(Object.entries(current).map(([key, items]) => [
+      key,
+      items.map((note) => note.id === authoritative.id ? { ...summary, excerpt: note.excerpt } : note),
+    ])))
   }, [activeNoteId])
 
   const clearDeletedNote = useCallback((id: NoteId) => {

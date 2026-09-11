@@ -289,7 +289,7 @@ button {
 .sticky-window__editor .cm-live-inline-code,
 .sticky-window__editor .cm-document-code,
 .sticky-window__editor .cm-document-code-fence { font-family: var(--code-font); background: rgb(255 253 248 / 52%); border-radius: 5px; }
-.sticky-window__editor .cm-live-link { color: var(--color-accent-strong); text-decoration: underline; text-underline-offset: .16em; }
+.sticky-window__editor .cm-live-link { color: var(--color-accent-strong); text-decoration: underline; text-underline-offset: .16em; cursor: pointer; }
 .sticky-window__editor .cm-document-quote { padding-left: 10px; color: var(--color-muted); border-left: 2px solid var(--color-accent); }
 .sticky-window__editor .cm-live-image { display: inline-grid; width: 100%; margin: .55em 0; overflow: hidden; border-radius: 10px; place-items: center; }
 .sticky-window__editor .cm-live-image img { display: block; max-width: 100%; max-height: 50vh; object-fit: contain; }

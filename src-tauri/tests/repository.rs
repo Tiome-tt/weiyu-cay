@@ -153,7 +153,10 @@ fn migration_creates_only_the_required_initial_tables_and_is_idempotent() {
     for table in required_tables {
         assert!(db.table_exists(table).unwrap(), "missing table {table}");
     }
-    assert_eq!(db.applied_migration_versions().unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        db.applied_migration_versions().unwrap(),
+        vec![1, 2, 3, 4, 5]
+    );
 
     let store = TestStore::new();
     let connection = Connection::open(store.paths.database()).unwrap();

@@ -498,7 +498,7 @@ describe('internal links in preview', () => {
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
     render(createElement(MarkdownPreview, {
       noteId: targetId,
-      markdown: `![Owned](assets/screenshot-${targetId}.png) ![Remote](https://tracking.invalid/pixel.png)\n\n[Website](https://example.com) [Relative](../outside.md)`,
+      markdown: `![Owned](assets/screenshot-${targetId}.png) ![Remote](https://tracking.invalid/pixel.png)\n\n[Website](https://example.com) [Relative](../outside.md)\n\nhttps://www.bilibili.com/video/BV1test`,
       assetReader: { readImage },
       external: { openExternal },
     }))
@@ -513,10 +513,18 @@ describe('internal links in preview', () => {
     expect(readImage).toHaveBeenCalledWith({ noteId: targetId, relativePath: `assets/screenshot-${targetId}.png` })
     expect(readImage).toHaveBeenCalledTimes(1)
 
-    await userEvent.click(screen.getByRole('link', { name: 'Website' }))
+    const website = screen.getByRole('link', { name: 'Website' })
+    await userEvent.click(website)
+    expect(openExternal).not.toHaveBeenCalled()
+    fireEvent.click(website, { ctrlKey: true })
     expect(openExternal).toHaveBeenCalledWith('https://example.com')
-    await userEvent.click(screen.getByText('Relative'))
+    const bilibili = screen.getByRole('link', { name: 'https://www.bilibili.com/video/BV1test' })
+    await userEvent.click(bilibili)
     expect(openExternal).toHaveBeenCalledTimes(1)
+    fireEvent.click(bilibili, { ctrlKey: true })
+    expect(openExternal).toHaveBeenCalledWith('https://www.bilibili.com/video/BV1test')
+    await userEvent.click(screen.getByText('Relative'))
+    expect(openExternal).toHaveBeenCalledTimes(2)
     cleanup()
     expect(createObjectURL).toHaveBeenCalledOnce()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:owned-image')

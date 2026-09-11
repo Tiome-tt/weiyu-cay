@@ -35,6 +35,86 @@ describe('MarkdownSource', () => {
     expect(editorView().state.doc.toString()).toBe('old draft')
   })
 
+  it('keeps a marker-only ordered item when Enter is pressed', () => {
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown="3." onChange={onChange} />)
+    const view = editorView()
+
+    act(() => view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length) }))
+    fireEvent.keyDown(view.contentDOM, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13 })
+
+    expect(view.state.doc.toString()).toBe('3.\n')
+  })
+
+  it('keeps text typed on the paragraph after a table outside the table widget', () => {
+    const source = '| Name | Note |\n| --- | --- |\n| A | B |\n\n'
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={source} onChange={onChange} />)
+    const view = editorView()
+
+    act(() => view.dispatch({
+      changes: { from: view.state.doc.length, insert: '后文' },
+      selection: { anchor: view.state.doc.length + '后文'.length },
+    }))
+
+    expect(view.state.doc.toString()).toBe(`${source}后文`)
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).not.toHaveTextContent('后文')
+  })
+
+  it('does not absorb a paragraph typed directly after a table line', () => {
+    const source = '| Name | Note |\n| --- | --- |\n| A | B |\n'
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={source} onChange={onChange} />)
+    const view = editorView()
+
+    act(() => view.dispatch({
+      changes: { from: view.state.doc.length, insert: '后文' },
+      selection: { anchor: view.state.doc.length + '后文'.length },
+    }))
+
+    expect(view.state.doc.toString()).toBe(`${source}后文`)
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).not.toHaveTextContent('后文')
+  })
+
+  it('does not absorb numeric text typed directly after a table line', () => {
+    const source = '| Name | Note |\n| --- | --- |\n| A | B |\n'
+    render(<MarkdownSource markdown={source} onChange={vi.fn()} />)
+    const view = editorView()
+
+    act(() => view.dispatch({
+      changes: { from: view.state.doc.length, insert: '123' },
+      selection: { anchor: view.state.doc.length + 3 },
+    }))
+
+    expect(view.state.doc.toString()).toBe(`${source}123`)
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).not.toHaveTextContent('123')
+    expect(screen.queryByRole('textbox', { name: '3 行 1 列' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an existing paragraph directly after a table outside the rendered table', () => {
+    const source = '| Name | Note |\n| --- | --- |\n| A | B |\n后文'
+    render(<MarkdownSource markdown={source} onChange={vi.fn()} />)
+
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).not.toHaveTextContent('后文')
+  })
+
+  it('keeps text on the first blank line after a table with Cay metadata outside the table', () => {
+    const source = '| Name | Note |\n| --- | --- |\n| A | B |\n<!-- cay-table: {"merges":[]} -->\n\n'
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={source} onChange={onChange} />)
+    const view = editorView()
+    const insertionPoint = source.length
+
+    act(() => view.dispatch({
+      selection: EditorSelection.cursor(insertionPoint),
+      changes: { from: insertionPoint, insert: '后文' },
+    }))
+
+    expect(view.state.doc.toString()).toBe(`${source}后文`)
+    expect(screen.getByRole('table', { name: 'Markdown 表格' })).not.toHaveTextContent('后文')
+  })
+
   it('renders inactive inline Markdown while preserving the exact source', () => {
     const source = 'Start **bold** *italic* ~~gone~~ `code` [site](https://example.com)'
     render(<MarkdownSource markdown={source} onChange={vi.fn()} />)

@@ -11,6 +11,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (2, SEARCH_MIGRATION, "full-text search schema"),
     (3, FOLDER_STARS_MIGRATION, "folder star metadata"),
     (4, NOTE_SORT_ORDER_MIGRATION, "note sort order"),
+    (
+        5,
+        include_str!("../../migrations/0005_document_library.sql"),
+        "document library content type",
+    ),
 ];
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 

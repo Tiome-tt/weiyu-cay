@@ -719,7 +719,7 @@ fn version_one_migration_preserves_notes_and_backfills_search() {
     database.migrate().unwrap();
     assert_eq!(
         database.applied_migration_versions().unwrap(),
-        vec![1, 2, 3, 4]
+        vec![1, 2, 3, 4, 5]
     );
     drop(database);
     let migrated = Connection::open(paths.database()).unwrap();
@@ -804,7 +804,7 @@ fn version_one_upgrade_rebuilds_search_from_durable_markdown_not_raw_cache() {
             .unwrap()
             .applied_migration_versions()
             .unwrap(),
-        vec![1, 2, 3, 4],
+        vec![1, 2, 3, 4, 5],
     );
     assert_eq!(
         Connection::open(paths.database())
@@ -929,6 +929,7 @@ fn create_note_with_markdown(
             title: title.into(),
             folder_id: (kind == NoteKind::Formal).then(|| folder_id(CHILD_FOLDER)),
             tags: tags.into_iter().map(str::to_owned).collect(),
+            content: None,
             markdown: markdown.into(),
             revision: 0,
             created_at: "2026-07-31T08:00:00Z".into(),
@@ -1026,6 +1027,7 @@ fn create_note_with_folder(
             title: title.into(),
             folder_id: Some(folder_id(folder)),
             tags: tags.into_iter().map(str::to_owned).collect(),
+            content: None,
             markdown: markdown.into(),
             revision: 0,
             created_at: "2026-07-31T08:00:00Z".into(),
