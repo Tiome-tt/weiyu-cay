@@ -35,7 +35,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "${{ runner.temp }}/pnpm-store"
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - name: Lint Rust
