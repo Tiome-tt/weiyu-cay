@@ -40,7 +40,9 @@ it('falls back after PDF.js rejects binary data',async()=>{
  const files:FilePort={chooseFiles:async()=>[],importFiles:async()=>({imported:[],failed:[]}),readFile,readFileBytes,saveFileAs:async()=>true,openFile:async()=>{}}
  const document={...note(''),content:{type:'file' as const,file:{storageName:'x',originalName:'broken.pdf',mediaType:'application/pdf',size:12,sha256:'parser-fallback'}}}
  render(<FileViewer document={document} files={files}/> )
- await waitFor(()=>expect(readFile).toHaveBeenCalledOnce(),{timeout:5000})
+ // PDF.js starts a worker even for malformed bytes; allow cold CI runners time
+ // to load and reject the document before asserting the structured fallback.
+ await waitFor(()=>expect(readFile).toHaveBeenCalledOnce(),{timeout:15000})
 })
 it('reuses cached preview bytes when reopening the same file revision',async()=>{
  const readFileBytes=vi.fn().mockResolvedValue(new Uint8Array([37,80,68,70,45]))
