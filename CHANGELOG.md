@@ -35,9 +35,9 @@
 
 ## 版本记录
 
-### 1.1.0 · Windows/macOS · 预发布
-日期：2026-09-11
-提交：待发布
+### 1.1.0 · Windows/macOS · 稳定
+日期：2026-09-12
+提交：0dae371
 
 #### 新增
 - 新增富文档笔记，支持标题、行内格式、列表、任务、链接、图片、表格和合并单元格。
@@ -84,10 +84,21 @@
 - 在更新设置中说明开发版未配置更新源，避免将开发环境检查失败误认为线上更新故障。
 
 #### 已知问题
-- Windows/macOS 原生验收、安装包构建和签名尚未完成；当前条目仅对应源码预发布候选版本。
+- 暂无。
 
 #### 安装包
-- 待发布构建生成后补录文件名和 SHA256。
+- latest.json — SHA256: `7d8bbec7711ef435b96843dbb01be44a23edbfd12987a188c45da5ebd850a8a7`
+- SHA256SUMS — SHA256: `2ef63d56494cc72de35bf7d15f75e73a1f699f5626b3344c4a9532c7ca43af4c`
+- _1.1.0_aarch64.app.tar.gz — SHA256: `fd22665ec48bd95deaa8b40aee775fa56f695d638c3d93a70cb7913aa369b8d2`
+- _1.1.0_aarch64.app.tar.gz.sig — SHA256: `ddb466a3b1f9f01c33cd9344d24c7497011d191216151562c89bdc5a2e6b177c`
+- _1.1.0_aarch64.dmg — SHA256: `df5e62687de0e2d14e3b5ed9a13eb92711407e17f841310580ff2278f6e931cd`
+- _1.1.0_x64-setup.exe — SHA256: `9e37c552cc1d33a1e224357721d7aa90050c3ca1b8c58354ab242917bedbd559`
+- _1.1.0_x64-setup.exe.sig — SHA256: `7c4c46899b6855cb07df2e057dfcb66d6a3bedcb7ebcda6c68ae760be91a2f70`
+- _1.1.0_x64.app.tar.gz — SHA256: `25499c888a2de5bba15b5d88f5d33a04b761a256f788ebd087a2f56dfc6e114f`
+- _1.1.0_x64.app.tar.gz.sig — SHA256: `4bf3761c4108db8aed448d70c053c81b3d55e688537b2553cbb696692baf1d1d`
+- _1.1.0_x64.dmg — SHA256: `7e21dea9bb59b59cc12bff450a0486fe52483c724f85c779a0c8a8ecce5a1f8b`
+- _1.1.0_x64_en-US.msi — SHA256: `145bc0a7e62c48c3b5d750c71afddc202989884d87f3f1b2f5b709c7b51d549d`
+- _1.1.0_x64_en-US.msi.sig — SHA256: `def4dfe55bf17f3e7f6278775369ed8a5930022cf155d511e7c0864650da52f0`
 
 
 ### 1.0.2 · Windows · 预发布
