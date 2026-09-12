@@ -357,7 +357,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' "$CANDIDATE_RELEASE" > "$RUNNER_TEMP/candidate-stable-release.json"
-          curl --fail --silent --show-error "https://github.com/$REPOSITORY/releases/latest/download/latest.json" -o "$RUNNER_TEMP/previous-stable-latest.json"
+          curl --location --fail --silent --show-error "https://github.com/$REPOSITORY/releases/latest/download/latest.json" -o "$RUNNER_TEMP/previous-stable-latest.json"
           node --experimental-strip-types scripts/prepare-stable-promotion.ts --candidate release-assets/latest.json --previous "$RUNNER_TEMP/previous-stable-latest.json" --release "$RUNNER_TEMP/candidate-stable-release.json" --repository "$REPOSITORY" --tag "$TAG_NAME" --output stable-promotion-plan.json
       - name: Upload stable promotion and rollback plan
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
