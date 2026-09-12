@@ -59,6 +59,11 @@ fn fresh_storage_creates_the_getting_started_guide_once() {
     assert!(guide.markdown.contains("设置中修改全局快捷键"));
     assert!(guide.markdown.contains("钉在桌面最上层"));
     assert!(guide.markdown.contains("转为正式笔记"));
+    assert!(guide.markdown.contains("## 富文档与多格式文件"));
+    assert!(guide
+        .markdown
+        .contains("标题、行内格式、列表、任务、链接、图片和表格"));
+    assert!(guide.markdown.contains("纯文本、PDF、图片和 DOCX"));
     assert!(guide.markdown.contains("- [ ] 任务项"));
     assert!(guide.markdown.contains("> 引用一段重要内容"));
     assert!(guide.markdown.contains("[显示文字](https://example.com)"));

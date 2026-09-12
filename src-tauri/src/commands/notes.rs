@@ -114,7 +114,7 @@ const LEGACY_GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
 这篇引导笔记也可以随时删除。
 "#;
 
-const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+const PREVIOUS_GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
 
 微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
 
@@ -169,6 +169,67 @@ Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本�
 现在，新建你的第一篇笔记吧。
 "#;
 
+const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+
+微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
+
+## 从这里开始
+
+你可以试着：
+
+- 新建一篇笔记，随手写下此刻的想法
+- 创建文件夹，整理不同主题的内容
+- 在源码、分屏和预览三种视图间切换
+- 为笔记添加标签
+- 使用 `[[笔记标题]]` 连接两篇笔记
+
+## 关于 Markdown
+
+Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本编辑器打开的文件。下面这些写法已足够应对大多数记录：
+
+````markdown
+# 一级标题
+## 二级标题
+
+**粗体**、*斜体*、~~删除线~~ 和 `行内代码`
+
+- 无序列表
+1. 有序列表
+- [ ] 任务项
+
+> 引用一段重要内容
+
+[显示文字](https://example.com)
+![图片说明](图片路径)
+
+分隔线使用三个短横线：
+
+---
+
+```text
+一段代码
+```
+````
+
+编辑器的“＋”菜单和右键菜单可以快速插入表格、代码块、图片和内部链接；也可以直接粘贴图片。
+
+## 富文档与多格式文件
+
+除了 Markdown，微屿还支持“文档”笔记，用于标题、行内格式、列表、任务、链接、图片和表格等富文本编辑。
+
+资料库也可以导入纯文本、PDF、图片和 DOCX 等文件：PDF 与图片可直接预览，DOCX 可转换为可编辑的文档笔记，原始文件仍会保留。
+
+## 临时便笺
+
+按 `Ctrl+Shift+D`（macOS 为 `Command+Shift+D`）可以从任何位置快速调出便笺。便笺可以钉在桌面最上层；关闭窗口只会隐藏内容，不会删除记录。你也可以在设置中修改全局快捷键。
+
+之后回到主应用的“临时便笺”，可以继续整理内容，并将便笺转为正式笔记。
+
+---
+
+现在，新建你的第一篇笔记吧。
+"#;
+
 #[doc(hidden)]
 pub fn legacy_getting_started_markdown() -> &'static str {
     LEGACY_GETTING_STARTED_MARKDOWN
@@ -196,7 +257,7 @@ fn upgrade_getting_started_guide(paths: &StoragePaths) -> Result<(), CommandErro
         return Ok(());
     };
     let mut document = notes.load(summary.id)?;
-    let previous_guide = GETTING_STARTED_MARKDOWN
+    let previous_guide = PREVIOUS_GETTING_STARTED_MARKDOWN
         .replace("分隔线使用三个短横线：\n\n---", "---")
         .replace(
             "现在，新建你的第一篇笔记吧。\n",
@@ -205,9 +266,20 @@ fn upgrade_getting_started_guide(paths: &StoragePaths) -> Result<(), CommandErro
     let previous_shortcut_guide = previous_guide
         .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
         .replace("Command+Shift+D", "Command+Shift+Space");
+    let current_previous_guide = GETTING_STARTED_MARKDOWN
+        .replace("分隔线使用三个短横线：\n\n---", "---")
+        .replace(
+            "现在，新建你的第一篇笔记吧。\n",
+            "现在，新建你的第一篇笔记吧。\n\n这篇引导笔记也可以随时删除。\n",
+        );
+    let current_previous_shortcut_guide = current_previous_guide
+        .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
+        .replace("Command+Shift+D", "Command+Shift+Space");
     if document.markdown != LEGACY_GETTING_STARTED_MARKDOWN
         && document.markdown != previous_guide
         && document.markdown != previous_shortcut_guide
+        && document.markdown != current_previous_guide
+        && document.markdown != current_previous_shortcut_guide
     {
         return Ok(());
     }
