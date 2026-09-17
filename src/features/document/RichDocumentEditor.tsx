@@ -482,7 +482,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           </select>
         </span>
         <span className='rich-document__font-size-control' role='group' aria-label='字号'>
-          <input type='number' min='8' max='96' step='1' inputMode='numeric' aria-label='字号' value={fontSizeDraft} placeholder='11' title='字号（磅）' onChange={(event) => setFontSizeDraft(event.currentTarget.value)} onBlur={() => applyFontSize(fontSizeDraft)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); applyFontSize(fontSizeDraft) } else if (event.key === 'Escape') { setFontSizeDraft(activeFontSizePoints === undefined ? '' : String(activeFontSizePoints)); event.currentTarget.blur() } }} />
+          <input type='number' min='8' max='96' step='1' inputMode='numeric' aria-label='字号' value={fontSizeDraft} placeholder='11' title='字号（磅）' onChange={(event) => setFontSizeDraft(event.currentTarget.value)} onBlur={(event) => applyFontSize(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); applyFontSize(event.currentTarget.value) } else if (event.key === 'Escape') { setFontSizeDraft(activeFontSizePoints === undefined ? '' : String(activeFontSizePoints)); event.currentTarget.blur() } }} />
           <select aria-label='字号选项' value={RICH_FONT_SIZE_SUGGESTIONS.includes(Number(fontSizeDraft) as typeof RICH_FONT_SIZE_SUGGESTIONS[number]) ? fontSizeDraft : ''} onChange={(event) => { const value = event.currentTarget.value; setFontSizeDraft(value); applyFontSize(value) }}>
             <option value=''>字号</option>
             {RICH_FONT_SIZE_SUGGESTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
