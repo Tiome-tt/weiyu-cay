@@ -19,6 +19,14 @@ describe('reorderNoteIds', () => {
 })
 const entry = { ...note(), excerpt: '' }
 
+it('shows Markdown notes without repeating the MD extension', () => {
+  render(<NoteList notes={[entry]} activeId={null} state="ready" onSelect={vi.fn()} />)
+  const card = screen.getByRole('button', { name: entry.title })
+  expect(within(card).getByText('Markdown')).toBeVisible()
+  expect(within(card).queryByText('Markdown · MD')).not.toBeInTheDocument()
+})
+
+
 it('keeps hover rows free of delete controls and exposes deletion through the context menu', () => {
   const onDelete = vi.fn()
   render(<NoteList notes={[entry]} activeId={entry.id} state="ready" onSelect={vi.fn()} onDelete={onDelete} />)
@@ -61,6 +69,26 @@ it('identifies mixed library entries and exposes the original file extension', (
  expect(screen.getByRole('button',{name:'预算'})).toHaveAccessibleDescription('Office · XLSX')
 })
 
+it('does not offer PDF export for non-PDF attachments', () => {
+  const officeEntry = {
+    ...entry,
+    id: '019c0000-0000-7000-8000-000000000213' as NoteId,
+    content: {
+      type: 'file' as const,
+      file: {
+        storageName: 'payload',
+        originalName: '预算.xlsx',
+        mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        size: 12,
+        sha256: 'abc',
+      },
+    },
+  }
+  render(<NoteList notes={[officeEntry]} activeId={null} state="ready" onSelect={vi.fn()} onExport={vi.fn()} />)
+  fireEvent.contextMenu(screen.getByRole('button', { name: entry.title }))
+  expect(screen.queryByRole('menuitem', { name: '导出 PDF' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: '另存 PDF' })).not.toBeInTheDocument()
+})
 it('supports keyboard multi-selection and moves or deletes the selected set', () => {
   const second = {
     ...entry,

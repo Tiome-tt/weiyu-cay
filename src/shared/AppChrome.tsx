@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react'
 import type { WindowChromePort } from '../domain/ports'
 import { Icon, type IconName } from './Icon'
+import { DailyLyricDisplay } from '../features/lyrics/DailyLyricDisplay'
 
 interface AppChromeProps {
   children: ReactNode
   windowChrome: WindowChromePort
+  dailyLyricsEnabled?: boolean
 }
 
 interface WindowControl {
@@ -14,7 +16,7 @@ interface WindowControl {
 }
 
 /** Frameless main-window shell. Product branding belongs in the toolbar below this row. */
-export function AppChrome({ children, windowChrome }: AppChromeProps) {
+export function AppChrome({ children, windowChrome, dailyLyricsEnabled = false }: AppChromeProps) {
   const controls: WindowControl[] = [
     { icon: 'minimize', label: '最小化窗口', run: () => windowChrome.minimize() },
     { icon: 'maximize', label: '最大化或还原窗口', run: () => windowChrome.toggleMaximize() },
@@ -33,7 +35,9 @@ export function AppChrome({ children, windowChrome }: AppChromeProps) {
           className="window-drag-region"
           data-tauri-drag-region=""
           data-testid="window-drag-region"
-        />
+        >
+          <DailyLyricDisplay enabled={dailyLyricsEnabled} />
+        </div>
         {windowChrome.platform === 'windows' ? controlGroup : null}
       </header>
       <div className="window-chrome__content">{children}</div>

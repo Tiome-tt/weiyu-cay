@@ -1,7 +1,7 @@
 import type { RichDocument, RichMark, RichNode } from '../../domain/content'
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
-const INLINE_TOKEN = new RegExp(`(\\[\\[[^\\]\\n|]+\\|${UUID}\\]\\]|==[^=\\n]+==|\\*\\*[^*\\n]+\\*\\*|~~[^~\\n]+~~|\\x60[^\\x60\\n]+\\x60|\\[[^\\]\\n]+\\]\\((?:https?:\\/\\/|mailto:)[^)\\s]+\\))`, 'gi')
+const INLINE_TOKEN = new RegExp(`(\\[\\[[^\\]\\n|]+\\|${UUID}\\]\\]|==[^=\\n]+==|\\*\\*[^*\\n]+\\*\\*|~~[^~\\n]+~~|\\x60[^\\x60\\n]+\\x60|\\$\\$[^$\\n]+\\$\\$|\\$[^$\\n]+\\$|\\[[^\\]\\n]+\\]\\((?:https?:\\/\\/|mailto:)[^)\\s]+\\))`, 'gi')
 
 function text(value: string, marks?: RichMark[]): RichNode {
   return { type: 'text', text: value, ...(marks?.length ? { marks } : {}) }
@@ -26,6 +26,10 @@ function inlineContent(source: string): RichNode[] {
       nodes.push(text(token.slice(2, -2), [{ type: 'bold' }]))
     } else if (token.startsWith('~~')) {
       nodes.push(text(token.slice(2, -2), [{ type: 'strike' }]))
+    } else if (token.startsWith('$$')) {
+      nodes.push({ type: 'math', attrs: { latex: token.slice(2, -2) } })
+    } else if (token.startsWith('$')) {
+      nodes.push({ type: 'math', attrs: { latex: token.slice(1, -1) } })
     } else {
       nodes.push(text(token.slice(1, -1), [{ type: 'code' }]))
     }
@@ -36,7 +40,7 @@ function inlineContent(source: string): RichNode[] {
 }
 
 function isKnownBlockStart(line: string): boolean {
-  return /^(?:#{1,6}\s+|```|>\s?|[-*+]\s+|\d+[.)]\s+|[-*_](?:\s*[-*_]){2,}\s*$)/.test(line)
+  return /^(?:#{1,6}\s+|```|>\s?|[-*+]\s+|\d+[.)]\s+|\$\$|[-*_](?:\s*[-*_]){2,}\s*$)/.test(line)
 }
 
 /**
@@ -52,6 +56,25 @@ export function markdownToRichDocument(markdown: string): RichDocument {
     const line = lines[index]
     if (!line.trim()) { index += 1; continue }
 
+    const singleLineMath = line.match(/^\$\$(.+)\$\$\s*$/)
+    if (singleLineMath) {
+      content.push({ type: 'mathBlock', attrs: { latex: singleLineMath[1].trim() } })
+      index += 1
+      continue
+    }
+    if (line.trim() === '$$') {
+      const start = index
+      index += 1
+      const body: string[] = []
+      while (index < lines.length && lines[index].trim() !== '$$') body.push(lines[index++])
+      if (index >= lines.length) {
+        content.push({ type: 'rawMarkdown', attrs: { source: lines.slice(start).join('\n') } })
+        break
+      }
+      content.push({ type: 'mathBlock', attrs: { latex: body.join('\n').trim() } })
+      index += 1
+      continue
+    }
     const fence = line.match(/^```\s*([^\s`]*)\s*$/)
     if (fence) {
       const start = index

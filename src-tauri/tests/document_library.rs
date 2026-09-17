@@ -38,6 +38,89 @@ fn unknown_rich_structure_is_rejected_before_publication() {
     assert!(repo.create(bad).is_err());
 }
 
+#[test]
+fn rich_image_width_is_durable() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let repo = NoteRepository::new(paths);
+    let image = doc(json!({
+        "type": "document",
+        "document": {
+            "schemaVersion": 1,
+            "root": {
+                "type": "doc",
+                "content": [{
+                    "type": "image",
+                    "attrs": {
+                        "src": "assets/screenshot-019c0000-0000-7000-8000-000000000002.png",
+                        "alt": "架构图",
+                        "width": 420
+                    }
+                }]
+            }
+        }
+    }));
+    let saved = repo.create(image).unwrap();
+    assert_eq!(repo.load(saved.id).unwrap().content, saved.content);
+}
+#[test]
+fn rich_font_marks_and_justified_paragraph_are_durable() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let repo = NoteRepository::new(paths);
+    let content = doc(json!({
+        "type": "document",
+        "document": {
+            "schemaVersion": 1,
+            "root": {
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "attrs": {"textAlign": "justify"},
+                    "content": [{
+                        "type": "text",
+                        "text": "知识库",
+                        "marks": [{"type": "font", "attrs": {"family": "sans", "size": "large"}}]
+                    }]
+                }]
+            }
+        }
+    }));
+    let saved = repo.create(content).unwrap();
+    assert_eq!(repo.load(saved.id).unwrap().content, saved.content);
+}
+#[test]
+fn rich_formula_nodes_and_script_marks_are_durable() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let repo = NoteRepository::new(paths);
+    let formula = doc(json!({
+        "type": "document",
+        "document": {
+            "schemaVersion": 1,
+            "root": {
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{
+                        "type": "text",
+                        "text": "x",
+                        "marks": [{"type": "subscript"}]
+                    }, {
+                        "type": "math",
+                        "attrs": {"latex": "\\sqrt{d_k}"}
+                    }]
+                }, {
+                    "type": "mathBlock",
+                    "attrs": {"latex": "\\frac{a}{b}"}
+                }]
+            }
+        }
+    }));
+    let saved = repo.create(formula).unwrap();
+    assert_eq!(repo.load(saved.id).unwrap().content, saved.content);
+}
+
 fn rich_content() -> serde_json::Value {
     json!({"type":"document","document":{"schemaVersion":1,"root":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"保留中文"}]}]}}})
 }
@@ -475,6 +558,21 @@ fn rich_content_matches_shared_projection_and_indexes_original_attachment_names(
     .remove(0);
     let renamed = repo.rename_note(file.id, "重命名附件").unwrap();
     assert_eq!(plain_text(&renamed), "original-special-name.bin");
+}
+#[test]
+fn pdf_export_replaces_an_existing_destination_atomically() {
+    use simple_notes_lib::storage::managed_files::save_pdf_export;
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let note = NoteRepository::new(paths.clone())
+        .create(doc(rich_content()))
+        .unwrap();
+    let target = root.path().join("generated.pdf");
+    let first = b"%PDF-1.7\nfirst";
+    let second = b"%PDF-1.7\nsecond";
+    save_pdf_export(&paths, note.id, &target, first).unwrap();
+    save_pdf_export(&paths, note.id, &target, second).unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), second);
 }
 #[test]
 fn valid_docx_package_is_saved_atomically_and_malformed_xml_is_rejected() {

@@ -8,6 +8,7 @@ fn main() {
             "export_managed_file",
             "open_managed_file",
             "save_document_export",
+            "save_pdf_export",
             "startup_guide_target",
             "complete_startup_guide",
             "load_note",

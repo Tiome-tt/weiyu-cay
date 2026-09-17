@@ -7,7 +7,7 @@ import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../
 import type { FilePort, SystemPort, TrashPort, WindowPreferenceMap } from '../../domain/ports'
 import { commandError } from '../../domain/errors'
 import { fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSystemPort, fakeTemporaryPort, note, twoCaptures } from '../../test/fakes'
-import { LibraryLayout, outlineHeadingSignature } from './LibraryLayout'
+import { LibraryLayout, outlineHeadingSignature, shouldSelectNoteForExport } from './LibraryLayout'
 import { createRef } from 'react'
 import type { LibraryLayoutHandle } from './LibraryLayout'
 import { MainWindowEmptyState } from './MainWindowEmptyState'
@@ -18,6 +18,9 @@ const recoveredFolder = '019c0000-0000-7000-8000-000000000024' as FolderId
 const noteA = '019c0000-0000-7000-8000-000000000031' as NoteId
 const noteB = '019c0000-0000-7000-8000-000000000032' as NoteId
 const noteC = '019c0000-0000-7000-8000-000000000033' as NoteId
+const markdownPdfExportMock = vi.hoisted(() => vi.fn(async () => true))
+vi.mock('../content/pdfExport', () => ({ exportMarkdownDocumentToPdf: markdownPdfExportMock, exportTypedDocumentToPdf: vi.fn(async () => true) }))
+
 const folderRows: Folder[] = [
   { id: folderA, parentId: null, name: '项目 A', sortOrder: 0 },
   { id: folderB, parentId: null, name: '项目 B', sortOrder: 1 },
@@ -65,6 +68,18 @@ afterEach(() => {
 })
 
 describe('LibraryLayout', () => {
+  it('does not show an empty root-note separator on the initial library screen', async () => {
+    render(
+      <LibraryLayout
+        notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) })}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+      />,
+    )
+
+    await screen.findByRole('treeitem', { name: '项目 A' })
+    expect(document.querySelector('.folder-tree__root-notes')).not.toBeInTheDocument()
+  })
   it('updates expanded source and destination rows immediately after moving from the editor menu', async () => {
     let current: NoteDocument = { ...note('body'), id: noteA, title: '移动刷新测试', folderId: folderA }
     const notes = fakeNotePort({
@@ -137,6 +152,74 @@ describe('LibraryLayout', () => {
     expect(screen.queryByTestId('empty-island')).not.toBeInTheDocument()
   })
 
+  it('clears the previous inline note selection when selecting a note in another folder', async () => {
+    const first = summary(noteA, '欢迎来到微屿', folderA)
+    const second = summary(noteB, '另一篇笔记', folderB)
+    const notes = fakeNotePort({
+      listNotes: vi.fn(async (folderId) => folderId === folderA ? [first] : folderId === folderB ? [second] : []),
+      loadNote: vi.fn(async (id) => ({ ...note('正文'), id, title: id === noteA ? first.title : second.title, folderId: id === noteA ? folderA : folderB })),
+    })
+    const user = userEvent.setup()
+    render(<LibraryLayout notes={notes} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()} />)
+
+    await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
+    const firstCard = await screen.findByRole('button', { name: /^欢迎来到微屿/ })
+    await user.click(firstCard)
+    expect(firstCard).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(screen.getByRole('treeitem', { name: '项目 B' }))
+    const secondCard = await screen.findByRole('button', { name: /^另一篇笔记/ })
+    await user.click(secondCard)
+
+    await waitFor(() => {
+      expect(firstCard).toHaveAttribute('aria-pressed', 'false')
+      expect(firstCard).not.toHaveAttribute('aria-current', 'true')
+      expect(secondCard).toHaveAttribute('aria-pressed', 'true')
+      expect(secondCard).toHaveAttribute('aria-current', 'true')
+    })
+  })
+  it('clears stale inline selection when external navigation opens another note', async () => {
+    const previous = summary(noteA, '面试入股', folderA)
+    const target = summary(noteB, '欢迎来到微屿', folderA)
+    const notes = fakeNotePort({
+      listNotes: vi.fn().mockResolvedValue([previous, target]),
+      loadNote: vi.fn(async (id) => ({ ...note('正文'), id, title: id === noteA ? previous.title : target.title, folderId: folderA })),
+    })
+    const initialGuide = { loadTarget: vi.fn().mockResolvedValue(null), completeTarget: vi.fn().mockResolvedValue(undefined) }
+    const nextGuide = { loadTarget: vi.fn().mockResolvedValue({ folderId: folderA, noteId: noteB }), completeTarget: vi.fn().mockResolvedValue(undefined) }
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <LibraryLayout
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+        startupGuide={initialGuide}
+      />,
+    )
+
+    await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
+    const previousCard = await screen.findByRole('button', { name: /^面试入股/ })
+    await user.click(previousCard)
+    expect(await screen.findByRole('heading', { name: '面试入股' })).toBeVisible()
+
+    rerender(
+      <LibraryLayout
+        notes={notes}
+        folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+        system={fakeSystemPort()}
+        startupGuide={nextGuide}
+      />,
+    )
+
+    const targetCard = await screen.findByRole('button', { name: /^欢迎来到微屿/ })
+    await waitFor(() => expect(screen.getByRole('heading', { name: '欢迎来到微屿' })).toBeVisible())
+    await waitFor(() => {
+      expect(previousCard).toHaveAttribute('aria-pressed', 'false')
+      expect(previousCard).not.toHaveAttribute('aria-current', 'true')
+      expect(targetCard).toHaveAttribute('aria-pressed', 'true')
+      expect(targetCard).toHaveAttribute('aria-current', 'true')
+    })
+  })
   it('forwards the selected editor save state to the main window', async () => {
     const onSaveStateChange = vi.fn()
     const notes = fakeNotePort({
@@ -1705,4 +1788,45 @@ describe('LibraryLayout', () => {
     fireEvent.contextMenu(secondCard)
     expect(screen.queryByRole('menuitem', { name: '移动 2 项' })).not.toBeInTheDocument()
   })
+})
+
+it('reuses the active note when an export targets that same note', () => {
+  expect(shouldSelectNoteForExport(noteA, noteA)).toBe(false)
+  expect(shouldSelectNoteForExport(noteA, noteB)).toBe(true)
+  expect(shouldSelectNoteForExport(null, noteA)).toBe(true)
+})
+it('exports the active Markdown note without selecting it again', async () => {
+  const current = { ...note('正文'), id: noteA, title: '第一项', folderId: folderA }
+  const entry = { ...current, excerpt: '正文' }
+  const loadNote = vi.fn().mockResolvedValue(current)
+  const markdownPdfExport = markdownPdfExportMock
+  const files: FilePort = {
+    chooseFiles: vi.fn().mockResolvedValue([]),
+    importFiles: vi.fn().mockResolvedValue({ imported: [], failed: [] }),
+    readFile: vi.fn(),
+    saveFileAs: vi.fn().mockResolvedValue(false),
+    openFile: vi.fn().mockResolvedValue(undefined),
+    savePdfExport: vi.fn().mockResolvedValue(true),
+  }
+  const user = userEvent.setup()
+  render(
+    <LibraryLayout
+      notes={fakeNotePort({
+        listNotes: vi.fn(async (folderId) => folderId === folderA ? [entry] : []),
+        loadNote,
+      })}
+      folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })}
+      system={fakeSystemPort()}
+      files={files}
+    />,
+  )
+  await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
+  const card = await screen.findByRole('button', { name: '第一项' })
+  await user.click(card)
+  await waitFor(() => expect(loadNote).toHaveBeenCalledTimes(1))
+
+  fireEvent.contextMenu(card)
+  await user.click(screen.getByRole('menuitem', { name: '导出 PDF' }))
+  await waitFor(() => expect(markdownPdfExport).toHaveBeenCalled())
+  expect(loadNote).toHaveBeenCalledTimes(2)
 })

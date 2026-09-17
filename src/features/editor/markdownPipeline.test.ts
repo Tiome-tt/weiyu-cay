@@ -33,3 +33,14 @@ describe('markdown preview table enhancements', () => {
     expect(host.querySelector('th')?.rowSpan).toBe(1)
   })
 })
+
+describe('markdown math rendering', () => {
+  it('renders inline and block LaTeX instead of exposing the source text', () => {
+    const html = renderPreviewMarkdown('行内 $x_i$。\n\n$$\n\\sqrt{d_k}\n$$')
+    expect(html).toContain('katex')
+    expect(html).toContain('x_i')
+    expect(html).toContain('katex-display')
+    expect(html).toContain('sqrt')
+    expect(html).toContain('msub')
+  })
+})

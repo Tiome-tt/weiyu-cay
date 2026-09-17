@@ -452,10 +452,119 @@ describe('MarkdownSource', () => {
     expect(screen.getByRole('button', { name: '拆分单元格' })).toBeDisabled()
   })
 
+  it('keeps long Markdown cell values visible and focuses the editor on click', () => {
+    const source = '| Name | Note |\n| --- | --- |\n| A long value that should wrap inside the cell | B |'
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={source} onChange={onChange} />)
+    const input = screen.getByRole('textbox', { name: '2 行 1 列' }) as HTMLTextAreaElement
+
+    expect(input.tagName).toBe('TEXTAREA')
+    expect(input).toHaveStyle({ height: '28px', overflowY: 'hidden' })
+    Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 240 })
+    fireEvent.pointerDown(input, { button: 0 })
+    expect(input).toHaveFocus()
+    expect(input).toHaveStyle({ height: '128px', overflowY: 'auto' })
+
+    fireEvent.blur(input)
+    expect(input).toHaveStyle({ height: '28px', overflowY: 'hidden' })
+  })
+  it('opens a URL from an editable table cell only through Ctrl+click', () => {
+    const openExternal = vi.fn().mockResolvedValue(undefined)
+    const url = 'https://example.com/jobs/123'
+    render(
+      <MarkdownSource
+        markdown={'| Link | Note |\n| --- | --- |\n| ' + url + ' | ready |'}
+        onChange={vi.fn()}
+        external={{ openExternal }}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: '2 行 1 列' }) as HTMLTextAreaElement
+    input.focus()
+    input.setSelectionRange(url.length, url.length)
+    fireEvent.click(input)
+    expect(openExternal).not.toHaveBeenCalled()
+    fireEvent.click(input, { ctrlKey: true })
+    expect(openExternal).toHaveBeenCalledWith(url)
+  })
+  it('commits the active cell and focuses another cell on its first click', async () => {
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={'| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |'} onChange={onChange} />)
+    const first = screen.getByRole('textbox', { name: '2 行 1 列' }) as HTMLTextAreaElement
+    const target = screen.getByRole('textbox', { name: '2 行 3 列' }) as HTMLTextAreaElement
+
+    first.focus()
+    fireEvent.input(first, { target: { value: 'edited' } })
+    first.addEventListener('blur', () => fireEvent.change(first), { once: true })
+    fireEvent.pointerDown(target, { button: 0 })
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 3 列' })).toHaveFocus())
+    expect(onChange).toHaveBeenLastCalledWith('| A | B | C |\n| --- | --- | --- |\n| edited | 2 | 3 |')
+  })
+  it('moves through editable table cells with Tab without leaving the table', () => {
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'} onChange={vi.fn()} />)
+    const first = screen.getByRole('textbox', { name: '2 行 1 列' })
+    const second = screen.getByRole('textbox', { name: '2 行 2 列' })
+    const nextRow = screen.getByRole('textbox', { name: '3 行 1 列' })
+
+    first.focus()
+    fireEvent.keyDown(first, { key: 'Tab' })
+    expect(document.activeElement).toBe(second)
+    fireEvent.keyDown(second, { key: 'Tab' })
+    expect(document.activeElement).toBe(nextRow)
+    fireEvent.keyDown(nextRow, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(second)
+  })
+  it('keeps a floating horizontal scrollbar for wide tables', () => {
+    render(<MarkdownSource markdown={'| A very wide column | Another wide column |\n| --- | --- |\n| content | more content |'} onChange={vi.fn()} />)
+    const table = screen.getByRole('table', { name: 'Markdown 表格' })
+    const wrapper = table.closest('.cm-live-table')
+    expect(wrapper?.querySelector('.cm-live-table-scrollbar')).toHaveAttribute('aria-label', '表格横向滚动')
+    expect(wrapper).not.toHaveClass('cm-live-table--scrollable')
+  })
+
+  it('restores the table horizontal position after committing a cell edit', () => {
+    render(<MarkdownSource markdown={'| A | B | C | D |\n| --- | --- | --- | --- |\n| 1 | 2 | 3 | 4 |'} onChange={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: '2 行 4 列' }) as HTMLTextAreaElement
+    const wrapper = input.closest('.cm-live-table')
+    const viewport = wrapper?.querySelector<HTMLElement>('.cm-live-table-viewport')
+    if (!viewport) throw new Error('table viewport not found')
+
+    viewport.scrollLeft = 180
+    fireEvent.change(input, { target: { value: 'updated' } })
+
+    const nextViewport = screen.getByRole('textbox', { name: '2 行 4 列' }).closest('.cm-live-table')?.querySelector<HTMLElement>('.cm-live-table-viewport')
+    expect(nextViewport?.scrollLeft).toBe(180)
+  })
+
+  it('restores the table horizontal position after the parent echoes the edited Markdown', () => {
+    const source = ['| A | B | C | D |', '| --- | --- | --- | --- |', '| 1 | 2 | 3 | 4 |'].join('\n')
+    let externalMarkdown = source
+    const onChange = vi.fn((next: string) => { externalMarkdown = next })
+    const rendered = render(<MarkdownSource markdown={externalMarkdown} onChange={onChange} />)
+    const input = screen.getByRole('textbox', { name: '2 行 4 列' }) as HTMLTextAreaElement
+    const wrapper = input.closest('.cm-live-table')
+    const viewport = wrapper?.querySelector<HTMLElement>('.cm-live-table-viewport')
+    if (!viewport) throw new Error('table viewport not found')
+
+    viewport.scrollLeft = 180
+    fireEvent.change(input, { target: { value: 'updated' } })
+    rendered.rerender(<MarkdownSource markdown={externalMarkdown} onChange={onChange} />)
+
+    const nextViewport = screen.getByRole('textbox', { name: '2 行 4 列' }).closest('.cm-live-table')?.querySelector<HTMLElement>('.cm-live-table-viewport')
+    expect(nextViewport?.scrollLeft).toBe(180)
+  })
+
+  it('allows native mouse text selection inside an editable table cell', () => {
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| selectable text | value |'} onChange={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: '2 行 1 列' })
+    const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })
+    input.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+  })
   it('keeps the full editable cell value available in a hover preview', () => {
     const source = '| Name | Note |\n| --- | --- |\n| A very long value | B |'
     render(<MarkdownSource markdown={source} onChange={vi.fn()} />)
-    const input = screen.getByRole('textbox', { name: '2 行 1 列' })
+    const input = screen.getByRole('textbox', { name: '2 行 1 列' }) as HTMLTextAreaElement
     expect(input).toHaveAttribute('title', 'A very long value')
 
     fireEvent.input(input, { target: { value: 'An updated long value' } })

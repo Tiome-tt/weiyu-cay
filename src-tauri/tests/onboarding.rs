@@ -254,7 +254,9 @@ fn startup_upgrades_only_an_unmodified_legacy_guide() {
 
 #[test]
 fn startup_upgrades_unmodified_previous_guides() {
-    for use_space_shortcut in [false, true] {
+    for (use_space_shortcut, use_windows_line_endings) in
+        [(false, false), (true, false), (false, true)]
+    {
         let root = tempfile::tempdir().expect("create storage root");
         let paths = StoragePaths::open(root.path()).expect("open storage paths");
         let database = Database::open(paths.database()).expect("create database");
@@ -276,6 +278,11 @@ fn startup_upgrades_unmodified_previous_guides() {
             previous_guide
                 .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
                 .replace("Command+Shift+D", "Command+Shift+Space")
+        } else {
+            previous_guide
+        };
+        let previous_guide = if use_windows_line_endings {
+            previous_guide.replace('\n', "\r\n")
         } else {
             previous_guide
         };

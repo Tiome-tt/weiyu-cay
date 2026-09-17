@@ -552,6 +552,7 @@ describe('App', () => {
         assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
         settings: fakeSettingsPort({ load: async () => ({
           theme: 'sand', stickyColorMode: 'follow-theme', bodyFont: 'serif', codeFont: 'monospace', fontSize: 18,
+          dailyLyrics: true,
           lineHeight: 1.7, shortcut: 'Ctrl+N', launchAtStartup: false, closeToTray: true,
           closeBehaviorConfirmed: false, showMenuBarIcon: true, defaultEditorMode: 'split', autosaveDelayMs: 800,
           dataRoot: { mode: 'default' },
@@ -560,7 +561,8 @@ describe('App', () => {
     )
     const app = screen.getByRole('application', { name: '微屿' })
     await waitFor(() => expect(app).toHaveAttribute('data-theme', 'sand'))
-    expect(app.style.getPropertyValue('--body-font-size')).toBe('18px')
+    expect(app.style.getPropertyValue('--app-font-size')).toBe('18px')
+    expect(app.style.getPropertyValue('--note-font-size')).toBe('16px')
     await user.click(screen.getByRole('button', { name: '打开设置' }))
     expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible()
   })
@@ -786,8 +788,9 @@ describe('App', () => {
     expect(shell).toHaveAttribute('data-theme', 'sand')
     expect(shell?.style.getPropertyValue('--body-font')).toBe('Sticky Serif')
     expect(shell?.style.getPropertyValue('--code-font')).toBe('Sticky Mono')
-    expect(shell?.style.getPropertyValue('--body-font-size')).toBe('19px')
-    expect(shell?.style.getPropertyValue('--body-line-height')).toBe('1.8')
+    expect(shell?.style.getPropertyValue('--app-font-size')).toBe('19px')
+    expect(shell?.style.getPropertyValue('--note-font-size')).toBe('16px')
+    expect(shell?.style.getPropertyValue('--note-line-height')).toBe('1.8')
     expect(fullSettingsLoad).not.toHaveBeenCalled()
     expect(screen.getByTestId('sticky-window')).not.toHaveAttribute('style')
     editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'new' } })

@@ -134,6 +134,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const externalRef = useRef(external)
   const renderedLinkContextRef = useRef({ links, linkCache })
   const contextViewRef = useRef<EditorView | null>(null)
+  const tableScrollPositionsRef = useRef(new Map<number, number>())
   const contextMenuAnchorRef = useRef<ContextMenuAnchor | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [tableDialog, setTableDialog] = useState<TableDialogState | null>(null)
@@ -150,6 +151,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   if (noteIdRef.current !== noteId) {
     noteIdRef.current = noteId
     editorGenerationRef.current += 1
+    tableScrollPositionsRef.current.clear()
   }
   assetsRef.current = assets
   assetReaderRef.current = assetReader
@@ -336,7 +338,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           getPresentation: () => presentationRef.current,
           isEditable: () => !readOnlyRef.current,
           getImageContext: () => ({ noteId: noteIdRef.current, assetReader: assetReaderRef.current }),
-          onEditTable: ({ from, to, table }) => {
+          onOpenExternal: (href) => { void externalRef.current?.openExternal(href) },
+          tableScrollPositions: tableScrollPositionsRef.current,
+          onEditTable: ({ from, to, table, scrollLeft }) => {
             const view = viewRef.current
             if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
             const tableMarkdown = tableMarkdownFromModel(table)
@@ -346,6 +350,21 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
               annotations: documentTableEdit.of(true),
             })
             view.focus()
+            if (scrollLeft === undefined) return
+            const restore = () => {
+              const tableWrapper = [...view.dom.querySelectorAll<HTMLElement>('.cm-live-table')].find((element) => {
+                try { return view.posAtDOM(element) === from } catch { return false }
+              })
+              const tableViewport = tableWrapper?.querySelector<HTMLElement>('.cm-live-table-viewport')
+              if (tableWrapper === undefined || tableViewport === null || tableViewport === undefined) return
+              const restored = Math.max(0, scrollLeft)
+              tableViewport.scrollLeft = restored
+              const rail = tableWrapper.querySelector<HTMLElement>('.cm-live-table-scrollbar')
+              if (rail !== null) rail.scrollLeft = restored
+            }
+            restore()
+            window.requestAnimationFrame(restore)
+            window.setTimeout(restore, 0)
           },
         }),
         ...(links

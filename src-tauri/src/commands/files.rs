@@ -138,6 +138,28 @@ pub struct DocumentExportInput {
     pub bytes: Vec<u8>,
 }
 #[tauri::command(rename_all = "camelCase")]
+pub fn save_pdf_export(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    input: DocumentExportInput,
+) -> Result<(), CommandError> {
+    main_window(&window)?;
+    if !window
+        .fs_scope()
+        .is_allowed(std::path::Path::new(&input.destination))
+    {
+        return Err(CommandError::validation(
+            "PDF destination must be selected by the user",
+        ));
+    }
+    managed_files::save_pdf_export(
+        state.paths_for(StorageConsumer::Notes)?,
+        input.note_id,
+        std::path::Path::new(&input.destination),
+        &input.bytes,
+    )
+}
+#[tauri::command(rename_all = "camelCase")]
 pub fn save_document_export(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,

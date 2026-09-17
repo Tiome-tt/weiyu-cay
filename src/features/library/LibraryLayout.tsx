@@ -122,9 +122,11 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       })
     }, 100)
   }, [])
-  const outlineMarkdown = outlineDraft !== null && outlineDraft.noteId === library.document?.id
+  const outlineDocument = library.document
+  const outlineDocumentMarkdown = useMemo(() => contentOutlineMarkdown(outlineDocument ?? {}), [outlineDocument])
+  const outlineMarkdown = outlineDraft !== null && outlineDraft.noteId === outlineDocument?.id
     ? outlineDraft.markdown
-    : contentOutlineMarkdown(library.document ?? {})
+    : outlineDocumentMarkdown
 
   useEffect(() => {
     if (activeView !== 'library' || library.documentState !== 'ready' || library.document === null) {
@@ -492,17 +494,22 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }, [files])
 
   const requestNoteExport = (note: { id: NoteId; folderId: FolderId | null }, kind: 'word' | 'pdf') => {
-    setPendingEditorAction({ noteId: note.id, kind })
+    const reuseActiveNote = activeView === 'library'
+      && library.activeNoteId === note.id
+      && activeFolderIdRef.current === note.folderId
     void navigateAfterSave(() => {
       setActiveView('library')
-      if (note.folderId !== activeFolderIdRef.current && note.folderId !== null) library.selectFolder(note.folderId)
-      library.selectNote(note.id)
+      if (note.folderId !== activeFolderIdRef.current) library.selectFolder(note.folderId)
+      if (shouldSelectNoteForExport(reuseActiveNote ? note.id : null, note.id)) library.selectNote(note.id)
       return true
     }).then((result) => {
-      if (result === null) setPendingEditorAction(null)
+      if (result === null) {
+        setPendingEditorAction(null)
+        return
+      }
+      setPendingEditorAction({ noteId: note.id, kind })
     }).catch(() => setPendingEditorAction(null))
   }
-
   const convertWordFile = async (source: Awaited<ReturnType<typeof notes.loadNote>>, bytes: Uint8Array) => {
     if (source.content?.type !== 'file' || !/\.docx?$/i.test(source.content.file.originalName)) throw new Error('仅支持 Word 文档转换。')
     if (trash === undefined) throw new Error('回收站不可用，无法自动移除原文件。')
@@ -541,6 +548,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const renderFolderNotes = (folderId: FolderId | null): ReactNode | undefined => {
     const folderNotes = library.notesByFolder[folderId ?? '__unfiled__']
     const loadFailed = library.folderNoteErrors[folderId ?? '__unfiled__'] === true
+    if (folderId === null && !loadFailed && library.noteListState === 'ready' && library.activeNoteId === null && trashFeedback === null && recentTrashOperationId === null && (folderNotes === undefined || folderNotes.length === 0)) return undefined
     if (folderNotes === undefined && folderId !== library.activeFolderId && !loadFailed) return undefined
     const isActiveFolder = folderId === library.activeFolderId
     return <NoteList
@@ -713,7 +721,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
           </section>
         ) : (
-          <NoteOutline markdown={outlineMarkdown} onNavigate={(line, headingIndex) => editorRef.current?.navigateToHeading(line, headingIndex)} onCollapse={() => setColumnCollapsed('noteList', true)} />
+          <NoteOutline key={library.document?.id ?? 'empty'} markdown={outlineMarkdown} onNavigate={(line, headingIndex) => editorRef.current?.navigateToHeading(line, headingIndex)} onCollapse={() => setColumnCollapsed('noteList', true)} />
         )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
@@ -786,6 +794,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     </div>
   )
 })
+
+export function shouldSelectNoteForExport(activeNoteId: NoteId | null, targetNoteId: NoteId): boolean {
+  return activeNoteId !== targetNoteId
+}
 
 function linkRepairNeedsRetry(report: LinkRepairReport) {
   return report.failure !== null || report.failedSourceIds.length > 0

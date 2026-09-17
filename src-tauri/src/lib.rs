@@ -77,6 +77,7 @@ pub fn run() {
             commands::files::export_managed_file,
             commands::files::open_managed_file,
             commands::files::save_document_export,
+            commands::files::save_pdf_export,
             commands::notes::startup_guide_target,
             commands::notes::complete_startup_guide,
             commands::notes::load_note,

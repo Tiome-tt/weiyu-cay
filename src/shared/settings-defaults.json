@@ -4,6 +4,7 @@
   "bodyFont": "KaiTi, STKaiti, serif",
   "codeFont": "ui-monospace, SFMono-Regular, Consolas, monospace",
   "fontSize": 16.0,
+  "dailyLyrics": true,
   "lineHeight": 1.6,
   "shortcut": "CommandOrControl+Shift+D",
   "launchAtStartup": false,

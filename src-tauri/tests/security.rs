@@ -150,6 +150,7 @@ fn updater_commands_are_main_only_and_plugin_ipc_is_not_granted_to_any_renderer(
         "allow-check-for-update",
         "allow-install-pending-update",
         "allow-restart-after-update",
+        "allow-save-pdf-export",
     ] {
         assert!(main_permissions.contains(command));
         assert!(!desktop_permissions.contains(command));
@@ -172,6 +173,7 @@ fn updater_commands_are_main_only_and_plugin_ipc_is_not_granted_to_any_renderer(
         "check_for_update",
         "install_pending_update",
         "restart_after_update",
+        "save_pdf_export",
     ] {
         assert!(manifest.contains(&format!("\"{command}\",")));
     }

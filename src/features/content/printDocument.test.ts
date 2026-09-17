@@ -10,3 +10,11 @@ it('keeps table spans and visible text while removing editor controls and active
  expect(result.querySelector('img')?.hasAttribute('src')).toBe(false)
  expect(result.querySelector('img')?.hasAttribute('onerror')).toBe(false)
 })
+
+it('preserves an explicit rich-image width in the export snapshot', () => {
+ const source = document.createElement('article')
+ source.innerHTML = '<figure class="rich-document__image-node"><img data-simple-notes-image-width="320" src="blob:ignored"></figure>'
+ const result = printableClone(source)
+ expect(result.querySelector('img')?.style.width).toBe('320px')
+ expect(result.querySelector('figure')?.style.width).toBe('320px')
+})

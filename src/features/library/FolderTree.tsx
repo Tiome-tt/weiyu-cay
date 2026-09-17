@@ -506,6 +506,9 @@ export function FolderTree(props: FolderTreeProps) {
       })
 
   const excludedMoveTargets = moving === null ? new Set<FolderId>() : descendantIds(moving, props.folders)
+  const rootContents = props.activeId === null && props.folderContents !== undefined
+    ? typeof props.folderContents === 'function' ? props.folderContents(null) : props.folderContents
+    : undefined
 
   return (
     <nav aria-label="文件夹" className="folder-tree" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }}>
@@ -618,7 +621,7 @@ export function FolderTree(props: FolderTreeProps) {
         )}
         {props.folders.some((folder) => folder.parentId === null) && <li role="separator" className="folder-tree__separator" aria-label="系统入口与文件夹分隔线" />}
         {renderBranch(null)}
-        {props.activeId === null && props.folderContents !== undefined && <li role="none" className="folder-tree__root-notes">{typeof props.folderContents === 'function' ? props.folderContents(null) : props.folderContents}</li>}
+        {rootContents !== undefined && <li role="none" className="folder-tree__root-notes">{rootContents}</li>}
       </ul>
       {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
       {deleteTarget !== null && (

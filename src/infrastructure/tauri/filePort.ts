@@ -16,7 +16,12 @@ export class TauriFilePort implements FilePort {
     await this.client.invoke('save_document_export',{input:{noteId,destination,bytes:Array.from(bytes)}})
     return true
   }
-  async chooseFiles(): Promise<string[]> {
+  async savePdfExport(noteId: NoteId, bytes: Uint8Array, title: string): Promise<boolean> {
+    const destination = await save({title:'导出 PDF',defaultPath:title.replace(/[<>:"/\|?*]/g,'_')+'.pdf',filters:[{name:'PDF 文件',extensions:['pdf']}]})
+    if (!destination) return false
+    await this.client.invoke('save_pdf_export',{input:{noteId,destination,bytes:Array.from(bytes)}})
+    return true
+  }  async chooseFiles(): Promise<string[]> {
     const paths = await open({multiple:true,directory:false,title:'导入文件'})
     return paths === null ? [] : Array.isArray(paths) ? paths : [paths]
   }

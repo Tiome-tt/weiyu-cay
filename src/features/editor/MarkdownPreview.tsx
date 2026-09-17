@@ -7,6 +7,7 @@ import {
   resolutionTitle,
 } from './internalLinks'
 import { applyMarkdownTableMerges, renderPreviewMarkdown } from './markdownPipeline'
+import 'katex/dist/katex.min.css'
 
 interface MarkdownPreviewProps {
   markdown: string

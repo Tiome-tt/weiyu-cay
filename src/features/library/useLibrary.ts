@@ -7,6 +7,8 @@ export type LibraryNotePort = Pick<NotePort, 'createNote' | 'listNotes' | 'loadN
 
 type LoadState = 'loading' | 'ready' | 'error'
 
+const DOCUMENT_CACHE_LIMIT = 8
+
 export function useLibrary(
   notesPort: LibraryNotePort,
   foldersPort: FolderPort,
@@ -16,12 +18,15 @@ export function useLibrary(
   const [folderState, setFolderState] = useState<LoadState>('loading')
   const [notes, setNotes] = useState<NoteSummary[]>([])
   const [notesByFolder, setNotesByFolder] = useState<Record<string, NoteSummary[]>>({})
+  const notesByFolderRef = useRef<Record<string, NoteSummary[]>>({})
+  const documentCacheRef = useRef(new Map<NoteId, NoteDocument>())
   const [folderNoteErrors, setFolderNoteErrors] = useState<Record<string, boolean>>({})
   const [noteListState, setNoteListState] = useState<LoadState>('loading')
   const [documentState, setDocumentState] = useState<LoadState>('ready')
   const [activeFolderId, setActiveFolderId] = useState<FolderId | null>(null)
   const [activeNoteId, setActiveNoteId] = useState<NoteId | null>(null)
   const [document, setDocument] = useState<NoteDocument | null>(null)
+  notesByFolderRef.current = notesByFolder
   const folderListRequest = useRef(0)
   const noteListRequest = useRef(0)
   const noteRequest = useRef(0)
@@ -61,7 +66,7 @@ export function useLibrary(
     void refreshFolders()
   }, [refreshFolders])
 
-  const refreshNotes = useCallback(async (folderId = activeFolderId, cacheOnly = false) => {
+  const refreshNotes = useCallback(async (folderId = activeFolderRef.current, cacheOnly = false) => {
     if (!mountedRef.current) return
     const deletedBeforeRead = deletionSequence.current
     const key = folderKey(folderId)
@@ -85,18 +90,32 @@ export function useLibrary(
       setFolderNoteErrors((current) => ({ ...current, [key]: true }))
       if (!cacheOnly && noteListRequest.current === request) setNoteListState('error')
     }
-  }, [activeFolderId, notesPort])
+  }, [notesPort])
 
   useEffect(() => {
-    void refreshNotes()
-  }, [refreshNotes])
+    const cached = notesByFolderRef.current[folderKey(activeFolderId)]
+    if (cached !== undefined) {
+      setNotes(cached)
+      setNoteListState('ready')
+      return
+    }
+    void refreshNotes(activeFolderId)
+  }, [activeFolderId, refreshNotes])
 
   const selectFolder = useCallback((id: FolderId | null) => {
     if (!mountedRef.current) return
     noteListRequest.current += 1
     noteRequest.current += 1
+    const cached = notesByFolderRef.current[folderKey(id)]
     activeFolderRef.current = id
     setActiveFolderId(id)
+    if (cached !== undefined) {
+      setNotes(cached)
+      setNoteListState('ready')
+    } else {
+      setNotes([])
+      setNoteListState('loading')
+    }
     setActiveNoteId(null)
     setDocument(null)
     setDocumentState('ready')
@@ -106,19 +125,27 @@ export function useLibrary(
     (id: NoteId) => {
       if (!mountedRef.current) return
       const request = ++noteRequest.current
+      const cached = documentCacheRef.current.get(id)
+      if (cached !== undefined) rememberDocument(documentCacheRef.current, cached)
       setActiveNoteId(id)
-      setDocument(null)
-      setDocumentState('loading')
+      if (cached === undefined) {
+        setDocument(null)
+        setDocumentState('loading')
+      } else {
+        setDocument(cached)
+        setDocumentState('ready')
+      }
       void notesPort
         .loadNote(id)
         .then((result) => {
+          rememberDocument(documentCacheRef.current, result)
           if (!mountedRef.current || noteRequest.current !== request) return
           setDocument(result)
           setDocumentState('ready')
         })
         .catch(() => {
           if (!mountedRef.current || noteRequest.current !== request) return
-          setDocumentState('error')
+          if (cached === undefined) setDocumentState('error')
         })
     },
     [notesPort],
@@ -165,6 +192,7 @@ export function useLibrary(
     activeFolderRef.current = folderId
     setActiveFolderId(folderId)
     setActiveNoteId(created.id)
+    rememberDocument(documentCacheRef.current, created)
     setDocument(created)
     setDocumentState('ready')
     await refreshNotes(folderId)
@@ -174,6 +202,7 @@ export function useLibrary(
   const renameNote = useCallback(async (id: NoteId, title: string) => {
     const result = await notesPort.renameNote(id, title)
     if (!mountedRef.current || result.document.id !== id) return result
+    rememberDocument(documentCacheRef.current, result.document)
     if (activeNoteId === id) {
       setDocument(result.document)
       setDocumentState('ready')
@@ -190,6 +219,7 @@ export function useLibrary(
     if (document?.id === id) sourceKeys.push(folderKey(document.folderId))
     const authoritative = await notesPort.moveNote(id, folderId)
     if (!mountedRef.current || authoritative.id !== id) return authoritative
+    rememberDocument(documentCacheRef.current, authoritative)
     if (activeNoteId === id && noteRequest.current === navigation) {
       setDocument(authoritative)
       setDocumentState('ready')
@@ -305,6 +335,7 @@ export function useLibrary(
   const adoptDocument = useCallback((authoritative: NoteDocument) => {
     if (!mountedRef.current) return
     if (authoritative.id !== activeNoteId) return
+    rememberDocument(documentCacheRef.current, authoritative)
     setDocument(authoritative)
     setDocumentState('ready')
     const summary: NoteSummary = {
@@ -345,6 +376,7 @@ export function useLibrary(
       }
       return changed ? next : current
     })
+    documentCacheRef.current.delete(id)
     if (activeNoteId !== id) return
     setActiveNoteId(null)
     setDocument(null)
@@ -386,6 +418,13 @@ export function useLibrary(
   }
 }
 
+function rememberDocument(cache: Map<NoteId, NoteDocument>, document: NoteDocument) {
+  cache.delete(document.id)
+  cache.set(document.id, document)
+  if (cache.size <= DOCUMENT_CACHE_LIMIT) return
+  const oldest = cache.keys().next().value
+  if (oldest !== undefined) cache.delete(oldest)
+}
 function folderKey(folderId: FolderId | null): string {
   return folderId ?? '__unfiled__'
 }

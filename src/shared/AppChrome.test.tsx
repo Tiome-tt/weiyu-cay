@@ -31,6 +31,11 @@ describe('AppChrome', () => {
     expect(chrome.requestClose).toHaveBeenCalledTimes(1)
   })
 
+  it('shows the daily lyric inside the drag region when enabled', () => {
+    render(<AppChrome windowChrome={fakeWindowChromePort()} dailyLyricsEnabled>workspace</AppChrome>)
+
+    expect(within(screen.getByTestId('window-drag-region')).getByRole('note', { name: '每日歌词' })).toBeVisible()
+  })
   it('keeps window controls outside the drag region and follows platform placement', () => {
     const windowsChrome = fakeWindowChromePort({ platform: 'windows' })
     const windows = render(<AppChrome windowChrome={windowsChrome}>windows</AppChrome>)

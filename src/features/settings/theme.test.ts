@@ -9,6 +9,7 @@ describe('settings theme', () => {
       bodyFont: 'KaiTi, STKaiti, serif',
       codeFont: 'ui-monospace, SFMono-Regular, Consolas, monospace',
       fontSize: 16,
+      dailyLyrics: true,
       lineHeight: 1.6,
       shortcut: 'CommandOrControl+Shift+D',
       launchAtStartup: false,
@@ -24,6 +25,13 @@ describe('settings theme', () => {
     const vars = themeVariables({ ...DEFAULT_APP_SETTINGS, theme: 'forest' })
     expect(vars['--sticky-color']).toBe(vars['--theme-note-accent'])
     expect(Object.keys(vars).some((key) => key.includes('per-note'))).toBe(false)
+  })
+  it('keeps note typography independent from the application interface size', () => {
+    const vars = themeVariables({ ...DEFAULT_APP_SETTINGS, fontSize: 24 })
+
+    expect(vars['--app-font-size']).toBe('24px')
+    expect(vars['--note-font-size']).toBe('16px')
+    expect(vars['--note-line-height']).toBe('1.6')
   })
   it('migrates the previous system default font to the new KaiTi default', () => {
     expect(normalizeSettings({ ...DEFAULT_APP_SETTINGS, bodyFont: 'system-ui, sans-serif' }).bodyFont).toBe('KaiTi, STKaiti, serif')

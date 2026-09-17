@@ -38,12 +38,13 @@ export function contentText(value: { content?: NoteContent; markdown?: string })
 function richText(node: RichNode): string {
   if (node.type === 'text') return node.text ?? ''
   if (node.type === 'hardBreak') return '\n'
+  if (node.type === 'math' || node.type === 'mathBlock') return typeof node.attrs?.latex === 'string' ? node.attrs.latex : ''
   if (node.type === 'rawMarkdown') return typeof node.attrs?.source === 'string' ? node.attrs.source : ''
   if (node.type === 'internalLink' || node.type === 'attachment') {
     return typeof node.attrs?.label === 'string' ? node.attrs.label : ''
   }
   const text = (node.content ?? []).map(richText).join('')
-  return ['paragraph', 'heading', 'codeBlock', 'tableCell', 'tableHeader'].includes(node.type) ? `${text}\n` : text
+  return ['paragraph', 'heading', 'codeBlock', 'tableCell', 'tableHeader'].includes(node.type) ? text + '\n' : text
 }
 
 /** Heading-only projection consumed by the existing outline, never a save format. */
@@ -52,7 +53,7 @@ export function contentOutlineMarkdown(value: {content?: NoteContent;markdown?:s
   if (value.content.type!=='document') return ''
   const headings:string[]=[]
   const visit=(node:RichNode)=>{
-    if(node.type==='heading')headings.push(`${'#'.repeat(Math.max(1,Math.min(6,Number(node.attrs?.level)||1)))} ${richText(node).trim()}`)
+    if(node.type==='heading')headings.push('#'.repeat(Math.max(1,Math.min(6,Number(node.attrs?.level)||1))) + ' ' + richText(node).trim())
     else if(node.type==='codeBlock'||node.type==='rawMarkdown')return
     for(const child of node.content??[])visit(child)
   }

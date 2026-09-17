@@ -3,6 +3,7 @@ use crate::{
     error::CommandError,
     platform::{IndexMutationLock, SafeDirectory},
     storage::{
+        atomic_file::PublishResult,
         entry::{self, MAX_FILE_BYTES, MAX_TEXT_BYTES},
         paths::StoragePaths,
         repository::NoteRepository,
@@ -290,7 +291,7 @@ pub fn export_file(
 ) -> Result<(), CommandError> {
     let guard = IndexMutationLock::acquire(paths.root())?;
     let note = NoteRepository::new(paths.clone()).load_locked(id, &guard)?;
-    publish_export(destination, |target| {
+    publish_export(destination, false, |target| {
         match &note.content {
             Some(NoteContent::File { file }) => {
                 let directory =
@@ -338,29 +339,55 @@ pub fn export_file(
 }
 fn publish_export(
     destination: &Path,
+    replace_existing: bool,
     write: impl FnOnce(&mut std::fs::File) -> Result<(), CommandError>,
 ) -> Result<(), CommandError> {
     let (parent, name) = validated_parent(destination)?;
-    if parent.regular_file_exists(&name)? {
-        return Err(CommandError::conflict("export destination already exists"));
-    }
     let staging = format!(".cay-export-{}.tmp", NoteId::now_v7());
-    let mut target = parent.create_new_publishable(&staging)?;
-    let result = (|| {
-        write(&mut target)?;
-        target
-            .sync_all()
-            .map_err(|_| CommandError::io("could not flush export"))?;
-        match parent.publish_new(&staging, &name, &target)? {
-            crate::platform::NewFilePublishState::Published => parent.sync(),
-            crate::platform::NewFilePublishState::DestinationExists => {
-                Err(CommandError::conflict("export destination already exists"))
+    let result: PublishResult = (|| {
+        let mut target = parent
+            .create_new_publishable(&staging)
+            .map_err(crate::storage::atomic_file::PublishFailure::not_published)?;
+        write(&mut target).map_err(crate::storage::atomic_file::PublishFailure::not_published)?;
+        target.sync_all().map_err(|_| {
+            crate::storage::atomic_file::PublishFailure::not_published(CommandError::io(
+                "could not flush export",
+            ))
+        })?;
+        if replace_existing {
+            drop(target);
+            parent.publish(&staging, &name)
+        } else {
+            let publish_result = parent.publish_new(&staging, &name, &target);
+            drop(target);
+            match publish_result {
+                Ok(crate::platform::NewFilePublishState::Published) => {
+                    Ok(crate::storage::atomic_file::PublishState::Published)
+                }
+                Ok(crate::platform::NewFilePublishState::DestinationExists) => {
+                    Err(crate::storage::atomic_file::PublishFailure::not_published(
+                        CommandError::conflict("export destination already exists"),
+                    ))
+                }
+                Err(error) => Err(crate::storage::atomic_file::PublishFailure::not_published(
+                    error,
+                )),
             }
         }
     })();
-    drop(target);
-    parent.remove(&staging);
-    result
+    match result {
+        Ok(_) => {
+            parent.sync()?;
+            parent.remove(&staging);
+            Ok(())
+        }
+        Err(failure) => {
+            if failure.cleanup_source() {
+                parent.remove(&staging);
+            }
+            Err(failure.into_error())
+        }
+    }
 }
 pub fn save_document_export(
     paths: &StoragePaths,
@@ -380,9 +407,34 @@ pub fn save_document_export(
         ));
     }
     super::docx::validate(bytes)?;
-    publish_export(destination, |file| {
+    publish_export(destination, false, |file| {
         file.write_all(bytes)
             .map_err(|_| CommandError::io("could not write DOCX export"))
+    })
+}
+pub fn save_pdf_export(
+    paths: &StoragePaths,
+    id: NoteId,
+    destination: &Path,
+    bytes: &[u8],
+) -> Result<(), CommandError> {
+    let note = NoteRepository::new(paths.clone()).load(id)?;
+    if matches!(note.content, Some(NoteContent::File { .. }))
+        || !destination
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
+    {
+        return Err(CommandError::validation(
+            "PDF export requires a note and a .pdf destination",
+        ));
+    }
+    if !bytes.starts_with(b"%PDF-") {
+        return Err(CommandError::validation("PDF export payload is invalid"));
+    }
+    publish_export(destination, true, |file| {
+        file.write_all(bytes)
+            .map_err(|_| CommandError::io("could not write PDF export"))
     })
 }
 pub fn external_copy(paths: &StoragePaths, id: NoteId) -> Result<PathBuf, CommandError> {

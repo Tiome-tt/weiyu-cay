@@ -67,6 +67,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   {
     document,
     notes,
+    files,
     assets,
     assetReader,
     search,
@@ -207,9 +208,9 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       await source?.beginEditBarrier()
       if (!await autosave.flush()) throw new Error('Save failed')
       const current = await notes.loadNote(document.id)
-      const {printMarkdown} = await import('../content/markdownPrint')
-      await printMarkdown(current, assetReader)
-      return true
+      const { exportMarkdownDocumentToPdf } = await import('../content/pdfExport')
+      if (!files?.savePdfExport) throw new Error('Direct PDF export is unavailable')
+      return await exportMarkdownDocumentToPdf(current, assetReader, files)
     } catch {
       setMetadataError('操作未完成，原笔记已保留。请检查保存状态后重试。')
       return false

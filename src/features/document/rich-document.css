@@ -35,7 +35,7 @@
   padding: 4px 8px;
   color: var(--color-text);
   font: inherit;
-  font-size: .75rem;
+  font-size: calc(.75 * var(--app-font-size));
   white-space: nowrap;
   background: transparent;
   border: 1px solid transparent;
@@ -60,17 +60,32 @@
 .main-window .rich-document__style-select { position: relative; display: inline-flex; align-items: center; }
 .main-window .rich-document__style-select::after { content: ''; position: absolute; top: 50%; right: 10px; width: 6px; height: 6px; pointer-events: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-65%) rotate(45deg); }
 .main-window .rich-document__style-select select { appearance: none; padding-right: 21px; }
+.main-window .rich-document__alignment-tools { display: inline-flex; align-items: center; gap: 1px; padding: 2px; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 9px; }
+.main-window .rich-document__alignment-tools button { width: 29px; min-width: 29px; height: 29px; min-height: 29px; padding: 5px; border-color: transparent; border-radius: 6px; }
+.main-window .rich-document__alignment-tools button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
+.main-window .rich-document__alignment-tools button[aria-pressed='true'] { color: var(--color-accent-strong); background: var(--color-accent-soft); border-color: var(--color-accent-border); }
+.main-window .rich-document__font-size-control { display: inline-flex; align-items: center; overflow: hidden; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 8px; }
+.main-window .rich-document__font-size-control input { box-sizing: border-box; width: 42px; min-height: 30px; padding: 4px 5px; color: var(--color-text); font: inherit; font-variant-numeric: tabular-nums; text-align: center; background: transparent; border: 0; outline: none; }
+.main-window .rich-document__font-size-control input:focus { box-shadow: inset 0 -2px 0 var(--color-accent-strong); }
+.main-window .rich-document__font-size-control select { width: 28px; min-width: 28px; min-height: 30px; padding: 4px 3px; color: var(--color-muted); font-variant-numeric: tabular-nums; background: var(--color-panel); border: 0; border-left: 1px solid var(--color-border-soft); border-radius: 0; }
+.main-window .rich-document__toolbar { gap: 5px; padding: 7px 12px; background: color-mix(in srgb, var(--color-accent-soft) 28%, var(--color-surface)); border-bottom-color: color-mix(in srgb, var(--color-accent-border) 48%, var(--color-border-soft)); box-shadow: 0 1px 0 color-mix(in srgb, var(--color-accent) 8%, transparent); }
+.main-window .rich-document__toolbar > button:not([aria-label='高亮']) { width: 30px; min-width: 30px; padding: 5px; border-radius: 8px; }
+.main-window .rich-document__toolbar > button[aria-label='高亮'] { padding: 5px 9px; color: var(--color-accent-strong); background: color-mix(in srgb, var(--color-accent-soft) 70%, transparent); border-color: transparent; }
+.main-window .rich-document__toolbar > button:focus-visible, .main-window .rich-document__toolbar select:focus-visible, .main-window .rich-document__font-size-control:focus-within { outline: 2px solid color-mix(in srgb, var(--color-focus) 70%, transparent); outline-offset: 1px; }
+.main-window .rich-document__font-size-control { border-radius: 9px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-surface) 38%, transparent); }
+.main-window .rich-document__font-size-control input { width: 40px; min-height: 29px; }
+.main-window .rich-document__font-size-control select { min-height: 29px; color: var(--color-accent-strong); background: transparent; }
 .main-window .rich-document__insert-trigger { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; line-height: 1; color: var(--color-accent-strong); background: var(--color-accent-soft); border-color: var(--color-accent-border); }
 .main-window .rich-document__insert-trigger::after { content: ''; display: inline-block; align-self: center; width: 6px; height: 6px; margin-left: 4px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
 .main-window .rich-document__table-select { position: relative; display: inline-flex; align-items: center; }
 .main-window .rich-document__table-select::after { content: ''; position: absolute; top: 50%; right: 9px; width: 6px; height: 6px; pointer-events: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-65%) rotate(45deg); }
 .main-window .rich-document__table-select select { appearance: none; padding-right: 22px; }
 .main-window .rich-document__toolbar button[aria-label="撤销"],
-.main-window .rich-document__toolbar button[aria-label="重做"] { font-size: .82rem; line-height: 1; }
+.main-window .rich-document__toolbar button[aria-label="重做"] { font-size: calc(.82 * var(--app-font-size)); line-height: 1; }
 .main-window .rich-document__insert-popover { position: absolute; z-index: 25; top: calc(100% + 6px); left: 0; display: grid; min-width: 150px; gap: 2px; padding: 6px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-overlay); box-shadow: var(--shadow-overlay); }
 .main-window .rich-document__insert-popover button { width: 100%; padding: 8px 10px; text-align: left; border: 0; }
 .main-window .rich-document__insert-popover button:hover { background: var(--color-accent-soft); }
-.main-window .rich-document__insert-select { display: grid; gap: 4px; padding: 8px 10px; color: var(--color-muted); font-size: .78rem; }
+.main-window .rich-document__insert-select { display: grid; gap: 4px; padding: 8px 10px; color: var(--color-muted); font-size: calc(.78 * var(--app-font-size)); }
 .main-window .rich-document__insert-select select { min-width: 130px; padding: 4px; color: var(--color-text); background: var(--color-panel); border: 1px solid var(--color-border-soft); border-radius: 6px; }
 .main-window .rich-document__table-picker { position: relative; }
 .main-window .rich-document__table-picker-trigger { display: block; }
@@ -79,7 +94,7 @@
 .main-window .rich-document__table-picker-grid button:hover,
 .main-window .rich-document__table-picker-grid button:focus-visible,
 .main-window .rich-document__table-picker-grid button.is-selected { background: var(--color-accent-soft); border-color: var(--color-accent); outline: none; }
-.main-window .rich-document__table-picker-grid output { grid-column: 1 / -1; padding-top: 5px; color: var(--color-muted); font-size: .72rem; text-align: center; }
+.main-window .rich-document__table-picker-grid output { grid-column: 1 / -1; padding-top: 5px; color: var(--color-muted); font-size: calc(.72 * var(--app-font-size)); text-align: center; }
 
 .main-window .rich-document > .tiptap-react-renderer,
 .main-window .rich-document > div:has(> .rich-document__content) { min-height: 0; flex: 1 1 auto; overflow: auto; }
@@ -92,8 +107,8 @@
   padding: clamp(18px, 2.8vh, 26px) var(--document-inline-padding) 90px;
   color: var(--color-text);
   font-family: var(--body-font);
-  font-size: var(--body-font-size);
-  line-height: var(--body-line-height);
+  font-size: var(--note-font-size);
+  line-height: var(--note-line-height);
   outline: none;
   overflow-wrap: anywhere;
 }
@@ -105,10 +120,40 @@
 .main-window .rich-document__content h4,
 .main-window .rich-document__content h5,
 .main-window .rich-document__content h6 { color: var(--color-heading); line-height: 1.28; }
+.main-window .rich-document__content :is(h1, h2, h3, h4, h5, h6) { cursor: text; }
+.main-window .rich-document__content .rich-document__heading-marker {
+  display: inline-block;
+  width: 0;
+  margin-right: 0;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+  cursor: text;
+  opacity: 0;
+  user-select: text;
+  vertical-align: baseline;
+}
+.main-window .rich-document__content :is(h1, h2, h3, h4, h5, h6).rich-document__heading--editing .rich-document__heading-marker {
+  width: auto;
+  margin-right: .45em;
+  overflow: visible;
+  opacity: 1;
+}
+.main-window .rich-document__content .rich-document__heading-content { display: inline; }
 .main-window .rich-document__content blockquote { margin: 1em 0; padding: 10px 15px; background: color-mix(in srgb, var(--color-accent-soft) 52%, transparent); border-left: 3px solid var(--color-accent); border-radius: 0 8px 8px 0; }
 .main-window .rich-document__content pre { padding: 13px 15px; overflow: auto; font-family: var(--code-font); background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 9px; }
 .main-window .rich-document__content :not(pre) > code { padding: .12em .34em; font-family: var(--code-font); background: var(--color-panel-warm); border-radius: 5px; }
 .main-window .rich-document__content img { display: block; max-width: 100%; max-height: 70vh; height: auto; margin: 16px auto; object-fit: contain; }
+.main-window .rich-document__content .rich-document__image-node { position: relative; display: block; width: fit-content; max-width: 100%; margin: 16px auto; }
+.main-window .rich-document__content .rich-document__image-node > img { margin: 0; }
+.main-window .rich-document__content .rich-document__image-resize-handle { position: absolute; right: -8px; bottom: -8px; width: 17px; height: 17px; padding: 0; opacity: 0; pointer-events: none; background: var(--color-accent); border: 2px solid var(--color-surface); border-radius: 50%; box-shadow: 0 2px 7px color-mix(in srgb, var(--color-heading) 20%, transparent); cursor: nwse-resize; transition: opacity var(--motion-fast) ease; }
+.main-window .rich-document__content .rich-document__image-node.ProseMirror-selectednode .rich-document__image-resize-handle,
+.main-window .rich-document__content .rich-document__image-node:hover .rich-document__image-resize-handle,
+.main-window .rich-document__content .rich-document__image-resize-handle:focus-visible { opacity: 1; pointer-events: auto; }
+.main-window .rich-document__content .rich-document__image-resize-handle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .main-window .rich-document__content a { color: var(--color-accent-strong); text-underline-offset: 2px; cursor: pointer; }
 .main-window .rich-document__content .tableWrapper { width: 100%; margin: 1.35em 0; overflow-x: auto; scrollbar-width: none; border: 1px solid var(--color-border); border-radius: 10px; box-shadow: 0 3px 12px color-mix(in srgb, var(--color-text) 6%, transparent); }
 .main-window .rich-document__content .tableWrapper::-webkit-scrollbar { width: 0; height: 0; }
@@ -151,9 +196,44 @@
 .main-window .rich-document__content.resize-cursor,
 .main-window .rich-document__content .resize-cursor { cursor: col-resize; }
 
+.main-window .rich-document__math {
+  display: inline-flex;
+  max-width: 100%;
+  color: var(--color-heading);
+  vertical-align: baseline;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.main-window .rich-document__math:hover,
+.main-window .rich-document__math.ProseMirror-selectednode { background: var(--color-accent-soft); outline: 1px solid var(--color-accent-border); outline-offset: 2px; }
+.main-window .rich-document__math--display { display: block; margin: 1.15em 0; overflow-x: auto; padding: 6px 0; text-align: center; }
+.main-window .rich-document__math-dialog {
+  position: absolute;
+  z-index: 32;
+  top: 48px;
+  left: 12px;
+  display: grid;
+  width: min(390px, calc(100% - 24px));
+  gap: 9px;
+  padding: 13px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-overlay);
+}
+.main-window .rich-document__math-dialog label { display: grid; gap: 5px; color: var(--color-muted); font-size: calc(.76 * var(--app-font-size)); }
+.main-window .rich-document__math-dialog input,
+.main-window .rich-document__math-dialog select { box-sizing: border-box; width: 100%; padding: 7px 8px; color: var(--color-text); font: inherit; font-size: calc(.82 * var(--app-font-size)); background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 7px; }
+.main-window .rich-document__math-dialog input:focus,
+.main-window .rich-document__math-dialog select:focus { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.main-window .rich-document__math-dialog p { margin: 0; color: var(--color-muted); font-size: calc(.72 * var(--app-font-size)); }
+.main-window .rich-document__math-dialog-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.main-window .rich-document__math-dialog-actions button { padding: 6px 10px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: 7px; cursor: pointer; }
+.main-window .rich-document__math-dialog-actions button[type="submit"] { color: var(--color-on-accent); background: var(--color-accent); border-color: var(--color-accent); }
 .main-window .rich-document__internal-link { padding: 1px 3px; color: var(--color-accent-strong); text-decoration: underline; text-underline-offset: 2px; background: var(--color-accent-soft); border-radius: 5px; cursor: pointer; }
 .main-window .rich-document__attachment { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 10px 12px; background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: var(--radius-control); }
-.main-window .rich-document__attachment-kind { color: var(--color-accent-strong); font-size: .68rem; font-weight: 700; }
+.main-window .rich-document__attachment-kind { color: var(--color-accent-strong); font-size: calc(.68 * var(--app-font-size)); font-weight: 700; }
 .main-window .rich-document__raw-markdown { white-space: pre-wrap; }
 
 .main-window .rich-document__picker {
@@ -172,11 +252,11 @@
   border-radius: var(--radius-overlay);
   box-shadow: var(--shadow-overlay);
 }
-.main-window .rich-document__picker p { margin: 0; padding: 8px; color: var(--color-muted); font-size: .76rem; }
+.main-window .rich-document__picker p { margin: 0; padding: 8px; color: var(--color-muted); font-size: calc(.76 * var(--app-font-size)); }
 .main-window .rich-document__picker button { padding: 7px 9px; color: var(--color-text); text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
 .main-window .rich-document__picker button:hover { background: var(--color-accent-soft); }
-.main-window .rich-document__surface { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
-.main-window .rich-document__table-select-all { position: absolute; z-index: 12; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; color: var(--color-accent-strong); font: inherit; font-size: .82rem; line-height: 1; background: var(--color-accent-soft); border: 1px solid var(--color-accent-border); border-radius: 6px; box-shadow: 0 2px 6px color-mix(in srgb, var(--color-text) 10%, transparent); cursor: pointer; transform: translate(-2px, -2px); }
+.main-window .rich-document__surface { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; zoom: var(--rich-document-zoom, 1); }
+.main-window .rich-document__table-select-all { position: absolute; z-index: 12; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; color: var(--color-accent-strong); font: inherit; font-size: calc(.82 * var(--app-font-size)); line-height: 1; background: var(--color-accent-soft); border: 1px solid var(--color-accent-border); border-radius: 6px; box-shadow: 0 2px 6px color-mix(in srgb, var(--color-text) 10%, transparent); cursor: pointer; transform: translate(-2px, -2px); }
 .main-window .rich-document__table-select-all svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.45; }
 .main-window .rich-document__table-select-all:hover,
 .main-window .rich-document__table-select-all:focus-visible { color: var(--color-heading); background: var(--color-accent-border); outline: 2px solid var(--color-accent-border); outline-offset: 1px; }

@@ -117,22 +117,34 @@ export class DocumentImageWidget extends WidgetType {
   }
 }
 
+export function externalUrlAtPosition(value: string, position: number): string | null {
+  const cursor = Math.max(0, Math.min(value.length, position))
+  const pattern = /(?:https?:\/\/|mailto:)[^\s<>"']+/giu
+  for (const match of value.matchAll(pattern)) {
+    const start = match.index ?? 0
+    const end = start + match[0].length
+    if (cursor >= start && cursor <= end) return match[0]
+  }
+  return null
+}
 export class DocumentTableWidget extends WidgetType {
   private cleanupOutsidePointer: (() => void) | null = null
 
   constructor(
-    _from: number,
+    private readonly position: number,
     _to: number,
     private readonly source: string,
     private readonly table: MarkdownTable,
-    private readonly onEdit: (input: { from: number; to: number; table: MarkdownTable }) => void,
+    private readonly onEdit: (input: { from: number; to: number; table: MarkdownTable; scrollLeft?: number }) => void,
     private readonly editable = true,
+    private readonly onOpenExternal?: (href: string) => void | Promise<void>,
+    private readonly tableScrollPositions?: Map<number, number>,
   ) {
     super()
   }
 
   eq(other: DocumentTableWidget) {
-    return this.source === other.source && this.onEdit === other.onEdit && this.editable === other.editable
+    return this.source === other.source && this.onEdit === other.onEdit && this.editable === other.editable && this.onOpenExternal === other.onOpenExternal
   }
 
   toDOM(view: EditorView) {
@@ -146,13 +158,42 @@ export class DocumentTableWidget extends WidgetType {
     let suppressClick = false
     const from = () => view.posAtDOM(wrapper)
     const to = () => from() + this.source.length
-    const commit = (tableModel: MarkdownTable) => {
+    const commit = (tableModel: MarkdownTable, focusCell?: { row: number; column: number }) => {
+      const position = from()
+      const scrollLeft = Math.max(0, viewport.scrollLeft)
+      this.tableScrollPositions?.set(this.position, scrollLeft)
+      this.onEdit({ from: position, to: to(), table: tableModel, scrollLeft })
       current = tableModel
-      this.onEdit({ from: from(), to: to(), table: tableModel })
+      if (focusCell === undefined) return
+      const restoreFocus = () => {
+        const tableWrapper = [...view.dom.querySelectorAll<HTMLElement>('.cm-live-table')].find((element) => {
+          try { return view.posAtDOM(element) === position } catch { return false }
+        })
+        const target = tableWrapper?.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="' + (focusCell.row + 1) + ' 行 ' + (focusCell.column + 1) + ' 列"]',
+        )
+        if (target === null || target === undefined) return
+        target.focus({ preventScroll: true })
+      }
+      window.requestAnimationFrame(restoreFocus)
+      window.setTimeout(restoreFocus, 0)
     }
     const tableColumns = () => Math.max(1, ...current.cells.map((line) => line.length))
     const toolbarLayer = document.createElement('div')
     toolbarLayer.className = 'cm-live-table-toolbar-layer'
+    const viewport = document.createElement('div')
+    viewport.className = 'cm-live-table-viewport'
+    const scrollRail = document.createElement('div')
+    scrollRail.className = 'cm-live-table-scrollbar'
+    scrollRail.setAttribute('role', 'scrollbar')
+    scrollRail.setAttribute('aria-orientation', 'horizontal')
+    scrollRail.setAttribute('aria-label', '表格横向滚动')
+    scrollRail.setAttribute('aria-valuemin', '0')
+    scrollRail.setAttribute('aria-valuemax', '0')
+    scrollRail.setAttribute('aria-valuenow', '0')
+    const scrollTrack = document.createElement('div')
+    scrollTrack.className = 'cm-live-table-scrollbar__track'
+    scrollRail.append(scrollTrack)
     const toolbar = document.createElement('div')
     toolbar.className = 'cm-live-table-toolbar cm-live-table-toolbar--floating'
     toolbar.setAttribute('role', 'toolbar')
@@ -241,14 +282,7 @@ export class DocumentTableWidget extends WidgetType {
     }
     const outsideEvents = ['pointerdown', 'mousedown', 'click'] as const
     for (const eventName of outsideEvents) document.addEventListener(eventName, clearSelectionOutsideTable, true)
-    const repositionOnScroll = () => {
-      if (!toolbar.hidden) positionToolbar()
-    }
-    wrapper.addEventListener('scroll', repositionOnScroll)
-    this.cleanupOutsidePointer = () => {
-      for (const eventName of outsideEvents) document.removeEventListener(eventName, clearSelectionOutsideTable, true)
-      wrapper.removeEventListener('scroll', repositionOnScroll)
-    }
+
     const rangeOrCell = () => selectedRange() ?? { startRow: current.cells.length - 1, startColumn: 0, endRow: current.cells.length - 1, endColumn: 0 }
     const selectedColumns = () => {
       const range = rangeOrCell()
@@ -288,6 +322,19 @@ export class DocumentTableWidget extends WidgetType {
     table.setAttribute('aria-label', 'Markdown 表格')
     const grid = document.createElement('tbody')
     const mergeAt = (row: number, column: number) => current.merges?.find((merge) => row >= merge.row && row < merge.row + merge.rowSpan && column >= merge.column && column < merge.column + merge.columnSpan)
+    const focusTableCell = (row: number, column: number): boolean => {
+      const target = wrapper.querySelector<HTMLTextAreaElement>('textarea[aria-label="' + (row + 1) + ' 行 ' + (column + 1) + ' 列"]')
+      if (target === null) return false
+      target.focus({ preventScroll: true })
+      const viewportRect = viewport.getBoundingClientRect()
+      const cell = target.closest<HTMLElement>('[data-row][data-column]')
+      const cellRect = cell?.getBoundingClientRect()
+      if (cellRect !== undefined && viewportRect.width > 0) {
+        if (cellRect.left < viewportRect.left) viewport.scrollLeft -= viewportRect.left - cellRect.left
+        else if (cellRect.right > viewportRect.right) viewport.scrollLeft += cellRect.right - viewportRect.right
+      }
+      return true
+    }
     const renderCell = (row: number, column: number) => {
       const merge = mergeAt(row, column)
       if (merge !== undefined && (merge.row !== row || merge.column !== column)) return
@@ -306,25 +353,55 @@ export class DocumentTableWidget extends WidgetType {
       }
       cell.addEventListener('pointerdown', (event) => {
         if (!this.editable || event.button !== 0) return
+        event.stopPropagation()
         const target = event.target
         selectCell()
+        if (target instanceof HTMLTextAreaElement) {
+          dragging = false
+          dragAnchor = null
+          suppressClick = false
+          const activeInput = document.activeElement instanceof HTMLTextAreaElement && wrapper.contains(document.activeElement)
+            ? document.activeElement
+            : null
+          if (activeInput !== null && activeInput !== target) {
+            event.preventDefault()
+            const activeCell = activeInput.closest<HTMLElement>('[data-row][data-column]')
+            const activeRow = activeCell === null ? NaN : Number(activeCell.dataset.row)
+            const activeColumn = activeCell === null ? NaN : Number(activeCell.dataset.column)
+            if (Number.isInteger(activeRow) && Number.isInteger(activeColumn)) {
+              const activeMerge = mergeAt(activeRow, activeColumn)
+              const logicalRow = activeMerge?.row ?? activeRow
+              const logicalColumn = activeMerge?.column ?? activeColumn
+              commit(
+                tableWithCell(current, logicalRow, logicalColumn, activeInput.value.replace(/\r?\n/gu, ' ')),
+                { row, column },
+              )
+            }
+            return
+          }
+          target.focus({ preventScroll: true })
+          return
+        }
         dragAnchor = { row, column }
         dragging = true
         suppressClick = true
-        if (!(target instanceof HTMLInputElement)) event.preventDefault()
+        event.preventDefault()
         if (Number.isFinite(event.pointerId)) wrapper.setPointerCapture?.(event.pointerId)
       })
       cell.addEventListener('pointerenter', () => {
         if (!this.editable || !dragging || dragAnchor === null) return
         setSelection({ startRow: dragAnchor.row, startColumn: dragAnchor.column, endRow: row, endColumn: column })
       })
-      cell.addEventListener('click', () => {
+      cell.addEventListener('click', (event) => {
+        event.stopPropagation()
         if (suppressClick) return
         selectCell()
       })
       if (this.editable) {
-        const input = document.createElement('input')
-        input.type = 'text'
+        const input = document.createElement('textarea')
+        input.rows = 1
+        input.wrap = 'soft'
+        collapseMarkdownCellEditor(input)
         input.value = current.cells[merge?.row ?? row]?.[merge?.column ?? column] ?? ''
         input.setAttribute('aria-label', `${row + 1} 行 ${column + 1} 列`)
         input.title = input.value
@@ -334,19 +411,46 @@ export class DocumentTableWidget extends WidgetType {
         input.addEventListener('input', () => {
           input.title = input.value
           cell.title = input.value
+          resizeMarkdownCellEditor(input)
         })
-        const updateCell = () => commit(tableWithCell(current, merge?.row ?? row, merge?.column ?? column, input.value))
+        input.addEventListener('focus', () => resizeMarkdownCellEditor(input))
+        input.addEventListener('blur', () => collapseMarkdownCellEditor(input))
+        const updateCell = () => commit(tableWithCell(current, merge?.row ?? row, merge?.column ?? column, input.value.replace(/\r?\n/gu, ' ')))
+        input.addEventListener('click', (event) => {
+          if (!event.ctrlKey && !event.metaKey) return
+          const href = externalUrlAtPosition(input.value, input.selectionStart ?? 0)
+          if (href === null) return
+          event.preventDefault()
+          event.stopPropagation()
+          void this.onOpenExternal?.(href)
+        })
         input.addEventListener('change', updateCell)
         input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            input.blur()
+            return
+          }
           if (event.key === 'Escape') {
             event.preventDefault()
             input.blur()
             return
           }
           if (event.key !== 'Tab') return
+          const direction = event.shiftKey ? -1 : 1
+          const columns = tableColumns()
+          let nextRow = row
+          let nextColumn = column + direction
+          if (nextColumn >= columns) {
+            nextRow += 1
+            nextColumn = 0
+          } else if (nextColumn < 0) {
+            nextRow -= 1
+            nextColumn = columns - 1
+          }
+          if (!focusTableCell(nextRow, nextColumn)) return
           event.preventDefault()
-          const nextColumn = column + (event.shiftKey ? -1 : 1)
-          wrapper.querySelector<HTMLInputElement>(`input[aria-label="${row + 1} 行 ${nextColumn + 1} 列"]`)?.focus()
+          event.stopPropagation()
         })
         cell.append(input)
         const actions = document.createElement('span')
@@ -394,7 +498,55 @@ export class DocumentTableWidget extends WidgetType {
     table.append(grid)
     toolbar.append(summary)
     toolbarLayer.append(toolbar)
-    wrapper.append(toolbarLayer, table)
+    viewport.append(table)
+    wrapper.append(toolbarLayer, viewport, scrollRail)
+    const initialScrollLeft = Math.max(0, this.tableScrollPositions?.get(this.position) ?? 0)
+    viewport.scrollLeft = initialScrollLeft
+    scrollRail.scrollLeft = initialScrollLeft
+
+    let syncingScroll = false
+    const updateScrollbar = () => {
+      const hasLayout = viewport.clientWidth > 0
+      const maxScroll = hasLayout ? Math.max(0, viewport.scrollWidth - viewport.clientWidth) : 0
+      scrollTrack.style.width = Math.max(viewport.clientWidth, viewport.scrollWidth) + 'px'
+      scrollRail.setAttribute('aria-valuemax', String(Math.round(maxScroll)))
+      scrollRail.setAttribute('aria-valuenow', String(Math.round(Math.min(viewport.scrollLeft, maxScroll))))
+      wrapper.classList.toggle('cm-live-table--scrollable', hasLayout && maxScroll > 1)
+    }
+    const syncRailFromViewport = () => {
+      if (!syncingScroll) {
+        syncingScroll = true
+        scrollRail.scrollLeft = viewport.scrollLeft
+        syncingScroll = false
+      }
+      updateToolbar()
+      updateScrollbar()
+    }
+    const syncViewportFromRail = () => {
+      if (!syncingScroll) {
+        syncingScroll = true
+        viewport.scrollLeft = scrollRail.scrollLeft
+        syncingScroll = false
+      }
+      updateScrollbar()
+      positionToolbar()
+    }
+    const repositionOnScroll = () => {
+      syncRailFromViewport()
+    }
+    viewport.addEventListener('scroll', repositionOnScroll, { passive: true })
+    scrollRail.addEventListener('scroll', syncViewportFromRail, { passive: true })
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateScrollbar)
+    resizeObserver?.observe(viewport)
+    resizeObserver?.observe(table)
+    window.requestAnimationFrame(updateScrollbar)
+    this.cleanupOutsidePointer = () => {
+      for (const eventName of outsideEvents) document.removeEventListener(eventName, clearSelectionOutsideTable, true)
+      viewport.removeEventListener('scroll', repositionOnScroll)
+      scrollRail.removeEventListener('scroll', syncViewportFromRail)
+      resizeObserver?.disconnect()
+    }
+
     wrapper.addEventListener('pointermove', (event) => {
       if (!this.editable || !dragging || dragAnchor === null) return
       if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return
@@ -473,6 +625,18 @@ function cellInsertButton(label: string, icon: string, action: () => void) {
     action()
   })
   return button
+}
+
+function resizeMarkdownCellEditor(input: HTMLTextAreaElement) {
+  const maxHeight = 128
+  input.style.height = 'auto'
+  const height = Math.max(28, Math.min(maxHeight, input.scrollHeight))
+  input.style.height = height + 'px'
+  input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden'
+}
+function collapseMarkdownCellEditor(input: HTMLTextAreaElement) {
+  input.style.height = '28px'
+  input.style.overflowY = 'hidden'
 }
 
 function applyAlignment(cell: HTMLTableCellElement, alignment: MarkdownTable['alignments'][number]) {

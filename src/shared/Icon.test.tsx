@@ -16,6 +16,8 @@ const REQUIRED_ICON_NAMES: readonly IconName[] = [
   'preview',
   'collapse',
   'expand',
+  'chevron-down',
+  'chevron-right',
   'minimize',
   'maximize',
   'restore',

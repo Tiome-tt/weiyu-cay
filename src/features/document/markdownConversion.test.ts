@@ -26,4 +26,17 @@ describe('Markdown document conversion', () => {
       type: 'codeBlock', attrs: { language: 'md' }, content: [{ type: 'text', text: '==literal==' }],
     })
   })
+
+  it('converts inline and block LaTeX to durable math nodes', () => {
+    const document = markdownToRichDocument('计算 $x_i$。\n\n$$\\sqrt{d_k}$$')
+    expect(document.root.content?.[0]).toEqual({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: '计算 ' },
+        { type: 'math', attrs: { latex: 'x_i' } },
+        { type: 'text', text: '。' },
+      ],
+    })
+    expect(document.root.content?.[1]).toEqual({ type: 'mathBlock', attrs: { latex: '\\sqrt{d_k}' } })
+  })
 })

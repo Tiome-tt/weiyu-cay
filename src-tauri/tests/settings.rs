@@ -303,6 +303,7 @@ fn defaults_and_numeric_bounds_are_explicit() {
     assert_eq!(defaults.sticky_color_mode.as_str(), "follow-theme");
     assert_eq!(defaults.shortcut, "CommandOrControl+Shift+D");
     assert_eq!(defaults.font_size, 16.0);
+    assert!(defaults.daily_lyrics);
     assert_eq!(defaults.line_height, 1.6);
     assert_eq!(defaults.autosave_delay_ms, 500);
     assert_eq!(
@@ -316,12 +317,14 @@ fn defaults_and_numeric_bounds_are_explicit() {
     let updated = service(&root, MemoryStore::default(), FakeSystem::default())
         .update(SettingsPatch {
             font_size: Some(99.0),
+            daily_lyrics: Some(false),
             line_height: Some(0.2),
             autosave_delay_ms: Some(10),
             ..SettingsPatch::default()
         })
         .unwrap();
     assert_eq!(updated.font_size, 28.0);
+    assert!(!updated.daily_lyrics);
     assert_eq!(updated.line_height, 1.2);
     assert_eq!(updated.autosave_delay_ms, 150);
 }

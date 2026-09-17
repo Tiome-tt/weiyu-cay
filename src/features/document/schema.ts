@@ -1,5 +1,6 @@
 import type { JSONContent } from '@tiptap/core'
 import type { RichDocument, RichMark, RichNode } from '../../domain/content'
+import { isRichFontFamily, isRichFontSize } from './font'
 
 export interface DocumentHeading {
   level: number
@@ -22,7 +23,7 @@ const NODE_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
   codeBlock: ['language'],
   horizontalRule: [],
   hardBreak: [],
-  image: ['src', 'alt', 'title'],
+  image: ['src', 'alt', 'title', 'width'],
   table: [],
   tableRow: [],
   tableCell: ['colspan', 'rowspan', 'colwidth', 'backgroundColor', 'textAlign'],
@@ -30,6 +31,8 @@ const NODE_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
   internalLink: ['noteId', 'label'],
   attachment: ['entryId', 'label', 'fileName', 'mediaType'],
   rawMarkdown: ['source'],
+  math: ['latex'],
+  mathBlock: ['latex'],
 }
 
 const MARK_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
@@ -40,6 +43,9 @@ const MARK_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
   code: [],
   highlight: ['color'],
   link: ['href', 'target', 'rel'],
+  subscript: [],
+  superscript: [],
+  font: ['family', 'size'],
 }
 
 function filteredAttributes(
@@ -62,6 +68,13 @@ function filteredAttributes(
 }
 
 function assertSafeMark(mark: RichMark): void {
+  if (mark.type === 'font') {
+    const family = mark.attrs?.family
+    const size = mark.attrs?.size
+    if (family !== undefined && !isRichFontFamily(family)) throw new Error('Rich document font family is unsupported')
+    if (size !== undefined && !isRichFontSize(size)) throw new Error('Rich document font size is unsupported')
+    return
+  }
   if (mark.type !== 'link') return
   const href = mark.attrs?.href
   if (typeof href !== 'string' || !/^(?:https?:\/\/|mailto:)/i.test(href)) {
@@ -78,6 +91,9 @@ function mapMark(mark: RichMark, rejectUnknown: boolean): RichMark {
 
 function mapNode(node: RichNode, rejectUnknown: boolean): RichNode {
   if (!NODE_ATTRIBUTES[node.type]) throw new Error(`Unsupported rich document node: ${node.type}`)
+  if ((node.type === 'math' || node.type === 'mathBlock') && typeof node.attrs?.latex !== 'string') {
+    throw new Error('Rich document ' + node.type + ' nodes require a LaTeX source')
+  }
   if (node.type === 'text' && typeof node.text !== 'string') {
     throw new Error('Rich document text nodes require text')
   }
@@ -97,6 +113,10 @@ function mapNode(node: RichNode, rejectUnknown: boolean): RichNode {
     ...(marks && marks.length > 0 ? { marks } : {}),
   }
   if (mapped.type === 'image') {
+    const width = mapped.attrs?.width
+    if (width !== undefined && (typeof width !== 'number' || !Number.isInteger(width) || width < 120 || width > 4096)) {
+      throw new Error('Rich document image width must be an integer between 120 and 4096')
+    }
     const src = mapped.attrs?.src
     if (typeof src !== 'string' || !/^assets\/screenshot-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpe?g|gif|webp)$/i.test(src)) {
       throw new Error('Rich document image requires a managed screenshot asset source')
@@ -149,6 +169,10 @@ function nodeText(node: RichNode): string {
     const label = node.attrs?.label
     return typeof label === 'string' ? label : ''
   }
+  if (node.type === 'math' || node.type === 'mathBlock') {
+    const latex = node.attrs?.latex
+    return typeof latex === 'string' ? latex : ''
+  }
   if (node.type === 'rawMarkdown') {
     const source = node.attrs?.source
     return typeof source === 'string' ? source : ''
@@ -160,7 +184,7 @@ function nodeText(node: RichNode): string {
 export function documentPlainText(document: RichDocument): string {
   const blocks: string[] = []
   const visit = (node: RichNode) => {
-    if (['paragraph', 'heading', 'codeBlock', 'tableCell', 'tableHeader', 'rawMarkdown'].includes(node.type)) {
+    if (['paragraph', 'heading', 'codeBlock', 'tableCell', 'tableHeader', 'rawMarkdown', 'mathBlock'].includes(node.type)) {
       const text = nodeText(node).trimEnd()
       if (text) blocks.push(text)
       return

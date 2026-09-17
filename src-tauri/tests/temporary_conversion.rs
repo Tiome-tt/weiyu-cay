@@ -1805,6 +1805,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-export-managed-file",
             "allow-open-managed-file",
             "allow-save-document-export",
+            "allow-save-pdf-export",
             "allow-startup-guide-target",
             "allow-complete-startup-guide",
             "allow-load-note",

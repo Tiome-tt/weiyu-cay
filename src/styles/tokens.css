@@ -32,7 +32,9 @@
   --sticky-color: var(--theme-note-accent);
   --body-font: "楷体", KaiTi, "STKaiti", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", ui-sans-serif, system-ui, sans-serif;
   --code-font: ui-monospace, SFMono-Regular, Consolas, monospace;
-  --body-font-size: 16px;
-  --body-line-height: 1.6;
+  --app-font-size: 16px;
+  --app-line-height: 1.4;
+  --note-font-size: 16px;
+  --note-line-height: 1.6;
   --document-measure: 780px;
 }

@@ -296,6 +296,8 @@ export interface AppSettings {
   bodyFont: string
   codeFont: string
   fontSize: number
+
+  dailyLyrics: boolean
   lineHeight: number
   shortcut: string
   launchAtStartup: boolean
@@ -351,6 +353,7 @@ export interface FileImportResult {
 }
 export interface FilePort {
   saveDocumentExport?(noteId: NoteId, bytes: Uint8Array, title: string): Promise<boolean>
+  savePdfExport?(noteId: NoteId, bytes: Uint8Array, title: string): Promise<boolean>
   onDroppedFiles?(handler: (paths: string[], position?: { x: number; y: number }) => void): Promise<() => void>
   chooseFiles(): Promise<string[]>
   importFiles(input: { paths: string[]; folderId: FolderId | null }): Promise<FileImportResult>

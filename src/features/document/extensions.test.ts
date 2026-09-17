@@ -1,6 +1,6 @@
 import { Editor, type JSONContent } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { pasteTsvAtSelection, richEditorExtensions } from './extensions'
+import { decreaseRichHeadingLevel, pasteTsvAtSelection, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, toggleYellowHighlight } from './extensions'
 
 const editors: Editor[] = []
 function createEditor(content?: object) {
@@ -11,6 +11,72 @@ function createEditor(content?: object) {
 afterEach(() => editors.splice(0).forEach((editor) => editor.destroy()))
 
 describe('rich editor commands', () => {
+  it('lowers a heading when its leading Markdown marker is deleted', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: '章节' }] }],
+    })
+    editor.commands.setTextSelection(1)
+    expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('###')
+
+    expect(decreaseRichHeadingLevel(editor)).toBe(true)
+    expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('##')
+    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 2 } })
+
+    editor.commands.setTextSelection(1)
+    expect(decreaseRichHeadingLevel(editor)).toBe(true)
+    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 1 } })
+
+    editor.commands.setTextSelection(1)
+    expect(decreaseRichHeadingLevel(editor)).toBe(true)
+    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'paragraph' })
+  })
+  it('lowers a heading when Backspace starts in the rendered heading content', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: '章节' }] }],
+    })
+    editor.commands.setTextSelection(1)
+    const heading = editor.view.dom.querySelector('.rich-document__heading-content')?.parentElement
+    if (!(heading instanceof HTMLElement)) throw new Error('heading NodeView not found')
+    const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+    heading.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 2 } })
+    expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('##')
+  })
+  it('does not carry a selection highlight into the next paragraph', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一行' }] }],
+    })
+    editor.commands.setTextSelection({ from: 1, to: 4 })
+    expect(toggleYellowHighlight(editor)).toBe(true)
+    editor.commands.setTextSelection(4)
+    expect(splitBlockAfterSelectedHighlight(editor)).toBe(true)
+    editor.commands.insertContent('下一行')
+
+    const paragraphs = editor.getJSON().content ?? []
+    expect(JSON.stringify(paragraphs[0])).toContain("highlight")
+    expect(paragraphs[1]).toMatchObject({ type: 'paragraph', content: [{ type: 'text', text: '下一行' }] })
+    expect(JSON.stringify(paragraphs[1])).not.toContain('"highlight"')
+  })
+
+  it('persists rich font attributes and supports paragraph justification', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '知识库内容' }] }],
+    })
+    editor.commands.setTextSelection({ from: 1, to: 5 })
+    expect(setRichFontAttribute(editor, 'family', 'sans')).toBe(true)
+    expect(setRichFontAttribute(editor, 'size', 'large')).toBe(true)
+    expect(editor.commands.setTextAlign('justify')).toBe(true)
+    const json = editor.getJSON()
+    expect(json.content?.[0]).toMatchObject({ attrs: { textAlign: 'justify' } })
+    expect(json.content?.[0].content?.[0].marks).toEqual([{ type: 'font', attrs: { family: 'sans', size: 'large' } }])
+    expect(editor.getHTML()).toContain('data-rich-font')
+  })
   it('keeps one undo step for one table insertion', () => {
     const editor = createEditor()
     expect(editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: false })).toBe(true)

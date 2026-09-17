@@ -275,11 +275,12 @@ fn upgrade_getting_started_guide(paths: &StoragePaths) -> Result<(), CommandErro
     let current_previous_shortcut_guide = current_previous_guide
         .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
         .replace("Command+Shift+D", "Command+Shift+Space");
-    if document.markdown != LEGACY_GETTING_STARTED_MARKDOWN
-        && document.markdown != previous_guide
-        && document.markdown != previous_shortcut_guide
-        && document.markdown != current_previous_guide
-        && document.markdown != current_previous_shortcut_guide
+    let stored_markdown = normalize_guide_line_endings(&document.markdown);
+    if stored_markdown != normalize_guide_line_endings(LEGACY_GETTING_STARTED_MARKDOWN)
+        && stored_markdown != normalize_guide_line_endings(&previous_guide)
+        && stored_markdown != normalize_guide_line_endings(&previous_shortcut_guide)
+        && stored_markdown != normalize_guide_line_endings(&current_previous_guide)
+        && stored_markdown != normalize_guide_line_endings(&current_previous_shortcut_guide)
     {
         return Ok(());
     }
@@ -288,6 +289,9 @@ fn upgrade_getting_started_guide(paths: &StoragePaths) -> Result<(), CommandErro
     let expected_revision = document.revision;
     notes.save(document, expected_revision)?;
     Ok(())
+}
+fn normalize_guide_line_endings(markdown: &str) -> String {
+    markdown.replace("\r\n", "\n").replace('\r', "\n")
 }
 fn create_getting_started_guide(
     paths: &StoragePaths,

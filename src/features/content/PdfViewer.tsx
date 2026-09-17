@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+import { PdfDocumentCache } from './pdfDocumentCache'
 GlobalWorkerOptions.workerSrc=workerUrl
 
 export const PDF_SCALE_STEPS = [0.5,0.75,1,1.25,1.5,2] as const
@@ -12,7 +13,37 @@ export function adjustPdfScale(current: number, deltaY: number): number {
   return PDF_SCALE_STEPS[Math.max(0, Math.min(PDF_SCALE_STEPS.length - 1, next))]
 }
 
-export default function PdfViewer({bytes,onDocumentError}:{bytes:Uint8Array;onDocumentError?:()=>void}) {
+const PDF_DOCUMENT_CACHE_LIMIT = 2
+const pdfDocumentCache = new PdfDocumentCache<PDFDocumentProxy>(PDF_DOCUMENT_CACHE_LIMIT)
+const pendingPdfDocuments = new Map<string, Promise<PDFDocumentProxy>>()
+
+function loadPdfDocument(bytes: Uint8Array, cacheKey?: string): { promise: Promise<PDFDocumentProxy>; task?: ReturnType<typeof getDocument> } {
+  if (cacheKey !== undefined) {
+    const cachedDocument = pdfDocumentCache.get(cacheKey)
+    if (cachedDocument !== undefined) return { promise: Promise.resolve(cachedDocument) }
+    const pendingDocument = pendingPdfDocuments.get(cacheKey)
+    if (pendingDocument !== undefined) return { promise: pendingDocument }
+  }
+
+  // FileViewer keeps a separate reusable copy for keyed previews; only standalone viewers need
+  // their own disposable copy before PDF.js transfers the buffer to its worker.
+  const pdfBytes = cacheKey === undefined ? bytes.slice() : bytes
+  const task = getDocument({data:pdfBytes,useSystemFonts:true,cMapUrl:import.meta.env.BASE_URL+'pdfjs/cmaps/',cMapPacked:true,standardFontDataUrl:import.meta.env.BASE_URL+'pdfjs/standard_fonts/',wasmUrl:import.meta.env.BASE_URL+'pdfjs/wasm/'})
+  if (cacheKey === undefined) return { promise: task.promise, task }
+
+  const sharedPromise = task.promise.then(value=>{
+    if (pendingPdfDocuments.get(cacheKey) === sharedPromise) pendingPdfDocuments.delete(cacheKey)
+    pdfDocumentCache.set(cacheKey,value)
+    return value
+  }, error=>{
+    if (pendingPdfDocuments.get(cacheKey) === sharedPromise) pendingPdfDocuments.delete(cacheKey)
+    throw error
+  })
+  pendingPdfDocuments.set(cacheKey, sharedPromise)
+  return { promise: sharedPromise, task }
+}
+
+export default function PdfViewer({bytes,cacheKey,onDocumentError}:{bytes:Uint8Array;cacheKey?:string;onDocumentError?:()=>void}) {
   const [pdf,setPdf]=useState<PDFDocumentProxy|null>(null)
   const [page,setPage]=useState(1)
   const [scale,setScale]=useState(1)
@@ -28,28 +59,30 @@ export default function PdfViewer({bytes,onDocumentError}:{bytes:Uint8Array;onDo
   useEffect(()=>{
     let active=true
     setPdf(null);setPage(1);setError(null)
-    // PDF.js transfers typed-array buffers to its worker; always give it a disposable copy so the
-    // caller can retry or reopen the same attachment safely.
-    const pdfBytes = bytes.slice()
-    const task=getDocument({data:pdfBytes,useSystemFonts:true,cMapUrl:import.meta.env.BASE_URL+'pdfjs/cmaps/',cMapPacked:true,standardFontDataUrl:import.meta.env.BASE_URL+'pdfjs/standard_fonts/',wasmUrl:import.meta.env.BASE_URL+'pdfjs/wasm/'})
-    void task.promise.then(value=>{if(active)setPdf(value)},()=>{if(active){setError('无法打开 PDF。文件可能损坏或需要密码，请另存后查看。');onDocumentErrorRef.current?.()}})
-    return()=>{active=false;void task.destroy()}
-  },[bytes])
+    const load = loadPdfDocument(bytes,cacheKey)
+    void load.promise.then(value=>{
+      if(active)setPdf(value)
+      else if(cacheKey===undefined)void value.cleanup()
+    },()=>{if(active){setError('无法打开 PDF。文件可能损坏或需要密码，请另存后查看。');onDocumentErrorRef.current?.()}})
+    return()=>{active=false;if(cacheKey===undefined)void load.task?.destroy()}
+  },[bytes,cacheKey])
   useEffect(()=>{
     if(!pdf)return
     let active=true
     let render:RenderTask|undefined
-    void pdf.getPage(page).then(p=>{
-      if(!active||!canvas.current)return
-      const viewport=p.getViewport({scale})
-      const context=canvas.current.getContext('2d')
-      if(!context)return
-      canvas.current.width=viewport.width;canvas.current.height=viewport.height
-      render=p.render({canvas:canvas.current,canvasContext:context,viewport})
-      return render.promise
-    }).catch(()=>{if(active)setError('这一页暂时无法显示。')})
-    return()=>{active=false;render?.cancel()}
-  },[pdf,page,scale])
+    const frame=window.requestAnimationFrame(()=>{
+      void pdf.getPage(page).then(p=>{
+        if(!active||!canvas.current)return
+        const viewport=p.getViewport({scale})
+        const context=canvas.current.getContext('2d')
+        if(!context)return
+        canvas.current.width=viewport.width;canvas.current.height=viewport.height
+        render=p.render({canvas:canvas.current,canvasContext:context,viewport})
+        return render.promise
+      }).catch(()=>{if(active){if(cacheKey!==undefined)pdfDocumentCache.delete(cacheKey);setError('这一页暂时无法显示。')}})
+    })
+    return()=>{active=false;window.cancelAnimationFrame(frame);render?.cancel()}
+  },[pdf,page,scale,cacheKey])
   return <div className="pdf-viewer">
     {error&&<p role="alert">{error}</p>}
     <div className="pdf-viewer__page" onWheel={handleWheel}><canvas ref={canvas} aria-label={`PDF 第 ${page} 页`}/></div>

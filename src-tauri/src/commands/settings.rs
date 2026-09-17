@@ -87,6 +87,8 @@ pub struct AppSettings {
     pub code_font: String,
     pub font_size: f64,
     pub line_height: f64,
+    #[serde(default = "default_true")]
+    pub daily_lyrics: bool,
     pub shortcut: String,
     pub launch_at_startup: bool,
     #[serde(default = "default_true")]
@@ -156,6 +158,7 @@ pub struct SettingsPatch {
     pub code_font: Option<String>,
     pub font_size: Option<f64>,
     pub line_height: Option<f64>,
+    pub daily_lyrics: Option<bool>,
     pub shortcut: Option<String>,
     pub launch_at_startup: Option<bool>,
     pub close_to_tray: Option<bool>,
@@ -762,6 +765,9 @@ fn apply_patch(
             return Err(CommandError::validation("line height must be finite"));
         }
         settings.line_height = value.clamp(1.2, 2.2);
+    }
+    if let Some(value) = patch.daily_lyrics {
+        settings.daily_lyrics = value;
     }
     if let Some(shortcut) = patch.shortcut {
         settings.shortcut = normalize_accelerator(&shortcut)

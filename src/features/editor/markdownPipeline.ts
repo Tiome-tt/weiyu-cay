@@ -1,8 +1,10 @@
-import rehypeSanitize from 'rehype-sanitize'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
+import rehypeKatex from 'rehype-katex'
 import { unified } from 'unified'
 import { isTableMetadataLine, parseMarkdownTable, type MarkdownTableMerge } from './markdownActions'
 
@@ -20,17 +22,30 @@ interface MarkdownNode {
 }
 
 const parser = unified().use(remarkParse).use(remarkGfm)
+const mathSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'math', 'annotation', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'mfrac', 'msqrt', 'mroot', 'mstyle', 'mspace', 'mtext', 'mover', 'munder', 'munderover', 'mtable', 'mtr', 'mtd'],
+  attributes: {
+    ...defaultSchema.attributes,
+    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'className', 'style', 'ariaHidden', 'ariaLabel', 'xmlns', 'encoding'],
+  },
+}
+
 const renderer = unified()
   .use(remarkParse)
   .use(remarkGfm)
+  .use(remarkMath)
   .use(remarkRehype)
-  .use(rehypeSanitize)
+  .use(rehypeKatex)
+  .use(rehypeSanitize, mathSanitizeSchema)
   .use(rehypeStringify)
 const previewRenderer = unified()
   .use(remarkParse)
   .use(remarkGfm)
+  .use(remarkMath)
   .use(remarkRehype)
-  .use(rehypeSanitize)
+  .use(rehypeKatex)
+  .use(rehypeSanitize, mathSanitizeSchema)
   .use(hardenPreviewResources)
   .use(rehypeStringify)
 

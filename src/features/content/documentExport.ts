@@ -2,16 +2,21 @@ import {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,HeadingLevel,
 import type {RichNode} from '../../domain/content'
 import type {NoteDocument} from '../../domain/model'
 import type {ImageReadPort} from '../../domain/ports'
+import { richFontSizePoints } from '../document/font'
 const colors:Record<string,string>={green:'DCEDE5',yellow:'FFF0AD',blue:'DCEAF5',pink:'F5DDE3',purple:'E9DDF5',gray:'E5E8E6'}
 const headings=[HeadingLevel.HEADING_1,HeadingLevel.HEADING_2,HeadingLevel.HEADING_3,HeadingLevel.HEADING_4,HeadingLevel.HEADING_5,HeadingLevel.HEADING_6]
 function attr(node:RichNode,key:string){const value=node.attrs?.[key];return typeof value==='string'?value:''}
-function alignment(node:RichNode){return attr(node,'textAlign')==='center'?AlignmentType.CENTER:attr(node,'textAlign')==='right'?AlignmentType.RIGHT:AlignmentType.LEFT}
+function markAttr(node:RichNode,type:string,key:string){const value=node.marks?.find(mark=>mark.type===type)?.attrs?.[key];return typeof value==='string'?value:''}
+function alignment(node:RichNode){const value=attr(node,'textAlign');return value==='center'?AlignmentType.CENTER:value==='right'?AlignmentType.RIGHT:AlignmentType.LEFT}
+function fontName(value:string){return value==='body'?'KaiTi':value==='serif'?'SimSun':value==='sans'?'Microsoft YaHei UI':value==='mono'?'Consolas':undefined}
+function fontSize(value:string){const points=richFontSizePoints(value);return points===undefined?undefined:points*2}
 function inline(node:RichNode):ParagraphChild[] {
  if(node.type==='hardBreak')return [new TextRun({break:1})]
  if(node.type==='internalLink')return [new TextRun(attr(node,'label'))]
+ if(node.type==='math')return [new TextRun({text:'$'+attr(node,'latex')+'$'})]
  if(node.type!=='text')return (node.content??[]).flatMap(inline)
  const marks=node.marks??[];const has=(type:string)=>marks.some(m=>m.type===type)
- const run=new TextRun({text:node.text??'',bold:has('bold'),italics:has('italic'),strike:has('strike'),underline:has('underline')?{}:undefined,highlight:has('highlight')?'yellow':undefined,font:has('code')?'Consolas':undefined})
+ const run=new TextRun({text:node.text??'',bold:has('bold'),italics:has('italic'),strike:has('strike'),underline:has('underline')?{}:undefined,highlight:has('highlight')?'yellow':undefined,font:has('code')?'Consolas':fontName(markAttr(node,'font','family')),size:fontSize(markAttr(node,'font','size'))})
  const href=marks.find(m=>m.type==='link')?.attrs?.href
  return typeof href==='string'&&/^(https?:|mailto:)/i.test(href)?[new ExternalHyperlink({link:href,children:[run]})]:[run]
 }
@@ -23,6 +28,7 @@ export async function buildDocumentDocx(note:NoteDocument,reader?:ImageReadPort)
    const widths=cell.attrs?.colwidth
    return new TableCell({children:content.length?content:[new Paragraph('')],columnSpan:Number(cell.attrs?.colspan)||1,rowSpan:Number(cell.attrs?.rowspan)||1,width:Array.isArray(widths)&&widths.every(n=>typeof n==='number')?{size:widths.reduce((a:number,b:number)=>a+b,0)*15,type:WidthType.DXA}:undefined,shading:colors[attr(cell,'backgroundColor')]?{fill:colors[attr(cell,'backgroundColor')]}:undefined})
   }))})))})]
+  if(node.type==='mathBlock')return [new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:'$$'+attr(node,'latex')+'$$',font:'Cambria Math'})]})]
   if(node.type==='image'){
    if(!reader)throw new Error('Image reader is required to export embedded images')
    const image=await reader.readImage({noteId:note.id,relativePath:attr(node,'src')})

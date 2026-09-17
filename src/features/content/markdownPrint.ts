@@ -12,13 +12,14 @@ export async function prepareMarkdownPrint(note:NoteDocument,reader?:ImageReadPo
  const urls:string[]=[]
  const dispose=()=>urls.forEach(url=>URL.revokeObjectURL(url))
  try {
-  for(const image of element.querySelectorAll<HTMLImageElement>('img[data-simple-notes-asset]')) {
-   if(!reader)throw new Error('Images cannot be exported without an asset reader')
+  const images=[...element.querySelectorAll<HTMLImageElement>('img[data-simple-notes-asset]')]
+  if(images.length>0&&!reader)throw new Error('Images cannot be exported without an asset reader')
+  await Promise.all(images.map(async image=>{
    const relativePath=image.getAttribute('data-simple-notes-asset')!
-   const loaded=await reader.readImage({noteId:note.id,relativePath})
+   const loaded=await reader!.readImage({noteId:note.id,relativePath})
    const url=URL.createObjectURL(new Blob([loaded.bytes.slice().buffer],{type:loaded.mediaType}))
    urls.push(url);image.src=url
-  }
+  }))
   return {element,dispose}
  }catch(error){dispose();throw error}
 }

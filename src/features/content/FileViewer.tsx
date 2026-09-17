@@ -112,7 +112,7 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
     {canOpen&&!officeLabel&&<p className="file-viewer__hint">打开的是独立副本，外部修改不会自动同步；修改后可重新导入。</p>}
     {error&&<p role="alert">{error}<button type="button" onClick={()=>setAttempt(n=>n+1)}>重试</button></p>}
     {imageUrl&&<img className="file-viewer__image" src={imageUrl} alt={file.originalName}/>}
-    {data?.mediaType==='application/pdf'&&<Suspense fallback={<p role="status">正在打开 PDF…</p>}><PdfViewer bytes={data.bytes} onDocumentError={()=>{
+    {data?.mediaType==='application/pdf'&&<Suspense fallback={<p role="status">正在打开 PDF…</p>}><PdfViewer bytes={data.bytes} cacheKey={file ? previewCacheKey(document, file) : undefined} onDocumentError={()=>{
       if (!files?.readFileBytes || forceStructuredRead || !file) return
       previewCacheFor(files).delete(previewCacheKey(document, file))
       setForceStructuredRead(true)

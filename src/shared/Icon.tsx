@@ -14,6 +14,8 @@ export type IconName =
   | 'preview'
   | 'collapse'
   | 'expand'
+  | 'chevron-down'
+  | 'chevron-right'
   | 'minimize'
   | 'maximize'
   | 'restore'
@@ -47,6 +49,8 @@ const ICON_LABELS: Record<IconName, string> = {
   preview: '预览视图',
   collapse: '折叠',
   expand: '展开',
+  'chevron-down': '折叠下级标题',
+  'chevron-right': '展开下级标题',
   minimize: '最小化',
   maximize: '最大化',
   restore: '还原',
@@ -89,6 +93,10 @@ function glyphFor(name: IconName): ReactNode {
       return <><path d="M4 5v14M16 7l-4 5 4 5" /></>
     case 'expand':
       return <><path d="M20 5v14M8 7l4 5-4 5" /></>
+    case 'chevron-down':
+      return <path d="m6 9 6 6 6-6" />
+    case 'chevron-right':
+      return <path d="m9 6 6 6-6 6" />
     case 'minimize':
       return <path d="M6 17.5h12" />
     case 'maximize':

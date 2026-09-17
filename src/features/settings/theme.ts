@@ -3,6 +3,7 @@ import type { AppSettings, StickySettings } from '../../domain/ports'
 import settingsDefaults from '../../shared/settings-defaults.json'
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = settingsDefaults as AppSettings
+export const DEFAULT_NOTE_FONT_SIZE = 16
 const LEGACY_DEFAULT_BODY_FONT = 'system-ui, sans-serif'
 export const DEFAULT_STICKY_SETTINGS: Readonly<StickySettings> = {
   theme: DEFAULT_APP_SETTINGS.theme,
@@ -124,6 +125,7 @@ export function normalizeSettings(value: AppSettings): AppSettings {
     ...value,
     closeToTray: typeof value.closeToTray === 'boolean' ? value.closeToTray : true,
     closeBehaviorConfirmed: typeof value.closeBehaviorConfirmed === 'boolean' ? value.closeBehaviorConfirmed : false,
+    dailyLyrics: value.dailyLyrics !== false,
     showMenuBarIcon: typeof value.showMenuBarIcon === 'boolean' ? value.showMenuBarIcon : true,
     bodyFont: normalizeBodyFont(value.bodyFont),
     stickyColorMode: 'follow-theme',
@@ -152,8 +154,10 @@ export function themeVariables(settings: StickySettings, systemScheme: 'light' |
     '--sticky-color': palette['--theme-note-accent'],
     '--body-font': normalized.bodyFont,
     '--code-font': normalized.codeFont,
-    '--body-font-size': `${normalized.fontSize}px`,
-    '--body-line-height': String(normalized.lineHeight),
+    '--app-font-size': String(normalized.fontSize) + 'px',
+    '--app-line-height': '1.4',
+    '--note-font-size': String(DEFAULT_NOTE_FONT_SIZE) + 'px',
+    '--note-line-height': String(normalized.lineHeight),
   }
 }
 

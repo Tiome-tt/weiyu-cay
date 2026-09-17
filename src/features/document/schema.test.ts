@@ -48,6 +48,23 @@ describe('rich document schema adapter', () => {
     expect(fromTiptapJson(toTiptapJson(richDocument))).toEqual(richDocument)
   })
 
+  it('round trips an optional image width for PDF sizing', () => {
+    const document: RichDocument = {
+      schemaVersion: 1,
+      root: {
+        type: 'doc',
+        content: [{
+          type: 'image',
+          attrs: {
+            src: 'assets/screenshot-019c0000-0000-7000-8000-000000000002.png',
+            alt: '示例图',
+            width: 420,
+          },
+        }],
+      },
+    }
+    expect(fromTiptapJson(toTiptapJson(document))).toEqual(document)
+  })
   it('rejects unsupported nodes instead of silently dropping content', () => {
     expect(() => toTiptapJson({
       schemaVersion: 1,
@@ -114,5 +131,15 @@ describe('TSV parsing', () => {
       ['姓名', '说明', ''],
       ['小屿', '含\t制表符', ''],
     ])
+  })
+
+  it('round trips math nodes and exposes their source in text projections', () => {
+    const document: RichDocument = {
+      schemaVersion: 1,
+      root: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'math', attrs: { latex: 'x_i' } }] }, { type: 'mathBlock', attrs: { latex: '\\sqrt{d_k}' } }] },
+    }
+    expect(fromTiptapJson(toTiptapJson(document))).toEqual(document)
+    expect(documentPlainText(document)).toContain('x_i')
+    expect(documentPlainText(document)).toContain('\\sqrt{d_k}')
   })
 })

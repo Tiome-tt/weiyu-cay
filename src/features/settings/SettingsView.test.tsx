@@ -36,7 +36,9 @@ describe('SettingsView', () => {
     expect(screen.getByRole('option', { name: '等线' })).toHaveValue('DengXian, sans-serif')
     expect(screen.getByRole('option', { name: 'Cascadia Mono' })).toHaveValue('Cascadia Mono')
     expect(screen.getByRole('option', { name: 'Menlo' })).toHaveValue('Menlo')
-    expect(screen.getByLabelText('字号')).toHaveAttribute('min', '12')
+    expect(screen.getByLabelText('界面字号')).toHaveAttribute('min', '12')
+    expect(screen.getByLabelText('每日歌词')).toBeChecked()
+    expect(screen.getByText('只调整应用界面，不影响笔记正文')).toBeVisible()
     expect(screen.getByLabelText('行高')).toHaveAttribute('max', '2.2')
     expect(screen.getByLabelText('全局快捷键')).toBeVisible()
     expect(screen.getByLabelText('开机启动')).toBeVisible()
@@ -49,6 +51,15 @@ describe('SettingsView', () => {
     expect(await screen.findByText(/3 KB/)).toBeVisible()
   })
 
+  it('persists the daily lyric visibility switch', async () => {
+    const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, dailyLyrics: false })
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+
+    await user.click(screen.getByLabelText('每日歌词'))
+
+    expect(update).toHaveBeenCalledWith({ dailyLyrics: false })
+  })
   it('persists an explicit Windows close behavior and marks the first-close choice confirmed', async () => {
     const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, closeToTray: false, closeBehaviorConfirmed: true })
     const user = userEvent.setup()

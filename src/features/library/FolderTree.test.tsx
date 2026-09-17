@@ -189,6 +189,24 @@ describe('FolderTree keyboard navigation', () => {
     expect(screen.queryByText('项目笔记')).not.toBeInTheDocument()
   })
 
+  it('does not render an empty root-note container when root notes are unavailable', () => {
+    render(
+      <FolderTree
+        folders={rows}
+        activeId={null}
+        state="ready"
+        onSelect={vi.fn()}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onRename={vi.fn().mockResolvedValue(undefined)}
+        onMove={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
+        folderContents={() => undefined}
+      />,
+    )
+
+    expect(document.querySelector('.folder-tree__root-notes')).not.toBeInTheDocument()
+  })
+
   it('also collapses a root folder whose notes arrive without child folders', () => {
     const leafFolder: Folder = { id: folderA, parentId: null, name: '项目笔记夹', sortOrder: 0 }
     render(

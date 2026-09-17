@@ -287,7 +287,9 @@ export interface DocumentMarkdownExtensionOptions {
   getPresentation(): MarkdownPresentation
   isEditable?(): boolean
   getImageContext?(): DocumentImageWidgetContext
-  onEditTable?(input: { from: number; to: number; table: MarkdownTable }): void
+  onEditTable?(input: { from: number; to: number; table: MarkdownTable; scrollLeft?: number }): void
+  tableScrollPositions?: Map<number, number>
+  onOpenExternal?(href: string): void | Promise<void>
 }
 
 export const refreshDocumentMarkdownContext = StateEffect.define<void>()
@@ -303,6 +305,8 @@ export function createDocumentMarkdownExtension(options: DocumentMarkdownExtensi
         options.isEditable?.() ?? true,
         options.getImageContext?.() ?? {},
         options.onEditTable,
+        options.onOpenExternal,
+        options.tableScrollPositions,
       )
     }
 
@@ -317,6 +321,8 @@ export function createDocumentMarkdownExtension(options: DocumentMarkdownExtensi
           options.isEditable?.() ?? true,
           options.getImageContext?.() ?? {},
           options.onEditTable,
+          options.onOpenExternal,
+          options.tableScrollPositions,
         )
       }
     }
@@ -340,6 +346,8 @@ function buildDocumentDecorations(
   editable: boolean,
   imageContext: DocumentImageWidgetContext,
   onEditTable: DocumentMarkdownExtensionOptions['onEditTable'],
+  onOpenExternal: DocumentMarkdownExtensionOptions['onOpenExternal'],
+  tableScrollPositions: DocumentMarkdownExtensionOptions['tableScrollPositions'],
 ) {
   const ranges: Range<Decoration>[] = []
   if (presentation === 'source') return Decoration.none
@@ -392,7 +400,7 @@ function buildDocumentDecorations(
       const firstLine = view.state.doc.lineAt(tableRange.from)
       const lastLine = view.state.doc.lineAt(Math.max(tableRange.from, tableRange.to - 1))
       ranges.push(Decoration.replace({
-        widget: new DocumentTableWidget(tableRange.from, tableRange.to, source, table, onEditTable ?? (() => undefined), editable),
+        widget: new DocumentTableWidget(tableRange.from, tableRange.to, source, table, onEditTable ?? (() => undefined), editable, onOpenExternal, tableScrollPositions),
       }).range(firstLine.from, firstLine.to))
       for (let lineNumber = firstLine.number + 1; lineNumber <= lastLine.number; lineNumber += 1) {
         const line = view.state.doc.line(lineNumber)

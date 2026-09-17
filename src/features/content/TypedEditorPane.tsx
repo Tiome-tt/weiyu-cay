@@ -8,7 +8,7 @@ import {PlainTextEditor,type PlainTextEditorHandle} from './PlainTextEditor'
 import {FileViewer} from './FileViewer'
 import {TagsEditor} from '../search/TagsEditor'
 import {Backlinks} from '../editor/Backlinks'
-import {printDocument} from './printDocument'
+
 import './content.css'
 const RichDocumentEditor=lazy(()=>import('../document/RichDocumentEditor').then(module=>({default:module.RichDocumentEditor})))
 function formatLastEdited(value:string){const date=new Date(value);if(Number.isNaN(date.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(date)}
@@ -19,6 +19,7 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  const text=useRef<PlainTextEditorHandle>(null)
  const [blocked,setBlocked]=useState(false)
  const [exporting,setExporting]=useState(false)
+ const exportingRef=useRef(false)
  const [error,setError]=useState<string|null>(null)
  const exportRef=useRef<(kind:'word'|'pdf')=>Promise<boolean>>(()=>Promise.resolve(false))
  const [title,setTitle]=useState(document.title)
@@ -34,33 +35,45 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  }),[commit,flush])
  useEffect(()=>onSaveStateChange?.(save.state.status),[save.state.status,onSaveStateChange])
  useEffect(()=>{
-  if(save.state.status!=='saved'||!onDocumentAdopt)return
+  if(save.state.status!=='saved'||!onDocumentAdopt||exportingRef.current)return
   let active=true
   void notes.loadNote(document.id).then(authoritative=>{
-   if(active&&authoritative.id===document.id)onDocumentAdopt(authoritative)
+   if(active&&!exportingRef.current&&authoritative.id===document.id)onDocumentAdopt(authoritative)
   }).catch(()=>undefined)
   return()=>{active=false}
  },[document.id,notes,onDocumentAdopt,save.savedRevision,save.state.status])
  useEffect(()=>setTitle(document.title),[document.title])
  const update=(content:NoteContent)=>{save.update(content);onDraftChange?.(contentOutlineMarkdown({content}))}
- const action=async(fn:()=>Promise<unknown>):Promise<boolean>=>{setError(null);try{await fn();return true}catch{setError('操作未完成，请检查保存状态后重试。');return false}}
+ const action=async(fn:()=>Promise<boolean|void>):Promise<boolean>=>{setError(null);try{return (await fn())!==false}catch{setError('操作未完成，请检查保存状态后重试。');return false}}
  const readOnly=blocked||exporting
  const exportDocument=async(kind:'word'|'pdf'):Promise<boolean>=>{
   if(readOnly)return false
+  exportingRef.current=true
   setExporting(true)
-  const succeeded=await action(async()=>{
-   if(!await flush())throw new Error('Save failed')
-   if(kind==='word'){
-    const current=await notes.loadNote(document.id)
-    const {buildDocumentDocx}=await import('./documentExport')
-    const bytes=await buildDocumentDocx(current,assetReader)
-    await files?.saveDocumentExport?.(document.id,bytes,current.title)
-   }else if(body.current){
-    await printDocument(body.current.querySelector<HTMLElement>('.tiptap')??body.current,title)
-   }
-  })
-  setExporting(false)
-  return succeeded
+  try {
+   return await action(async()=>{
+    if(!await flush())throw new Error('Save failed')
+    if(kind==='word'){
+     const current=await notes.loadNote(document.id)
+     const {buildDocumentDocx}=await import('./documentExport')
+     const bytes=await buildDocumentDocx(current,assetReader)
+     return await files?.saveDocumentExport?.(document.id,bytes,current.title) ?? false
+    }
+    if(save.content.type==='file'){
+     const isPdf = save.content.file.mediaType === 'application/pdf' || /\.pdf$/i.test(save.content.file.originalName)
+     if(!isPdf) throw new Error('Only PDF files can be exported as PDF')
+     if(!files?.saveFileAs) throw new Error('PDF export is unavailable')
+     return await files.saveFileAs(document.id)
+    }
+    if(!body.current) throw new Error('Document preview is not ready')
+    const { exportTypedDocumentToPdf } = await import('./pdfExport')
+    if (!files?.savePdfExport) throw new Error('Direct PDF export is unavailable')
+    return await exportTypedDocumentToPdf(document.id, title, body.current.querySelector<HTMLElement>('.tiptap')??body.current, files, assetReader)
+   })
+  } finally {
+   exportingRef.current=false
+   setExporting(false)
+  }
  }
  exportRef.current=exportDocument
 

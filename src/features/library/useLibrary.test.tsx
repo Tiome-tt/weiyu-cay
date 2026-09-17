@@ -71,6 +71,56 @@ describe('useLibrary createNote', () => {
   })
 })
 
+describe('useLibrary folder note cache', () => {
+  it('reuses a loaded folder list immediately without reading it again', async () => {
+    const first = { ...note('first'), id: '019c0000-0000-7000-8000-000000000141' as NoteId, folderId: folderA, title: '项目 A 笔记', excerpt: 'first' }
+    const second = { ...note('second'), id: '019c0000-0000-7000-8000-000000000142' as NoteId, folderId: folderB, title: '项目 B 笔记', excerpt: 'second' }
+    const listNotes = vi.fn(async (folderId: FolderId | null) => folderId === folderA ? [first] : folderId === folderB ? [second] : [])
+    const notes = fakeNotePort({ listNotes })
+    const folders = fakeFolderPort()
+    const hook = renderHook(() => useLibrary(notes, folders))
+
+    await waitFor(() => expect(listNotes).toHaveBeenCalledWith(null))
+
+    act(() => hook.result.current.selectFolder(folderA))
+    await waitFor(() => expect(hook.result.current.notesByFolder[folderA]).toEqual([first]))
+    const readsAfterFirstFolder = listNotes.mock.calls.length
+
+    act(() => hook.result.current.selectFolder(folderB))
+    await waitFor(() => expect(hook.result.current.notesByFolder[folderB]).toEqual([second]))
+    const readsAfterSecondFolder = listNotes.mock.calls.length
+
+    act(() => hook.result.current.selectFolder(folderA))
+    expect(hook.result.current.notes).toEqual([first])
+    expect(hook.result.current.noteListState).toBe('ready')
+    await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(readsAfterSecondFolder))
+    expect(readsAfterFirstFolder).toBeLessThan(readsAfterSecondFolder)
+  })
+})
+describe('useLibrary document cache', () => {
+  it('shows a previously loaded document while revalidating it in the background', async () => {
+    const first = { ...note('first body'), title: '缓存笔记' }
+    const refreshed = { ...first, markdown: 'refreshed body', revision: first.revision + 1 }
+    let finishRefresh!: (document: NoteDocument) => void
+    const loadNote = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockImplementationOnce(() => new Promise<NoteDocument>((resolve) => { finishRefresh = resolve }))
+    const notes = fakeNotePort({ loadNote, listNotes: vi.fn().mockResolvedValue([]) })
+    const folders = fakeFolderPort()
+    const hook = renderHook(() => useLibrary(notes, folders))
+
+    act(() => hook.result.current.selectNote(first.id))
+    await waitFor(() => expect(hook.result.current.document?.markdown).toBe('first body'))
+
+    act(() => hook.result.current.selectNote(first.id))
+    expect(hook.result.current.document?.markdown).toBe('first body')
+    expect(hook.result.current.documentState).toBe('ready')
+    expect(loadNote).toHaveBeenCalledTimes(2)
+
+    await act(async () => { finishRefresh(refreshed) })
+    await waitFor(() => expect(hook.result.current.document?.markdown).toBe('refreshed body'))
+  })
+})
 describe('useLibrary reorderNotes', () => {
   it('refreshes the folder that was reordered even when it is not active', async () => {
     const reorderedId = note('').id

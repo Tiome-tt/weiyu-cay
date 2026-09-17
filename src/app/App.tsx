@@ -29,6 +29,19 @@ export function App({ services = defaultServices }: { services?: AppServices }) 
     : <StickyApplication services={services} route={sticky} />
 }
 
+function startupRecoveryFailureMessage(failure: StartupRecoveryReport['failure']): string {
+  switch (failure?.code) {
+    case 'database':
+      return '本地索引恢复未完成：索引或笔记记录不完整，Markdown 内容保持不变。'
+    case 'io':
+      return '本地索引恢复未完成：恢复文件无法写入，请检查磁盘空间或文件权限。'
+    case 'validation':
+      return '本地索引恢复未完成：发现不符合格式的本地数据，Markdown 内容保持不变。'
+    default:
+      return '本地索引恢复未完成，Markdown 内容保持不变。'
+  }
+}
+
 function MainApplication({ services }: { services: AppServices }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -134,7 +147,7 @@ function MainApplication({ services }: { services: AppServices }) {
     const show = async (report: StartupRecoveryReport, refreshLibrary: boolean, request: number) => {
       if (!isCurrent(request)) return
       if (report.failure != null) {
-        setRecoveryNotice({ status: 'error', message: '本地索引恢复未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
+        setRecoveryNotice({ status: 'error', message: startupRecoveryFailureMessage(report.failure), retry: () => void retry(), retryLabel: '重试启动恢复' })
         return
       }
       const actions = report.recovered.length + report.quarantined.length + (report.indexRebuilt ? 1 : 0)
@@ -310,7 +323,7 @@ function MainApplication({ services }: { services: AppServices }) {
     </>
   return (
     <main role="application" aria-label={APP_NAME} className="app-shell main-window" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
-      <AppChrome windowChrome={services.windowChrome}>{content}</AppChrome>
+      <AppChrome windowChrome={services.windowChrome} dailyLyricsEnabled={settings.dailyLyrics}>{content}</AppChrome>
     </main>
   )
 }

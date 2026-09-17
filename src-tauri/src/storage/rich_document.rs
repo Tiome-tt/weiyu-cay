@@ -31,6 +31,17 @@ fn integer(node: &RichNode, name: &str, default: u64, max: u64) -> Result<u64, C
 fn safe_url(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|url| matches!(url.scheme(), "https" | "http" | "mailto"))
 }
+fn safe_font_size(value: &Value) -> bool {
+    let Some(value) = value.as_str() else {
+        return false;
+    };
+    if matches!(value, "small" | "normal" | "large" | "xlarge") {
+        return true;
+    }
+    value
+        .parse::<u16>()
+        .is_ok_and(|points| (8..=96).contains(&points))
+}
 fn safe_asset(value: &str) -> bool {
     value.strip_prefix("assets/").is_some_and(|v| {
         !v.is_empty()
@@ -70,7 +81,7 @@ fn validate_node(
         "orderedList" => &["start"],
         "taskItem" => &["checked"],
         "codeBlock" => &["language"],
-        "image" => &["src", "alt", "title"],
+        "image" => &["src", "alt", "title", "width"],
         "tableCell" | "tableHeader" => &[
             "colspan",
             "rowspan",
@@ -81,10 +92,11 @@ fn validate_node(
         "internalLink" => &["noteId", "label"],
         "attachment" => &["entryId", "label", "fileName", "mediaType"],
         "rawMarkdown" => &["source"],
+        "math" | "mathBlock" => &["latex"],
         _ => return Err(invalid()),
     };
     attrs_allowed(&node.attrs, allowed)?;
-    let inline = matches!(kind, "text" | "hardBreak" | "internalLink");
+    let inline = matches!(kind, "text" | "hardBreak" | "internalLink" | "math");
     let valid_parent = match parent {
         "" => kind == "doc",
         "paragraph" | "heading" => inline,
@@ -114,7 +126,14 @@ fn validate_node(
     }
     if matches!(
         kind,
-        "horizontalRule" | "hardBreak" | "image" | "internalLink" | "attachment" | "rawMarkdown"
+        "horizontalRule"
+            | "hardBreak"
+            | "image"
+            | "internalLink"
+            | "attachment"
+            | "rawMarkdown"
+            | "math"
+            | "mathBlock"
     ) && !children.is_empty()
     {
         return Err(invalid());
@@ -157,6 +176,16 @@ fn validate_node(
     if kind == "taskItem" && attr(node, "checked").is_some_and(|v| !v.is_boolean()) {
         return Err(invalid());
     }
+    if kind == "image" {
+        if let Some(width) = attr(node, "width") {
+            if !width
+                .as_u64()
+                .is_some_and(|value| (120..=4096).contains(&value))
+            {
+                return Err(invalid());
+            }
+        }
+    }
     if kind == "image"
         && !attr(node, "src")
             .and_then(Value::as_str)
@@ -181,11 +210,18 @@ fn validate_node(
     if kind == "rawMarkdown" && attr(node, "source").and_then(Value::as_str).is_none() {
         return Err(invalid());
     }
+    if matches!(kind, "math" | "mathBlock")
+        && !attr(node, "latex")
+            .and_then(Value::as_str)
+            .is_some_and(|latex| !latex.trim().is_empty() && latex.len() <= 16_384)
+    {
+        return Err(invalid());
+    }
     if let Some(attrs) = &node.attrs {
         for (key, value) in attrs {
             if !matches!(
                 key.as_str(),
-                "level" | "start" | "checked" | "rowspan" | "colspan" | "colwidth"
+                "level" | "start" | "checked" | "rowspan" | "colspan" | "colwidth" | "width"
             ) && !value.is_null()
                 && !value.is_string()
             {
@@ -203,7 +239,9 @@ fn validate_node(
                 return Err(invalid());
             }
             let attrs = match mark.mark_type.as_str() {
-                "bold" | "italic" | "strike" | "underline" | "code" => &[][..],
+                "bold" | "italic" | "strike" | "underline" | "code" | "subscript"
+                | "superscript" => &[][..],
+                "font" => &["family", "size"][..],
                 "highlight" => &["color"][..],
                 "link" => &["href", "target", "rel"][..],
                 _ => return Err(invalid()),
@@ -211,6 +249,26 @@ fn validate_node(
             attrs_allowed(&mark.attrs, attrs)?;
             if let Some(attrs) = &mark.attrs {
                 if attrs.values().any(|v| !v.is_null() && !v.is_string()) {
+                    return Err(invalid());
+                }
+            }
+            if mark.mark_type == "font" {
+                if mark
+                    .attrs
+                    .as_ref()
+                    .and_then(|attrs| attrs.get("family"))
+                    .is_some_and(|value| {
+                        !matches!(value.as_str(), Some("body" | "sans" | "serif" | "mono"))
+                    })
+                {
+                    return Err(invalid());
+                }
+                if mark
+                    .attrs
+                    .as_ref()
+                    .and_then(|attrs| attrs.get("size"))
+                    .is_some_and(|value| !safe_font_size(value))
+                {
                     return Err(invalid());
                 }
             }
@@ -304,6 +362,7 @@ fn walk_text(node: &RichNode, out: &mut String) {
     }
     if let Some(text) = attr(node, "label")
         .or_else(|| attr(node, "source"))
+        .or_else(|| attr(node, "latex"))
         .and_then(Value::as_str)
     {
         out.push_str(text);
@@ -320,6 +379,7 @@ fn walk_text(node: &RichNode, out: &mut String) {
             | "tableCell"
             | "tableHeader"
             | "rawMarkdown"
+            | "mathBlock"
             | "attachment"
     ) && !out.ends_with('\n')
     {

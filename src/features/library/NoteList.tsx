@@ -15,6 +15,16 @@ export function reorderNoteIds(ids: NoteId[], draggedId: NoteId, targetId: NoteI
 
 type NoteDropTarget = { noteId?: NoteId; folderId?: FolderId; placement?: 'before' | 'after' }
 
+const EMPTY_SELECTION = new Set<NoteId>()
+function isPdfFileEntry(note: NoteSummary): boolean {
+  return note.content?.type === 'file'
+    && (note.content.file.mediaType === 'application/pdf' || /\.pdf$/i.test(note.content.file.originalName))
+}
+
+function canExportPdf(note: NoteSummary): boolean {
+  return note.content?.type !== 'file' || isPdfFileEntry(note)
+}
+
 interface NoteListProps {
   notes: NoteSummary[]
   activeId: NoteId | null
@@ -45,6 +55,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
   const pointerTargetRef = useRef<NoteDropTarget | null>(null)
   const suppressClickRef = useRef(false)
   const selectionAnchorRef = useRef<NoteId | null>(null)
+  const selectionActiveIdRef = useRef<NoteId | null | undefined>(undefined)
   const [draggingId, setDraggingId] = useState<NoteId | null>(null)
   const [dropTarget, setDropTarget] = useState<NoteDropTarget | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<NoteId>>(new Set())
@@ -63,6 +74,18 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
     })
     if (selectionAnchorRef.current !== null && !visible.has(selectionAnchorRef.current)) selectionAnchorRef.current = null
   }, [notes])
+
+  useLayoutEffect(() => {
+    const activeIsVisible = activeId !== null && notes.some((note) => note.id === activeId)
+    const activeChanged = selectionActiveIdRef.current !== activeId
+    selectionActiveIdRef.current = activeId
+    selectionAnchorRef.current = activeIsVisible ? activeId : null
+    setSelectedIds((current) => {
+      if (!activeIsVisible) return activeChanged && current.size > 0 ? new Set() : current
+      if (!activeChanged && current.size > 0) return current
+      return new Set([activeId])
+    })
+  }, [activeId, notes])
 
   useEffect(() => {
     if (deleteFeedback === null || onDismissFeedback === undefined) return
@@ -195,8 +218,14 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
     setSelectedIds(new Set(notes.slice(start, end + 1).map((note) => note.id)))
   }
 
-  const selectedEntries = notes.filter((note) => selectedIds.has(note.id))
-  const contextSelection = contextTarget !== null && selectedIds.has(contextTarget.id)
+  // Do not paint a selection from the previous navigation while the active-note
+  // synchronization effect is waiting to run. The current note remains visible
+  // through aria-current, while stale single-folder selection cannot leak across
+  // startup, search, outline, or internal-link navigation.
+  const selectionIsSynchronized = selectionActiveIdRef.current === activeId
+  const effectiveSelectedIds = selectionIsSynchronized ? selectedIds : EMPTY_SELECTION
+  const selectedEntries = notes.filter((note) => effectiveSelectedIds.has(note.id))
+  const contextSelection = contextTarget !== null && effectiveSelectedIds.has(contextTarget.id)
     ? selectedEntries
     : contextTarget === null ? [] : [contextTarget]
   const selectionCount = contextSelection.length
@@ -213,7 +242,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
         </div>, document.querySelector('.main-window') ?? document.body
       )}
       {deleteError && <p role="alert" className="library-status library-status--error">{deleteError}</p>}
-      {selectedIds.size > 1 && <p className="library-status note-list__selection-status" role="status">已选择 {selectedIds.size} 项</p>}
+      {effectiveSelectedIds.size > 1 && <p className="library-status note-list__selection-status" role="status">已选择 {effectiveSelectedIds.size} 项</p>}
       {state === 'loading' && <p className="library-status">正在加载笔记…</p>}
       {state === 'error' && <p className="library-status library-status--error">无法加载笔记。</p>}
       {showEmptyState && state === 'ready' && notes.length === 0 && <p className="library-status">此文件夹中还没有笔记。</p>}
@@ -226,13 +255,13 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
                 className="note-card"
                 aria-label={note.title}
                 aria-describedby={`entry-type-${note.id}`}
-                aria-pressed={selectedIds.has(note.id)}
+                aria-pressed={effectiveSelectedIds.has(note.id)}
                 aria-current={activeId === note.id ? 'true' : undefined}
                 onPointerDown={(event) => handlePointerDown(event, note.id)}
                 onContextMenu={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  if (!selectedIds.has(note.id)) {
+                  if (!effectiveSelectedIds.has(note.id)) {
                     selectionAnchorRef.current = note.id
                     setSelectedIds(new Set([note.id]))
                   }
@@ -255,7 +284,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
                   if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
                   event.preventDefault()
                   const bounds = event.currentTarget.getBoundingClientRect()
-                  if (!selectedIds.has(note.id)) {
+                  if (!effectiveSelectedIds.has(note.id)) {
                     selectionAnchorRef.current = note.id
                     setSelectedIds(new Set([note.id]))
                   }
@@ -292,8 +321,8 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
           setContextPosition(null)
           contextTriggerRef.current?.focus()
         }} onContextMenu={(event) => event.preventDefault()}>
-          {onExport && selectionCount === 1 && <>
-            <button type="button" role="menuitem" autoFocus onClick={() => { onExport(contextSelection[0], 'pdf'); setContextTarget(null); setContextPosition(null) }}>打印 / 保存 PDF</button>
+          {onExport && selectionCount === 1 && canExportPdf(contextTarget) && <>
+            <button type="button" role="menuitem" autoFocus onClick={() => { onExport(contextSelection[0], 'pdf'); setContextTarget(null); setContextPosition(null) }}>{isPdfFileEntry(contextTarget) ? '另存 PDF' : '导出 PDF'}</button>
             {contextTarget.content?.type === 'document' && <button type="button" role="menuitem" onClick={() => { onExport(contextTarget, 'word'); setContextTarget(null); setContextPosition(null) }}>导出 Word</button>}
           </>}
           {onMoveSelection && folders && selectionCount > 1 && <form aria-label="移动所选条目" onSubmit={(event) => {
@@ -342,7 +371,9 @@ function entryIconName(note: NoteSummary): IconName {
 
 function entryTypeText(note: NoteSummary): string {
   const presentation = libraryEntryPresentation(note)
-  return presentation.extension !== null && presentation.extension.toLocaleLowerCase() !== presentation.label.toLocaleLowerCase()
+  return presentation.format !== 'markdown'
+    && presentation.extension !== null
+    && presentation.extension.toLocaleLowerCase() !== presentation.label.toLocaleLowerCase()
     ? `${presentation.label} · ${presentation.extension}`
     : presentation.label
 }
