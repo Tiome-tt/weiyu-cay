@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -90,6 +90,96 @@ describe('RichDocumentEditor', () => {
     expect(heading).toHaveClass('rich-document__heading--editing')
     expect(editor).toHaveFocus()
     expect(editor).toHaveAttribute('contenteditable', 'true')
+  })
+  it('converts Markdown heading markers when Enter is pressed', async () => {
+    const onChange = vi.fn()
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={onChange} />)
+    const user = userEvent.setup()
+    const editor = screen.getByRole('textbox', { name: '文档正文' })
+
+    await user.click(editor)
+    await user.type(editor, '#### RLHF')
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('heading', { name: 'RLHF', level: 4 })).toBeInTheDocument()
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      root: expect.objectContaining({
+        content: expect.arrayContaining([
+          expect.objectContaining({ type: 'heading', attrs: expect.objectContaining({ level: 4 }), content: [expect.objectContaining({ text: 'RLHF' })] }),
+        ]),
+      }),
+    }))
+  })
+  it('keeps the full heading when Enter is pressed at its leading edge', () => {
+    render(<RichDocumentEditor value={{
+      schemaVersion: 1,
+      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: '高效微调算法（PEFT）' }] }] },
+    }} onChange={vi.fn()} />)
+    const heading = screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })
+    fireEvent.keyDown(heading.querySelector('.rich-document__heading-content') as HTMLElement, { key: 'Enter' })
+
+    expect(screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(1)
+  })
+  it('keeps the heading intact after clicking its leading marker and pressing Enter', () => {
+    render(<RichDocumentEditor value={{
+      schemaVersion: 1,
+      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: '高效微调算法（PEFT）' }] }] },
+    }} onChange={vi.fn()} />)
+    const heading = screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })
+    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
+    const content = heading.querySelector('.rich-document__heading-content') as HTMLElement
+    fireEvent.mouseDown(marker)
+    fireEvent.keyDown(content, { key: 'Enter' })
+
+    expect(screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(1)
+  })
+  it('converts a marker-only line into an empty level-one heading', async () => {
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+    const user = userEvent.setup()
+    const editor = screen.getByRole('textbox', { name: '文档正文' })
+
+    await user.click(editor)
+    await user.type(editor, '#')
+    await user.keyboard('{Enter}')
+
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(editor.querySelector('p')).toBeInTheDocument()
+  })
+  it('converts Markdown headings when navigation leaves the paragraph', async () => {
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+    const user = userEvent.setup()
+    const editor = screen.getByRole('textbox', { name: '文档正文' })
+
+    await user.click(editor)
+    await user.type(editor, '## 算法')
+    await user.keyboard('{ArrowDown}')
+
+    expect(screen.getByRole('heading', { name: '算法', level: 2 })).toBeInTheDocument()
+  })
+  it('keeps escaped heading markers as plain text', async () => {
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+    const user = userEvent.setup()
+    const editor = screen.getByRole('textbox', { name: '文档正文' })
+
+    await user.click(editor)
+    await user.type(editor, '\\# 普通文字')
+    await user.keyboard('{ArrowDown}')
+
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+    expect(editor).toHaveTextContent('\\# 普通文字')
+  })
+  it('converts Markdown headings before a mouse click leaves the line', async () => {
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+    const user = userEvent.setup()
+    const editor = screen.getByRole('textbox', { name: '文档正文' })
+
+    await user.click(editor)
+    await user.type(editor, '### 鼠标离开')
+    fireEvent.mouseDown(editor)
+
+    expect(screen.getByRole('heading', { name: '鼠标离开', level: 3 })).toBeInTheDocument()
   })
   it('persists a heading level change made by deleting a marker', () => {
     const value = {
@@ -219,6 +309,29 @@ describe('RichDocumentEditor', () => {
     fireEvent.pointerUp(window, { clientX: 300 })
 
     expect(onChange.mock.calls.some(([next]) => next.root.content?.[0]?.attrs?.width === 440)).toBe(true)
+  })
+  it('offers image copying from the document context menu', async () => {
+    const write = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write } })
+    class TestClipboardItem {
+      constructor(public readonly items: Record<string, Blob>) {}
+    }
+    vi.stubGlobal('ClipboardItem', TestClipboardItem)
+    expect(typeof ClipboardItem).toBe('function')
+    expect(navigator.clipboard.write).toBe(write)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['image'], { type: 'image/png' }) }))
+    const value = {
+      schemaVersion: 1 as const,
+      root: { type: 'doc' as const, content: [{ type: 'image' as const, attrs: { src: 'assets/screenshot-019c0000-0000-7000-8000-000000000002.png', alt: '架构图', width: 240 } }] },
+    }
+    render(<RichDocumentEditor value={value} onChange={vi.fn()} />)
+    const image = document.querySelector('.rich-document__content img') as HTMLImageElement
+    fireEvent.contextMenu(image, { clientX: 40, clientY: 50 })
+    expect(screen.getAllByRole('menuitem')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('menuitem', { name: '复制图片' }))
+
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+    vi.unstubAllGlobals()
   })
   it('turns a pasted URL into a safe link mark', () => {
     render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)

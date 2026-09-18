@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { extractMarkdownHeadings } from '../editor/markdownPipeline'
 import { Icon } from '../../shared/Icon'
 
@@ -6,13 +6,18 @@ interface NoteOutlineProps {
   markdown: string
   onNavigate(line: number, headingIndex: number): void
   onCollapse?(): void
+  collapsedKeys?: readonly string[]
+  onCollapsedKeysChange?(keys: string[]): void
 }
 
 export const parseNoteHeadings = extractMarkdownHeadings
 
-export function NoteOutline({ markdown, onNavigate, onCollapse }: NoteOutlineProps) {
+export function NoteOutline({ markdown, onNavigate, onCollapse, collapsedKeys: initialCollapsedKeys, onCollapsedKeysChange }: NoteOutlineProps) {
   const headings = useMemo(() => parseNoteHeadings(markdown), [markdown])
-  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set())
+  const [collapsedKeySet, setCollapsedKeySet] = useState<Set<string>>(() => new Set(initialCollapsedKeys ?? []))
+  useEffect(() => {
+    setCollapsedKeySet(new Set(initialCollapsedKeys ?? []))
+  }, [initialCollapsedKeys])
   const collapsibleKeys = new Set(
     headings
       .slice(0, -1)
@@ -27,15 +32,16 @@ export function NoteOutline({ markdown, onNavigate, onCollapse }: NoteOutlinePro
       hiddenBelowLevel = null
     }
     const key = headingKey(heading)
-    const collapsed = collapsedKeys.has(key)
+    const collapsed = collapsedKeySet.has(key)
     visibleHeadings.push({ heading, key, collapsed, hasChildren: collapsibleKeys.has(key) })
     if (collapsed) hiddenBelowLevel = heading.level
   }
   const toggleHeading = (key: string) => {
-    setCollapsedKeys((current) => {
+    setCollapsedKeySet((current) => {
       const next = new Set(current)
       if (next.has(key)) next.delete(key)
       else next.add(key)
+      onCollapsedKeysChange?.([...next])
       return next
     })
   }

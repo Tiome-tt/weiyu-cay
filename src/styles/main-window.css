@@ -1521,9 +1521,9 @@
 .main-window .markdown-source .cm-document-heading-1 { font-size: 1.72em; }
 .main-window .markdown-source .cm-document-heading-2 { font-size: 1.42em; }
 .main-window .markdown-source .cm-document-heading-3 { font-size: 1.2em; }
-.main-window .markdown-source .cm-document-heading-4,
-.main-window .markdown-source .cm-document-heading-5,
-.main-window .markdown-source .cm-document-heading-6 { font-size: 1.04em; }
+.main-window .markdown-source .cm-document-heading-4 { font-size: 1.1em; }
+.main-window .markdown-source .cm-document-heading-5 { font-size: 1.06em; }
+.main-window .markdown-source .cm-document-heading-6 { font-size: 1.03em; }
 
 .main-window .markdown-source .cm-document-quote {
   margin: 4px 0;
@@ -2058,6 +2058,9 @@
 .main-window .markdown-preview h1 { font-size: 1.72em; }
 .main-window .markdown-preview h2 { font-size: 1.42em; }
 .main-window .markdown-preview h3 { font-size: 1.2em; }
+.main-window .markdown-preview h4 { font-size: 1.1em; }
+.main-window .markdown-preview h5 { font-size: 1.06em; }
+.main-window .markdown-preview h6 { font-size: 1.03em; }
 .main-window .markdown-preview p { margin: .7em 0; }
 .main-window .markdown-preview ul,
 .main-window .markdown-preview ol { padding-left: 1.55em; }

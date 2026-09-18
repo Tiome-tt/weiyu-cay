@@ -20,7 +20,7 @@
 
 当前发布候选版本为 [Cay v1.1.1](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)；当前公开稳定版本为 [Cay v1.1.0](https://github.com/Tiome-tt/weiyu-cay/releases/latest)。
 
-v1.1.1 提供 Windows x64 和 macOS（Intel / Apple Silicon）安装包，并包含 Tauri updater 所需的签名更新元数据；同时改善 PDF 导出、表格编辑、标题层级编辑和笔记打开速度。
+v1.1.1 提供 Windows x64 和 macOS（Intel / Apple Silicon）安装包，并包含 Tauri updater 所需的签名更新元数据；同时改善 PDF 导出、表格编辑、标题层级编辑和笔记打开速度。富文档标题支持在前缀处回车插入空行，目录折叠状态会按笔记保留，图片右键菜单仅保留“复制图片”。
 
 ## Windows 安装
 

@@ -3,7 +3,7 @@ import { emptyRichDocument } from '../../domain/content'
 import { docxToRichDocument, materializeDocumentImages } from '../content/officeConversion'
 import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
-import type { AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
+import type { AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LibraryOutlineCollapsedPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import type { SaveState } from '../editor/useAutosave'
@@ -75,6 +75,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [manualCollapsed, setManualCollapsed] = useState<LibraryCollapsedPreference>(manualCollapsedRef.current)
   const preferenceRequest = useRef(0)
   const collapsedPreferenceRequest = useRef(0)
+  const [outlineCollapsedPreference, setOutlineCollapsedPreference] = useState<LibraryOutlineCollapsedPreference>({})
+  const outlineCollapsedPreferenceRef = useRef<LibraryOutlineCollapsedPreference>({})
+  const outlineCollapsedPreferenceRequest = useRef(0)
   const editorRef = useRef<EditorPaneHandle>(null)
   const createTriggerRef = useRef<HTMLButtonElement | null>(null)
   const createPopoverOpenRef = useRef(false)
@@ -127,6 +130,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const outlineMarkdown = outlineDraft !== null && outlineDraft.noteId === outlineDocument?.id
     ? outlineDraft.markdown
     : outlineDocumentMarkdown
+  const outlineNoteId = outlineDocument?.id
 
   useEffect(() => {
     if (activeView !== 'library' || library.documentState !== 'ready' || library.document === null) {
@@ -202,6 +206,23 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }, [system])
 
+  useEffect(() => {
+    const request = ++outlineCollapsedPreferenceRequest.current
+    let current = true
+    void system
+      .getWindowPreference('library-outline-collapsed')
+      .then((value) => {
+        if (current && outlineCollapsedPreferenceRequest.current === request && isOutlineCollapsedPreference(value)) {
+          outlineCollapsedPreferenceRef.current = value
+          setOutlineCollapsedPreference(value)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [system])
+
   const persistColumns = (sizes: SplitPaneSizes, containerWidth: number) => {
     preferenceRequest.current += 1
     const total = containerWidth > 0 ? containerWidth : window.innerWidth
@@ -219,6 +240,17 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     manualCollapsedRef.current = next
     setManualCollapsed(next)
     void system.setWindowPreference('library-collapsed', next).catch(() => undefined)
+  }
+
+  const setOutlineCollapsed = (noteId: NoteId, keys: string[]) => {
+    outlineCollapsedPreferenceRequest.current += 1
+    const next = {
+      ...outlineCollapsedPreferenceRef.current,
+      [noteId]: [...new Set(keys)],
+    }
+    outlineCollapsedPreferenceRef.current = next
+    setOutlineCollapsedPreference(next)
+    void system.setWindowPreference('library-outline-collapsed', next).catch(() => undefined)
   }
 
   const activeRailEntry: LibraryRailEntry = activeView === 'temporary'
@@ -721,7 +753,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
           </section>
         ) : (
-          <NoteOutline key={library.document?.id ?? 'empty'} markdown={outlineMarkdown} onNavigate={(line, headingIndex) => editorRef.current?.navigateToHeading(line, headingIndex)} onCollapse={() => setColumnCollapsed('noteList', true)} />
+          <NoteOutline key={outlineNoteId ?? 'empty'} markdown={outlineMarkdown} collapsedKeys={outlineNoteId ? outlineCollapsedPreference[outlineNoteId] : undefined} onCollapsedKeysChange={outlineNoteId ? (keys) => setOutlineCollapsed(outlineNoteId, keys) : undefined} onNavigate={(line, headingIndex) => editorRef.current?.navigateToHeading(line, headingIndex)} onCollapse={() => setColumnCollapsed('noteList', true)} />
         )}
       </aside>
       <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
@@ -824,6 +856,11 @@ function isColumnPreference(value: unknown): value is LibraryColumnPreference {
     noteList < 1 &&
     folder + noteList < 1
   )
+}
+
+function isOutlineCollapsedPreference(value: unknown): value is LibraryOutlineCollapsedPreference {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  return Object.values(value).every((keys) => Array.isArray(keys) && keys.every((key) => typeof key === 'string'))
 }
 
 function isCollapsedPreference(value: unknown): value is LibraryCollapsedPreference {

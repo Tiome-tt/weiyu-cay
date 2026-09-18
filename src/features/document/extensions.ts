@@ -6,7 +6,8 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import TextAlign from '@tiptap/extension-text-align'
 import StarterKit from '@tiptap/starter-kit'
-import { Plugin } from '@tiptap/pm/state'
+import { Fragment } from '@tiptap/pm/model'
+import { Plugin, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { NoteId } from '../../domain/model'
 import { pasteTsvAtSelection } from './tablePaste'
@@ -416,6 +417,63 @@ export function decreaseRichHeadingLevel(editor: Editor): boolean {
   return true
 }
 
+/** Convert a Markdown heading marker when the cursor leaves its paragraph. */
+export function convertMarkdownHeadingOnExit(editor: Editor): boolean {
+  const { selection } = editor.state
+  if (!selection.empty) return false
+  const { $from } = selection
+  const paragraph = $from.parent
+  if (paragraph.type.name !== 'paragraph' || $from.parentOffset !== paragraph.content.size) return false
+
+  const match = /^(#{1,6})(?:[ \t]+(.*))?$/.exec(paragraph.textContent)
+  if (!match) return false
+  const headingType = editor.state.schema.nodes.heading
+  const paragraphType = editor.state.schema.nodes.paragraph
+  if (!headingType || !paragraphType) return false
+
+  const level = match[1].length
+  const title = match[2] ?? ''
+  const heading = headingType.create({ ...paragraph.attrs, level }, title ? editor.state.schema.text(title) : undefined)
+  const nextParagraph = paragraphType.create(paragraph.attrs)
+  const from = $from.before()
+  const to = $from.after()
+  const transaction = editor.state.tr.replaceWith(from, to, Fragment.fromArray([heading, nextParagraph]))
+  transaction.setSelection(TextSelection.near(transaction.doc.resolve(from + heading.nodeSize + 1)))
+  editor.view.dispatch(transaction.scrollIntoView())
+  editor.view.focus()
+  return true
+}
+
+export function insertParagraphBeforeHeading(editor: Editor, position?: number): boolean {
+  let headingPosition = position
+  if (headingPosition === undefined) {
+    const { selection } = editor.state
+    if (!selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
+    headingPosition = selection.$from.before()
+  }
+  const heading = editor.state.doc.nodeAt(headingPosition)
+  const paragraphType = editor.state.schema.nodes.paragraph
+  if (heading === null || heading.type.name !== 'heading' || !paragraphType) return false
+  const paragraph = paragraphType.create({ textAlign: heading.attrs.textAlign ?? null })
+  const transaction = editor.state.tr.insert(headingPosition, paragraph)
+  transaction.setSelection(TextSelection.near(transaction.doc.resolve(headingPosition + 1)))
+  editor.view.dispatch(transaction.scrollIntoView())
+  editor.view.focus()
+  return true
+}
+/** Resolve a visible # caret when Enter targets the editor root instead of the heading NodeView. */
+export function headingPositionAtNativeMarkerCaret(editor: Editor): number | undefined {
+  const selection = editor.view.dom.ownerDocument.getSelection()
+  if (!selection?.isCollapsed || selection.anchorNode === null) return undefined
+  const anchor = selection.anchorNode
+  const element = anchor instanceof Element ? anchor : anchor.parentElement
+  const marker = element?.closest('.rich-document__heading-marker')
+  if (!marker || !editor.view.dom.contains(marker)) return undefined
+  const content = marker.parentElement?.querySelector('.rich-document__heading-content')
+  if (!content) return undefined
+  const position = editor.view.posAtDOM(content, 0) - 1
+  return editor.state.doc.nodeAt(position)?.type.name === 'heading' ? position : undefined
+}
 export function syncRichHeadingMarkers(editor: Editor): boolean {
   const markers = Array.from(editor.view.dom.querySelectorAll<HTMLElement>('.rich-document__heading-marker'))
   if (markers.length === 0) return false
@@ -519,24 +577,53 @@ const RichHeading = Node.create({
           : { textAlign: currentNode.attrs.textAlign ?? null }
         editor.view.dispatch(editor.state.tr.setNodeMarkup(position, nextType, nextAttrs))
       }
+      const splitHeadingBeforeMarker = () => {
+        if (!editor.isEditable) return
+        const position = currentPosition()
+        if (position === undefined) return
+        insertParagraphBeforeHeading(editor, position)
+      }
       const handleHeadingKeyDown = (event: KeyboardEvent) => {
+        const targetIsMarker = marker.contains(event.target as globalThis.Node)
+        const nativeSelection = dom.ownerDocument.getSelection()
+        const nativeCaretAtMarker = nativeSelection?.isCollapsed === true && nativeSelection.anchorNode !== null
+          && (marker.contains(nativeSelection.anchorNode)
+            || (nativeSelection.anchorNode === dom && nativeSelection.anchorOffset === 0))
+        const selectionAtHeadingStart = editor.state.selection.empty
+          && editor.state.selection.$from.parent.type.name === 'heading'
+          && editor.state.selection.$from.parentOffset === 0
+        if (event.key === 'Enter') {
+          if (!targetIsMarker && !nativeCaretAtMarker && !selectionAtHeadingStart) return
+          event.preventDefault()
+          event.stopPropagation()
+          event.stopImmediatePropagation()
+          splitHeadingBeforeMarker()
+          return
+        }
         if (RICH_HEADING_NAVIGATION_KEYS.has(event.key)) {
           syncHeadingLevel()
           return
         }
         if (event.key !== 'Backspace' && event.key !== 'Delete') return
-        const targetIsMarker = marker.contains(event.target as globalThis.Node)
-        const selectionAtHeadingStart = editor.state.selection.empty
-          && editor.state.selection.$from.parent.type.name === 'heading'
-          && editor.state.selection.$from.parentOffset === 0
-        if (!targetIsMarker && !selectionAtHeadingStart) return
+        if (!targetIsMarker && !nativeCaretAtMarker && !selectionAtHeadingStart) return
         event.preventDefault()
         event.stopPropagation()
+        event.stopImmediatePropagation()
         decreaseHeadingLevelAtMarker()
       }
       const syncHeadingLevelOnFocusOut = () => syncHeadingLevel()
       marker.textContent = '#'.repeat(Number(node.attrs.level))
-      const focusEditor = () => { syncHeadingLevel(); if (editor.isEditable) editor.view.focus() }
+      const focusEditor = (event: MouseEvent) => {
+        syncHeadingLevel()
+        if (!editor.isEditable) return
+        if (marker.contains(event.target as globalThis.Node)) {
+          const position = currentPosition()
+          if (position !== undefined) {
+            editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(editor.state.doc.resolve(position + 1))))
+          }
+        }
+        editor.view.focus()
+      }
       marker.addEventListener('input', syncHeadingLevel)
       dom.addEventListener('keydown', handleHeadingKeyDown, true)
       dom.addEventListener('mousedown', focusEditor)

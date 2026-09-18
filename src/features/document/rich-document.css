@@ -120,6 +120,12 @@
 .main-window .rich-document__content h4,
 .main-window .rich-document__content h5,
 .main-window .rich-document__content h6 { color: var(--color-heading); line-height: 1.28; }
+.main-window .rich-document__content h1 { font-size: 1.72em; }
+.main-window .rich-document__content h2 { font-size: 1.42em; }
+.main-window .rich-document__content h3 { font-size: 1.2em; }
+.main-window .rich-document__content h4 { font-size: 1.1em; }
+.main-window .rich-document__content h5 { font-size: 1.06em; }
+.main-window .rich-document__content h6 { font-size: 1.03em; }
 .main-window .rich-document__content :is(h1, h2, h3, h4, h5, h6) { cursor: text; }
 .main-window .rich-document__content .rich-document__heading-marker {
   display: inline-block;

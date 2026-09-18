@@ -527,6 +527,7 @@ describe('LibraryLayout', () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': { folder: 0.25, noteList: 0.3 },
       'library-collapsed': { folder: true, noteList: false },
+      'library-outline-collapsed': {},
     })[key]) as unknown as SystemPort['getWindowPreference']
     const system = fakeSystemPort({
       getWindowPreference,
@@ -545,6 +546,7 @@ describe('LibraryLayout', () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': undefined,
       'library-collapsed': { folder: true, noteList: false },
+      'library-outline-collapsed': {},
     })[key]) as unknown as SystemPort['getWindowPreference']
     const system = fakeSystemPort({ getWindowPreference })
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
@@ -560,6 +562,7 @@ describe('LibraryLayout', () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': undefined,
       'library-collapsed': { folder: false, noteList: true },
+      'library-outline-collapsed': {},
     })[key]) as unknown as SystemPort['getWindowPreference']
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)
 
@@ -580,6 +583,7 @@ describe('LibraryLayout', () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
       'library-columns': undefined,
       'library-collapsed': { folder: true, noteList: false },
+      'library-outline-collapsed': {},
     })[key]) as unknown as SystemPort['getWindowPreference']
     const user = userEvent.setup()
     render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)

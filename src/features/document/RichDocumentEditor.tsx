@@ -5,7 +5,7 @@ import type { RichDocument } from '../../domain/content'
 import type { SystemPort } from '../../domain/ports'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { RichAssetReader, RichAssetWriter } from './extensions'
-import { RICH_HEADING_NAVIGATION_KEYS, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, syncRichHeadingMarkers, toggleSubscript, toggleSuperscript, toggleYellowHighlight } from './extensions'
+import { RICH_HEADING_NAVIGATION_KEYS, convertMarkdownHeadingOnExit, headingPositionAtNativeMarkerCaret, insertParagraphBeforeHeading, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, syncRichHeadingMarkers, toggleSubscript, toggleSuperscript, toggleYellowHighlight } from './extensions'
 import { fromTiptapJson, toTiptapJson } from './schema'
 import { RICH_FONT_FAMILY_OPTIONS, RICH_FONT_SIZE_SUGGESTIONS, richFontSizePoints, type RichFontFamily, type RichFontSize } from './font'
 import { PendingAssetWrites } from './PendingAssetWrites'
@@ -102,6 +102,8 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const [tablePickerSize, setTablePickerSize] = useState({ rows: 0, cols: 0 })
   const insertMenuRef = useRef<HTMLDivElement>(null)
   const [contextPosition, setContextPosition] = useState<{ x: number; y: number } | null>(null)
+  const [contextMenuKind, setContextMenuKind] = useState<'default' | 'image'>('default')
+  const contextImageRef = useRef<string | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [tableSelectTarget, setTableSelectTarget] = useState<{ table: HTMLTableElement; left: number; top: number } | null>(null)
   const tableDragAnchor = useRef<{ table: HTMLTableElement; cell: HTMLTableCellElement } | null>(null)
@@ -146,9 +148,25 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       },
       handleKeyDown: (_view, event) => {
         const currentEditor = editorInstanceRef.current
-        if (currentEditor !== null && RICH_HEADING_NAVIGATION_KEYS.has(event.key)) syncRichHeadingMarkers(currentEditor)
-        if (event.key !== 'Enter') return false
-        return currentEditor === null ? false : splitBlockAfterSelectedHighlight(currentEditor)
+        if (currentEditor !== null && RICH_HEADING_NAVIGATION_KEYS.has(event.key)) {
+          convertMarkdownHeadingOnExit(currentEditor)
+          syncRichHeadingMarkers(currentEditor)
+        }
+        if (event.key !== 'Enter' || currentEditor === null) return false
+        const nativeHeadingPosition = headingPositionAtNativeMarkerCaret(currentEditor)
+        if (nativeHeadingPosition !== undefined && insertParagraphBeforeHeading(currentEditor, nativeHeadingPosition)) {
+          event.preventDefault()
+          return true
+        }
+        if (insertParagraphBeforeHeading(currentEditor)) {
+          event.preventDefault()
+          return true
+        }
+        if (convertMarkdownHeadingOnExit(currentEditor)) {
+          event.preventDefault()
+          return true
+        }
+        return splitBlockAfterSelectedHighlight(currentEditor)
       },
       handlePaste: (_view, event) => {
         if (!assets || !noteId) return false
@@ -167,7 +185,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       },
       handleDOMEvents: {
         mousedown: () => {
-          if (editor) syncRichHeadingMarkers(editor)
+          if (editor) {
+            convertMarkdownHeadingOnExit(editor)
+            syncRichHeadingMarkers(editor)
+          }
           return false
         },
         click: (_view, event) => {
@@ -203,6 +224,9 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     onFocus: ({ editor: current }) => {
       const pending = pendingFontAttributes.current
       if (pending && current.schema.marks.font) current.view.dispatch(current.state.tr.setStoredMarks([current.schema.marks.font.create(pending)]))
+    },
+    onBlur: ({ editor: current }) => {
+      convertMarkdownHeadingOnExit(current)
     },
     onUpdate: ({ editor: current }) => {
       const json = current.getJSON()
@@ -281,11 +305,12 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
 
   useEffect(() => {
     if (contextPosition === null) return
-    const closeFromOutside = (event: PointerEvent) => {
-      if (!contextMenuRef.current?.contains(event.target as Node)) setContextPosition(null)
+    const closeFromOutside = (event: MouseEvent) => {
+      const menu = contextMenuRef.current
+      if (menu !== null && !menu.contains(event.target as Node)) { contextImageRef.current = null; setContextMenuKind('default'); setContextPosition(null) }
     }
-    document.addEventListener('pointerdown', closeFromOutside)
-    return () => document.removeEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('click', closeFromOutside)
+    return () => document.removeEventListener('click', closeFromOutside)
   }, [contextPosition])
 
   const commitComposition = useCallback(async () => {
@@ -326,6 +351,26 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     })
   }, [commitComposition])
 
+  const copyImageToClipboard = useCallback(async () => {
+    const source = contextImageRef.current
+    contextImageRef.current = null
+    setContextMenuKind('default')
+    setContextPosition(null)
+    if (source === null || source === '' || navigator.clipboard?.write === undefined || typeof ClipboardItem === 'undefined') {
+      setCommandError('当前环境不支持复制图片。')
+      return
+    }
+    try {
+      const response = await fetch(source)
+      if (!response.ok && response.type !== 'opaque') throw new Error('image fetch failed')
+      const blob = await response.blob()
+      const mediaType = blob.type.startsWith('image/') ? blob.type : 'image/png'
+      await navigator.clipboard.write([new ClipboardItem({ [mediaType]: blob })])
+      setCommandError(null)
+    } catch {
+      setCommandError('图片复制失败，请重试。')
+    }
+  }, [])
   const selectWholeTable = useCallback((table: HTMLTableElement) => {
     if (!editor) return
     const surface = table.closest('.rich-document__surface')
@@ -578,6 +623,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       }} onMouseMove={handleSurfaceMouseMove} onMouseUp={() => { tableDragAnchor.current = null }} onMouseLeave={() => { tableDragAnchor.current = null; setTableSelectTarget(null) }} onContextMenu={(event) => {
         event.preventDefault()
         setInsertOpen(false)
+        const target = event.target instanceof Element ? event.target : null
+        const image = target?.closest('img.rich-document__image-node, .rich-document__image-node img') as HTMLImageElement | null
+        contextImageRef.current = image === null ? null : (image.currentSrc || image.src)
+        setContextMenuKind(image === null ? 'default' : 'image')
         setContextPosition({ x: event.clientX, y: event.clientY })
       }}>
         {editor.isActive('table') && editable && <div className="rich-document__table-tools" role="toolbar" aria-label="表格工具">
@@ -613,11 +662,13 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           </svg>
         </button>}
       </div>
-      {contextPosition !== null && <div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y }} onContextMenu={(event) => event.preventDefault()}>
-        <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleBulletList().run() }); setContextPosition(null) }}>项目列表</button>
-        <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleTaskList().run() }); setContextPosition(null) }}>待办列表</button>
-        <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() }); setContextPosition(null) }}>插入表格</button>
-        <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().clearNodes().unsetAllMarks().run() }); setContextPosition(null) }}>清除格式</button>
+      {contextPosition !== null && <div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
+        {contextMenuKind === 'image' ? <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); void copyImageToClipboard() }}>复制图片</button> : <>
+          <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleBulletList().run() }); setContextPosition(null) }}>项目列表</button>
+          <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleTaskList().run() }); setContextPosition(null) }}>待办列表</button>
+          <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() }); setContextPosition(null) }}>插入表格</button>
+          <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().clearNodes().unsetAllMarks().run() }); setContextPosition(null) }}>清除格式</button>
+        </>}
       </div>}
     </section>
   )

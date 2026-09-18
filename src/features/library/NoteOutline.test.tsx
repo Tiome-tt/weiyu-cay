@@ -65,6 +65,16 @@ describe('NoteOutline folding', () => {
     expect(screen.getByRole('button', { name: '展开“One”下级标题' })).toHaveAttribute('aria-expanded', 'false')
   })
 
+  it('restores collapsed keys and reports changes for persistence', () => {
+    const onCollapsedKeysChange = vi.fn()
+    render(<NoteOutline markdown={'# One\n## Two\n# Four'} onNavigate={vi.fn()} collapsedKeys={['1:0']} onCollapsedKeysChange={onCollapsedKeysChange} />)
+
+    expect(screen.queryByRole('button', { name: 'Two' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开“One”下级标题' }))
+
+    expect(screen.getByRole('button', { name: 'Two' })).toBeVisible()
+    expect(onCollapsedKeysChange).toHaveBeenCalledWith([])
+  })
   it('keeps title clicks for navigation while folding uses a separate control', () => {
     const onNavigate = vi.fn()
     render(<NoteOutline markdown={'# One\n## Two'} onNavigate={onNavigate} />)

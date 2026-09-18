@@ -46,6 +46,54 @@ describe('rich editor commands', () => {
     expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 2 } })
     expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('##')
   })
+  it('inserts a paragraph before a heading when Enter is pressed on its marker', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: '高效微调算法（PEFT）' }] }],
+    })
+    editor.commands.setTextSelection(1)
+    const marker = editor.view.dom.querySelector('.rich-document__heading-marker')
+    if (!(marker instanceof HTMLElement)) throw new Error('heading marker not found')
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    marker.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    const blocks = editor.getJSON().content ?? []
+    expect(blocks[0]).toMatchObject({ type: 'paragraph' })
+    expect(blocks[1]).toMatchObject({
+      type: 'heading',
+      attrs: { level: 4 },
+      content: [{ type: 'text', text: '高效微调算法（PEFT）' }],
+    })
+  })
+  it('uses the native marker caret when the editor selection is stale inside the title', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: 'Self-Attention' }] }],
+    })
+    document.body.append(editor.view.dom)
+    editor.commands.setTextSelection(5)
+    const heading = editor.view.dom.querySelector('[data-rich-heading]')
+    const marker = heading?.querySelector('.rich-document__heading-marker')
+    const content = heading?.querySelector('.rich-document__heading-content')
+    if (!(marker instanceof HTMLElement) || !(content instanceof HTMLElement) || !marker.firstChild) throw new Error('heading NodeView not found')
+    const range = document.createRange()
+    range.setStart(marker.firstChild, 0)
+    range.collapse(true)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    expect(window.getSelection()?.anchorNode).toBe(marker.firstChild)
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    content.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(editor.getJSON().content?.slice(0, 2)).toMatchObject([
+      { type: 'paragraph' },
+      { type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: 'Self-Attention' }] },
+    ])
+    window.getSelection()?.removeAllRanges()
+    editor.view.dom.remove()
+  })
   it('does not carry a selection highlight into the next paragraph', () => {
     const editor = createEditor({
       type: 'doc',

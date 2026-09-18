@@ -207,9 +207,12 @@ export interface LibraryCollapsedPreference {
   noteList: boolean
 }
 
+export type LibraryOutlineCollapsedPreference = Record<string, string[]>
+
 export interface WindowPreferenceMap {
   'library-columns': LibraryColumnPreference
   'library-collapsed': LibraryCollapsedPreference
+  'library-outline-collapsed': LibraryOutlineCollapsedPreference
 }
 
 export interface TemporaryPort {
