@@ -113,6 +113,16 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const [documentZoom, setDocumentZoom] = useState(1)
   const [fontSizeDraft, setFontSizeDraft] = useState('')
   const pendingFontAttributes = useRef<{ family?: string; size?: string } | null>(null)
+  const restorePendingFontMarks = (current: TiptapEditor) => {
+    const pending = pendingFontAttributes.current
+    const font = current.state.schema.marks.font
+    if (!pending || !font || !current.state.selection.empty) return
+    const marks = current.state.storedMarks ?? current.state.selection.$from.marks()
+    current.view.dispatch(current.state.tr.setStoredMarks([
+      ...marks.filter((mark) => mark.type !== font),
+      font.create(pending),
+    ]))
+  }
   const [mathDialog, setMathDialog] = useState<{ mode: 'insert' | 'edit'; position?: number; from?: number; to?: number; displayMode: boolean; latex: string } | null>(null)
   const pendingAssetWrites = useMemo(() => new PendingAssetWrites(setAssetError), [])
 
@@ -222,8 +232,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       },
     },
     onFocus: ({ editor: current }) => {
-      const pending = pendingFontAttributes.current
-      if (pending && current.schema.marks.font) current.view.dispatch(current.state.tr.setStoredMarks([current.schema.marks.font.create(pending)]))
+      restorePendingFontMarks(current)
     },
     onBlur: ({ editor: current }) => {
       convertMarkdownHeadingOnExit(current)
@@ -488,6 +497,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     const currentFont = editor.getAttributes('font') as { family?: unknown }
     pendingFontAttributes.current = { ...(typeof currentFont.family === 'string' ? { family: currentFont.family } : {}), size: String(points) }
     setRichFontAttribute(editor, 'size', String(points) as RichFontSize)
+    restorePendingFontMarks(editor)
   }
 
   if (!editor) return <div className="rich-document" aria-busy="true" />
