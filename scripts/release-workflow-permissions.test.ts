@@ -3,6 +3,12 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('signed release workflow permissions', () => {
+  it('does not cache the default pnpm store when CI installs into a custom temporary store', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8')
+    expect(workflow).toContain('--store-dir')
+    expect(workflow).not.toContain('cache: pnpm')
+  })
+
   it('passes verified draft-release metadata to stable promotion without widening its token', () => {
     const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8')
     const checksumsStart = workflow.indexOf('\n  checksums:')
