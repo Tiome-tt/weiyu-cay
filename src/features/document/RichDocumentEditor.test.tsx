@@ -49,7 +49,8 @@ describe('RichDocumentEditor', () => {
     await user.clear(input)
     await user.type(input, '18')
     fireEvent.blur(input)
-    await user.type(editor, 'Y')
+    await waitFor(() => expect(editor).toHaveFocus())
+    await user.keyboard('Y')
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
       root: expect.objectContaining({
         content: expect.arrayContaining([expect.objectContaining({
