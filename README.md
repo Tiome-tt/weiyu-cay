@@ -18,20 +18,20 @@
 
 ## 最新版本
 
-当前发布候选版本为 [Cay v1.1.1](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)；当前公开稳定版本为 [Cay v1.1.0](https://github.com/Tiome-tt/weiyu-cay/releases/latest)。
+当前公开稳定版本为 [Cay v1.1.1](https://github.com/Tiome-tt/weiyu-cay/releases/latest)。
 
 v1.1.1 提供 Windows x64 和 macOS（Intel / Apple Silicon）安装包，并包含 Tauri updater 所需的签名更新元数据；同时改善 PDF 导出、表格编辑、标题层级编辑和笔记打开速度。富文档标题支持在前缀处回车插入空行，目录折叠状态会按笔记保留，图片右键菜单仅保留“复制图片”。
 
 ## Windows 安装
 
-发布包完成平台验收后，可前往 [Cay v1.1.1 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1) 下载 Windows x64 安装包。
+可前往 [Cay v1.1.1 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1) 下载 Windows x64 安装包。
 
 - [`_1.1.1_x64-setup.exe`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：普通用户推荐，双击即可安装。
 - [`_1.1.1_x64_en-US.msi`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：需要 MSI 安装包时使用。
 
 ## macOS 安装
 
-发布包完成平台验收后，可在 [Cay v1.1.1 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1) 中选择对应芯片的安装包：
+可在 [Cay v1.1.1 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1) 中选择对应芯片的安装包：
 
 - [`_1.1.1_x64.dmg`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：Intel 芯片 Mac。
 - [`_1.1.1_aarch64.dmg`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：Apple 芯片 Mac。
@@ -59,4 +59,4 @@ pnpm tauri build
 
 ## 项目状态
 
-当前公开稳定版本为 v1.1.0，v1.1.1 发布候选正在进行平台验收。项目仍在持续完善中，欢迎通过 [Issues](https://github.com/Tiome-tt/weiyu-cay/issues) 反馈问题或建议。
+当前公开稳定版本为 v1.1.1。项目仍在持续完善中，欢迎通过 [Issues](https://github.com/Tiome-tt/weiyu-cay/issues) 反馈问题或建议。

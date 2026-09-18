@@ -35,11 +35,11 @@
 
 ## 版本记录
 
-### 1.1.1 · Windows/macOS · 预发布
+### 1.1.1 · Windows/macOS · 稳定
 日期：2026-09-18
 平台：Windows、macOS
-状态：预发布
-提交：c018d30
+状态：稳定
+提交：7fd94f1
 
 #### 新增
 - 新增“每日歌词”标题栏展示，按本地日期每天稳定随机显示一条内置古代诗词，并支持在设置中开启或关闭。
@@ -129,11 +129,19 @@
 - 移除与临时 pnpm 存储目录不匹配的 CI 缓存设置，避免跨平台构建在清理阶段被误判失败。
 - 调整富文档字号回归测试为从原光标继续键入，避免平台相关的模拟点击改变插入位置。
 
-#### 已知问题
-- 安装包与 SHA256 待发布构建生成后补录。
-
 #### 安装包
-- 待发布构建生成后补录。
+- `latest.json` — SHA256: `d7a6325db4af577d9a02ffe764fb0ebff9944afb788123a0573de06235d33ec6`
+- `SHA256SUMS` — SHA256: `6a372ee6e5c633b697232fd5f9044c74d73f9dc3b1eff4382817e90359336da4`
+- `_1.1.1_x64-setup.exe` — SHA256: `bac462dcfc4fc149f8f019d317b39913a1830b969b7ebbe90b8816f1896634f7`
+- `_1.1.1_x64-setup.exe.sig` — SHA256: `35e133e4b669e704501fa7456127f97c9bfdfb5029ab8558ddf73fc7683e99ab`
+- `_1.1.1_x64_en-US.msi` — SHA256: `e5d86db6301d11b35f1f77ecc58b9c798b4a87acc18d62c503e0dc18ad164b35`
+- `_1.1.1_x64_en-US.msi.sig` — SHA256: `4cde50ce000482b39abe6812489b29d45deeb34d6669a7fa273c9f2bcc08047e`
+- `_1.1.1_x64.dmg` — SHA256: `dd0f5658b3f0df5bac722be9ecc83f020b9ff19d39273a12eb48d922209b1b04`
+- `_1.1.1_x64.app.tar.gz` — SHA256: `c3b86c6b1ce84604a0e5d17b36afa79f96c9a6e628450608519006367c90e799`
+- `_1.1.1_x64.app.tar.gz.sig` — SHA256: `e8f0ab365d6057efc5b3b3a456d18793621d4f26c4ba93b0de8be4587d4ba9fe`
+- `_1.1.1_aarch64.dmg` — SHA256: `f00b3196e4d47a2e5f79015c101b071f78ad7932af5d298e212ed4e61043df9d`
+- `_1.1.1_aarch64.app.tar.gz` — SHA256: `659ae3d43cd9e607dc7cd63cedcd4d1264ee9854556ad61961d9ecb82b9e1504`
+- `_1.1.1_aarch64.app.tar.gz.sig` — SHA256: `52bf87b618c88524eb2074407cb75cdd3b608b241c0ac9bcae2f63731a2c267c`
 
 ### 1.1.0 · Windows/macOS · 稳定
 日期：2026-09-12
