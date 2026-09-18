@@ -110,6 +110,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const [commandError, setCommandError] = useState<string | null>(null)
   const [documentZoom, setDocumentZoom] = useState(1)
   const [fontSizeDraft, setFontSizeDraft] = useState('')
+  const pendingFontAttributes = useRef<{ family?: string; size?: string } | null>(null)
   const [mathDialog, setMathDialog] = useState<{ mode: 'insert' | 'edit'; position?: number; from?: number; to?: number; displayMode: boolean; latex: string } | null>(null)
   const pendingAssetWrites = useMemo(() => new PendingAssetWrites(setAssetError), [])
 
@@ -198,6 +199,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         compositionstart: () => { composing.current = true; return false },
         compositionend: () => { composing.current = false; return false },
       },
+    },
+    onFocus: ({ editor: current }) => {
+      const pending = pendingFontAttributes.current
+      if (pending && current.schema.marks.font) current.view.dispatch(current.state.tr.setStoredMarks([current.schema.marks.font.create(pending)]))
     },
     onUpdate: ({ editor: current }) => {
       const json = current.getJSON()
@@ -435,6 +440,8 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     }
     const points = Math.min(96, Math.max(8, parsed))
     setFontSizeDraft(String(points))
+    const currentFont = editor.getAttributes('font') as { family?: unknown }
+    pendingFontAttributes.current = { ...(typeof currentFont.family === 'string' ? { family: currentFont.family } : {}), size: String(points) }
     setRichFontAttribute(editor, 'size', String(points) as RichFontSize)
   }
 
