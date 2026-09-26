@@ -100,6 +100,8 @@ pub struct AppSettings {
     pub default_editor_mode: EditorMode,
     pub autosave_delay_ms: u64,
     pub data_root: DataRootSetting,
+    #[serde(default = "default_deepseek_model")]
+    pub deepseek_model: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,6 +138,10 @@ const fn default_true() -> bool {
     true
 }
 
+fn default_deepseek_model() -> String {
+    "deepseek-flash".to_owned()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         DEFAULT_APP_SETTINGS.clone()
@@ -166,6 +172,7 @@ pub struct SettingsPatch {
     pub show_menu_bar_icon: Option<bool>,
     pub default_editor_mode: Option<EditorMode>,
     pub autosave_delay_ms: Option<u64>,
+    pub deepseek_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -790,6 +797,12 @@ fn apply_patch(
     }
     if let Some(value) = patch.autosave_delay_ms {
         settings.autosave_delay_ms = value.clamp(150, 2_000);
+    }
+    if let Some(value) = patch.deepseek_model {
+        settings.deepseek_model = match value.as_str() {
+            "deepseek-v4-pro" => value,
+            _ => "deepseek-flash".to_owned(),
+        };
     }
     validate_settings(settings)
 }

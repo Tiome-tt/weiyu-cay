@@ -344,6 +344,25 @@ fn repository_marks_rebuild_and_keeps_old_index_when_publish_sync_fails() {
 }
 
 #[test]
+fn repository_save_refreshes_updated_at_for_content_edits() {
+    let store = TestStore::new();
+    let repository = NoteRepository::new(store.paths.clone());
+    repository.create(note("old body", 0)).unwrap();
+
+    let saved = repository.save(note("new body", 0), 0).unwrap();
+
+    assert_eq!(saved.markdown, "new body");
+    assert_eq!(saved.revision, 1);
+    assert_ne!(saved.updated_at, "2026-07-30T00:01:00Z");
+    assert_eq!(
+        repository
+            .load(NoteId::parse_str(NOTE_ID).unwrap())
+            .unwrap()
+            .updated_at,
+        saved.updated_at
+    );
+}
+#[test]
 fn repository_create_load_list_and_move_preserve_identity_and_markdown() {
     let store = TestStore::new();
     let connection = Connection::open(store.paths.database()).unwrap();

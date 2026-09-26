@@ -435,3 +435,40 @@ button {
 .trash-view__dialog footer { display: flex; justify-content: end; gap: 8px; margin-top: 8px; }
 .trash-view__dialog footer button { padding: 7px 12px; color: var(--color-heading); background: var(--color-accent-soft); border: 1px solid var(--color-accent-border); border-radius: 9px; cursor: pointer; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.settings-view__ai-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.settings-view__ai-actions button { padding: 6px 9px; font-size: .78em; }
+/* AI settings keep credentials, provider choice, and actions in a calm responsive group. */
+.settings-view__ai-settings {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 13px;
+  background: color-mix(in srgb, var(--color-accent-soft) 24%, var(--color-surface));
+}
+.settings-view__ai-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(180px, .75fr); gap: 12px; }
+.settings-view__ai-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding-top: 12px; border-top: 1px solid var(--color-border-soft); }
+.settings-view__ai-actions button { padding: 6px 9px; font-size: .78em; }
+.settings-view__ai-settings > p { line-height: 1.5; }
+
+@media (max-width: 640px) {
+  .settings-view__ai-grid { grid-template-columns: 1fr; }
+  .settings-view__ai-actions { align-items: flex-start; }
+}
+.sticky-window { user-select: none; -webkit-user-select: none; }
+.sticky-window input, .sticky-window textarea, .sticky-window [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
+.settings-view__ai-key-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.settings-view__ai-key-field { min-width: 0; }
+.settings-view__ai-model { width: min(100%, 360px); }
+.settings-view__ai-actions { align-self: end; padding-top: 0; border-top: 0; }
+@media (max-width: 640px) {
+  .settings-view__ai-key-row { grid-template-columns: 1fr; }
+  .settings-view__ai-actions { align-items: center; }
+  .settings-view__ai-model { width: 100%; }
+}
+/* Keep the AI credential row wide enough for the key itself and place the model below it. */
+.settings-view fieldset.settings-view__ai-settings { grid-template-columns: minmax(0, 1fr); }
+.settings-view__ai-key-row { grid-template-columns: minmax(0, 1fr) auto; }
+.settings-view__ai-key-field input { min-width: 0; }
+@media (max-width: 640px) {
+  .settings-view fieldset.settings-view__ai-settings { grid-template-columns: minmax(0, 1fr); }
+  .settings-view__ai-key-row { grid-template-columns: minmax(0, 1fr); }
+}

@@ -17,7 +17,8 @@ pub enum CommandErrorCode {
 pub struct CommandError {
     code: CommandErrorCode,
     message: String,
-    #[serde(skip)]
+    #[cfg_attr(debug_assertions, serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(not(debug_assertions), serde(skip))]
     diagnostic: Option<String>,
 }
 

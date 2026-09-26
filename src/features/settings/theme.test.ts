@@ -19,6 +19,7 @@ describe('settings theme', () => {
       defaultEditorMode: 'source',
       autosaveDelayMs: 500,
       dataRoot: { mode: 'default' },
+      deepseekModel: 'deepseek-flash',
     })
   })
   it('uses one sticky-note color derived from the forest theme', () => {
@@ -78,7 +79,7 @@ describe('settings theme', () => {
       '--color-canvas', '--color-surface', '--color-panel', '--color-panel-warm',
       '--color-accent', '--color-accent-strong', '--color-accent-strong-hover', '--color-on-accent',
       '--color-accent-soft', '--color-accent-border',
-      '--color-accent-haze', '--color-warm', '--color-text', '--color-heading', '--color-muted',
+      '--color-accent-haze', '--color-warm', '--color-ai-keyword', '--color-text', '--color-heading', '--color-muted',
       '--color-muted-light', '--color-error', '--color-on-error', '--color-focus', '--color-focus-soft', '--color-border',
       '--color-border-soft', '--theme-note-accent',
     ]
@@ -101,6 +102,24 @@ describe('settings theme', () => {
     }
   })
 
+  it('keeps semantic keyword text readable on each summary surface', () => {
+    for (const theme of ['forest', 'sand', 'night', 'system'] as const) {
+      const palette = themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme }, theme === 'system' ? 'dark' : 'light')
+      expect(contrastRatio(palette['--color-ai-keyword'], palette['--color-surface'])).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+  it('provides six distinguishable and readable AI annotation colors in every palette', () => {
+    const roles = ['concept', 'mechanism', 'evidence', 'conclusion', 'action', 'caveat']
+    for (const theme of ['forest', 'sand', 'night', 'system'] as const) {
+      const palette = themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme }, theme === 'system' ? 'dark' : 'light')
+      const colors = roles.map((role) => palette['--color-ai-' + role])
+      expect(new Set(colors).size).toBe(roles.length)
+      for (const color of colors) {
+        expect(color).toMatch(/^#[0-9A-Fa-f]{6}$/)
+        expect(contrastRatio(color, palette['--color-surface'])).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
   it('normalizes unsafe numeric values and keeps the sticky color shared', () => {
     expect(normalizeSettings({ ...DEFAULT_APP_SETTINGS, fontSize: 100, lineHeight: 0, autosaveDelayMs: 10 })).toMatchObject({
       fontSize: 28,

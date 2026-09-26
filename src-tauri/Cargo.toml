@@ -1,6 +1,6 @@
 [package]
 name = "simple-notes"
-version = "1.1.1"
+version = "1.1.2"
 description = "A local-first Markdown note application"
 authors = ["Simple Notes contributors"]
 edition = "2021"
@@ -35,6 +35,10 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 pulldown-cmark = "0.13.4"
 url = "2.5.8"
 sha2 = "0.10"
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+rand = "0.9"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 zip = { version = "4.6.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.41.0"
 
@@ -44,6 +48,11 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+keyring = "4.2.0"
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["fs"] }
 

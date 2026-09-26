@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { Folder, FolderId, NoteId, NoteSummary } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
 
@@ -11,9 +11,10 @@ interface InternalLinkTreeProps {
 
 /**
  * Presents link targets using the same folder hierarchy as the library rail.
- * Folder rows are structural only; a note row is the only selectable target.
+ * Folder rows can be collapsed; a note row is the only selectable target.
  */
 export function InternalLinkTree({ folders, targets, selectedId, onSelect }: InternalLinkTreeProps) {
+  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<FolderId>>(new Set())
   const targetsByFolder = useMemo(() => {
     const grouped = new Map<FolderId | null, NoteSummary[]>()
     const knownFolderIds = new Set(folders.map((folder) => folder.id))
@@ -29,7 +30,7 @@ export function InternalLinkTree({ folders, targets, selectedId, onSelect }: Int
     }
     for (const notes of grouped.values()) notes.sort(compareNotes)
     return grouped
-  }, [targets])
+  }, [folders, targets])
 
   const childrenByParent = useMemo(() => {
     const grouped = new Map<FolderId | null, Folder[]>()
@@ -44,7 +45,16 @@ export function InternalLinkTree({ folders, targets, selectedId, onSelect }: Int
     return grouped
   }, [folders])
 
-  const rendered = renderLevel(null, 1, childrenByParent, targetsByFolder, new Set(), selectedId, onSelect)
+  const toggleFolder = (folderId: FolderId) => {
+    setCollapsedFolders((current) => {
+      const next = new Set(current)
+      if (next.has(folderId)) next.delete(folderId)
+      else next.add(folderId)
+      return next
+    })
+  }
+
+  const rendered = renderLevel(null, 1, childrenByParent, targetsByFolder, new Set(), collapsedFolders, selectedId, onSelect, toggleFolder)
   return (
     <div className="internal-link-tree" role="tree" aria-label="内部链接目标">
       {rendered}
@@ -58,28 +68,37 @@ function renderLevel(
   childrenByParent: ReadonlyMap<FolderId | null, Folder[]>,
   targetsByFolder: ReadonlyMap<FolderId | null, NoteSummary[]>,
   visited: Set<FolderId>,
+  collapsedFolders: ReadonlySet<FolderId>,
   selectedId: NoteId | '',
   onSelect: (id: NoteId) => void,
+  onToggleFolder: (id: FolderId) => void,
 ): ReactNode[] {
   const rows: ReactNode[] = []
   for (const folder of childrenByParent.get(parentId) ?? []) {
     if (visited.has(folder.id)) continue
     const nextVisited = new Set(visited)
     nextVisited.add(folder.id)
+    const hasChildren = (childrenByParent.get(folder.id)?.length ?? 0) > 0 || (targetsByFolder.get(folder.id)?.length ?? 0) > 0
+    const collapsed = collapsedFolders.has(folder.id)
     rows.push(
-      <div
+      <button
         key={`folder-${folder.id}`}
+        type="button"
         className="internal-link-tree__folder"
         role="treeitem"
         aria-level={level}
-        aria-expanded="true"
+        aria-expanded={!collapsed}
+        aria-label={`${collapsed ? '展开' : '折叠'}文件夹：${folder.name}`}
         style={{ paddingLeft: `${6 + (level - 1) * 14}px` }}
+        onClick={() => onToggleFolder(folder.id)}
       >
+        {hasChildren && <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} />}
+        {!hasChildren && <span className="internal-link-tree__folder-spacer" aria-hidden="true" />}
         <Icon name="folder" size={14} />
         <span>{folder.name}</span>
-      </div>,
+      </button>,
     )
-    rows.push(...renderLevel(folder.id, level + 1, childrenByParent, targetsByFolder, nextVisited, selectedId, onSelect))
+    if (!collapsed) rows.push(...renderLevel(folder.id, level + 1, childrenByParent, targetsByFolder, nextVisited, collapsedFolders, selectedId, onSelect, onToggleFolder))
   }
   for (const note of targetsByFolder.get(parentId) ?? []) {
     rows.push(

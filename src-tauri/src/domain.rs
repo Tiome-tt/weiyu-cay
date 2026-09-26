@@ -196,6 +196,20 @@ pub struct ReadImageAsset {
     pub media_type: String,
     pub bytes: Vec<u8>,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadImageAssetsInput {
+    pub note_id: NoteId,
+    pub relative_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadImageAssetBatchItem {
+    pub relative_path: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

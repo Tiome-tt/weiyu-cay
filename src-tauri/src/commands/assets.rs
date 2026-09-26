@@ -1,6 +1,9 @@
 use crate::{
     commands::storage::{StorageCommandState, StorageConsumer},
-    domain::{NoteKind, ReadImageAsset, ReadImageAssetInput, SaveImageInput, SavedImage},
+    domain::{
+        NoteKind, ReadImageAsset, ReadImageAssetBatchItem, ReadImageAssetInput,
+        ReadImageAssetsInput, SaveImageInput, SavedImage,
+    },
     error::CommandError,
     platform::{IndexMutationLock, NewFilePublishState, SafeDirectory},
     storage::{paths::StoragePaths, repository::NoteRepository},
@@ -64,12 +67,50 @@ pub fn read_image_asset(
     )
 }
 
+#[tauri::command(rename_all = "camelCase")]
+pub fn read_image_assets(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    input: ReadImageAssetsInput,
+) -> Result<Vec<ReadImageAssetBatchItem>, CommandError> {
+    authorize_asset_caller(window.label(), input.note_id)?;
+    read_image_assets_from(
+        state.paths_for(StorageConsumer::Assets)?,
+        input.note_id,
+        &input.relative_paths,
+    )
+}
+
 pub fn read_image_asset_from(
     paths: &StoragePaths,
     note_id: crate::domain::NoteId,
     relative_path: &str,
 ) -> Result<ReadImageAsset, CommandError> {
-    let (filename, media_type) = validate_owned_asset_label(relative_path)?;
+    let mut loaded = read_image_assets_from(paths, note_id, &[relative_path.to_owned()])?;
+    let asset = loaded
+        .pop()
+        .ok_or_else(|| CommandError::not_found("image asset was not returned"))?;
+    Ok(ReadImageAsset {
+        media_type: asset.media_type,
+        bytes: asset.bytes,
+    })
+}
+
+pub fn read_image_assets_from(
+    paths: &StoragePaths,
+    note_id: crate::domain::NoteId,
+    relative_paths: &[String],
+) -> Result<Vec<ReadImageAssetBatchItem>, CommandError> {
+    if relative_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let labels = relative_paths
+        .iter()
+        .map(|relative_path| {
+            validate_owned_asset_label(relative_path)
+                .map(|(filename, media_type)| (filename.to_owned(), media_type))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let guard = IndexMutationLock::acquire(paths.root())?;
     let owner = NoteRepository::new(paths.clone()).load_locked(note_id, &guard)?;
     let collection = match owner.kind {
@@ -78,12 +119,19 @@ pub fn read_image_asset_from(
     };
     let note_id = note_id.to_string();
     let directory = SafeDirectory::open(paths.root(), &[collection, &note_id, "assets"], false)?;
-    let bytes = directory.read(filename, MAX_IMAGE_BYTES as u64)?;
-    validate_image(media_type, &bytes)?;
-    Ok(ReadImageAsset {
-        media_type: media_type.to_owned(),
-        bytes,
-    })
+    labels
+        .into_iter()
+        .zip(relative_paths.iter())
+        .map(|((filename, media_type), relative_path)| {
+            let bytes = directory.read(&filename, MAX_IMAGE_BYTES as u64)?;
+            validate_image(media_type, &bytes)?;
+            Ok(ReadImageAssetBatchItem {
+                relative_path: relative_path.clone(),
+                media_type: media_type.to_owned(),
+                bytes,
+            })
+        })
+        .collect()
 }
 
 fn validate_owned_asset_label(relative_path: &str) -> Result<(&str, &'static str), CommandError> {

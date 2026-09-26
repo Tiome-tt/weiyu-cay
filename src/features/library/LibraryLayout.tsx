@@ -3,7 +3,7 @@ import { emptyRichDocument } from '../../domain/content'
 import { docxToRichDocument, materializeDocumentImages } from '../content/officeConversion'
 import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
-import type { AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LibraryOutlineCollapsedPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
+import type { AiPort, AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LibraryOutlineCollapsedPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import type { SaveState } from '../editor/useAutosave'
@@ -34,6 +34,9 @@ interface LibraryLayoutProps {
   startupGuide?: StartupGuidePort
   defaultEditorMode?: EditorMode
   autosaveDelayMs?: number
+  ai?: AiPort
+  deepseekModel?: string
+  onOpenSettings?(): void
   onSaveStateChange?(status: Exclude<SaveState['status'], 'idle'> | 'hidden'): void
   onCreatePopoverOpen?(): void
 }
@@ -47,7 +50,7 @@ export interface LibraryLayoutHandle {
   openTemporaryInbox(): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ files, notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, onSaveStateChange, onCreatePopoverOpen }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ files, notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, ai, deepseekModel, onOpenSettings, onSaveStateChange, onCreatePopoverOpen }, ref) {
   const library = useLibrary(notes, folders, startupGuide)
   const [importBusy, setImportBusy] = useState(false)
   const [importNotice, setImportNotice] = useState<{ kind: 'status' | 'alert'; message: string } | null>(null)
@@ -92,7 +95,6 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const linkRepairBusyRef = useRef(false)
   const mountedRef = useRef(false)
   const columnsRef = useRef<HTMLDivElement>(null)
-  const outlineDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const outlineHeadingSignatureRef = useRef('')
   const activeFolderIdRef = useRef<FolderId | null>(library.activeFolderId)
   const importPathsRef = useRef<(paths: string[], position?: { x: number; y: number }) => void>(() => undefined)
@@ -112,18 +114,14 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     [onSaveStateChange],
   )
   const reportOutlineDraft = useCallback((noteId: NoteId, markdown: string) => {
-    if (outlineDraftTimerRef.current !== null) clearTimeout(outlineDraftTimerRef.current)
-    outlineDraftTimerRef.current = setTimeout(() => {
-      outlineDraftTimerRef.current = null
-      const nextSignature = outlineHeadingSignature(markdown)
-      if (outlineHeadingSignatureRef.current === nextSignature) return
-      outlineHeadingSignatureRef.current = nextSignature
-      startTransition(() => {
-        setOutlineDraft((current) => current?.noteId === noteId && current.markdown === markdown
-          ? current
-          : { noteId, markdown })
-      })
-    }, 100)
+    const nextSignature = outlineHeadingSignature(markdown)
+    if (outlineHeadingSignatureRef.current === nextSignature) return
+    outlineHeadingSignatureRef.current = nextSignature
+    startTransition(() => {
+      setOutlineDraft((current) => current?.noteId === noteId && current.markdown === markdown
+        ? current
+        : { noteId, markdown })
+    })
   }, [])
   const outlineDocument = library.document
   const outlineDocumentMarkdown = useMemo(() => contentOutlineMarkdown(outlineDocument ?? {}), [outlineDocument])
@@ -145,7 +143,6 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       navigationRequest.current += 1
       trashMutationRef.current += 1
       createOperationRequest.current += 1
-      if (outlineDraftTimerRef.current !== null) clearTimeout(outlineDraftTimerRef.current)
     }
   }, [])
 
@@ -159,8 +156,10 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }, [library.activeNoteId])
 
   useEffect(() => {
-    outlineHeadingSignatureRef.current = outlineHeadingSignature(contentOutlineMarkdown(library.document ?? {}))
-  }, [library.document?.id])
+    const nextOutlineMarkdown = contentOutlineMarkdown(library.document ?? {})
+    outlineHeadingSignatureRef.current = outlineHeadingSignature(nextOutlineMarkdown)
+    setOutlineDraft((current) => current?.noteId === library.document?.id ? null : current)
+  }, [library.document?.id, outlineDocumentMarkdown])
 
   useEffect(() => {
     const pending = pendingEditorAction
@@ -810,6 +809,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onConvertFileToDocument={convertWordFile}
             initialMode={defaultEditorMode}
             autosaveDelayMs={autosaveDelayMs}
+            ai={ai}
+            deepseekModel={deepseekModel}
+            onOpenSettings={onOpenSettings}
             onSaveStateChange={reportEditorSaveState}
             onDraftChange={(markdown) => reportOutlineDraft(library.document!.id, markdown)}
           />

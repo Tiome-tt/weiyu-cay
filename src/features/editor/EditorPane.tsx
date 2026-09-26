@@ -10,17 +10,18 @@ import {
   type PointerEvent,
 } from 'react'
 import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, SearchPort, SystemPort } from '../../domain/ports'
+import type { AiPort, AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, SearchPort, SystemPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
 import { Backlinks } from './Backlinks'
 import { EditorActionsMenu } from './EditorActionsMenu'
 import { InternalLinkDialog } from './InternalLinkDialog'
-import { InternalLinkTree } from './InternalLinkTree'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
 import { useAutosave, type SaveState } from './useAutosave'
 import { StatusNotice, type StatusNoticeState } from '../../shared/StatusNotice'
 import { Icon, type IconName } from '../../shared/Icon'
+import { AiSummaryWidget } from '../ai/AiSummaryWidget'
+import { waitForImageAssets } from '../content/imageAssetLoader'
 
 export interface EditorPaneProps {
   onConvertFileToDocument?(source: NoteDocument, bytes: Uint8Array): Promise<void>
@@ -32,6 +33,9 @@ export interface EditorPaneProps {
   search?: SearchPort
   onDocumentAdopt?: (document: NoteDocument) => void
   autosaveDelayMs?: number
+  ai?: AiPort
+  deepseekModel?: string
+  onOpenSettings?(): void
   initialMode?: EditorMode
   links?: LinkPort
   linkCache?: ReadonlyMap<NoteId, NoteSummary>
@@ -82,6 +86,9 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
     onSaveStateChange,
     onDraftChange,
     autosaveDelayMs,
+    ai,
+    deepseekModel,
+    onOpenSettings,
     initialMode = 'source',
   },
   ref,
@@ -95,7 +102,6 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
   const [metadataError, setMetadataError] = useState<string | null>(null)
   const [linkTargets, setLinkTargets] = useState<NoteSummary[]>([])
-  const [selectedLinkTarget, setSelectedLinkTarget] = useState<NoteId | ''>('')
   const [linkActionError, setLinkActionError] = useState<string | null>(null)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const previewRef = useRef<HTMLElement>(null)
@@ -114,13 +120,13 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   const modeRef = useRef(mode)
   const tagRequestRef = useRef(0)
   const exportRef = useRef<(kind: 'word' | 'pdf') => Promise<boolean>>(() => Promise.resolve(false))
-  const hasSecondaryActions = links !== undefined
-    || (folders !== undefined && onMoveNote !== undefined)
+  const hasSecondaryActions = (folders !== undefined && onMoveNote !== undefined)
     || search !== undefined
   const breadcrumbs = documentBreadcrumb(document, folders)
   const displayTitle = localizedDocumentTitle(document)
   modeRef.current = mode
   onDraftChangeRef.current = onDraftChange
+  const waitForImages = assetReader === undefined ? undefined : () => waitForImageAssets(assetReader, document.id)
 
   useEffect(() => setImageError(null), [document.id])
   useEffect(() => setLinkDialogOpen(false), [document.id])
@@ -168,13 +174,11 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   useEffect(() => {
     let current = true
     setLinkTargets([])
-    setSelectedLinkTarget('')
     if (links === undefined) return () => { current = false }
     void links.listTargets().then(
       (targets) => {
         if (!current) return
         setLinkTargets(targets)
-        setSelectedLinkTarget(targets[0]?.id ?? '')
       },
       () => { if (current) setLinkActionError('无法加载内部链接目标。') },
     )
@@ -278,15 +282,6 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
     }
   }
 
-  const applyLinkAction = (action: 'insert' | 'retarget') => {
-    const target = linkTargets.find((candidate) => candidate.id === selectedLinkTarget)
-    if (target === undefined) return
-    const applied = action === 'insert'
-      ? sourceRef.current?.insertInternalLink(target)
-      : sourceRef.current?.retargetInternalLink(target)
-    setLinkActionError(applied ? null : '请先把光标放在要重定向的内部链接上。')
-  }
-
   const openInternalLinkDialog = () => {
     setLinkActionError(null)
     setLinkDialogOpen(true)
@@ -357,27 +352,8 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
           <div className="editor-toolbar__primary">
             {hasSecondaryActions && (
               <EditorActionsMenu>
-                {(close) => (
+                {() => (
                   <>
-                    {links && (
-                      <div className="editor-actions-menu__section editor-link-actions" role="group" aria-label="内部链接">
-                        <span className="editor-actions-menu__heading">内部链接</span>
-                        {linkTargets.length === 0 ? (
-                          <p className="internal-link-tree__empty">没有可链接的笔记</p>
-                        ) : (
-                          <InternalLinkTree
-                            folders={folders ?? []}
-                            targets={linkTargets}
-                            selectedId={selectedLinkTarget}
-                            onSelect={setSelectedLinkTarget}
-                          />
-                        )}
-                        <div className="editor-actions-menu__buttons">
-                          <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('insert'); close() }}>插入内部链接</button>
-                          <button type="button" role="menuitem" disabled={selectedLinkTarget === ''} onClick={() => { applyLinkAction('retarget'); close() }}>重定向内部链接</button>
-                        </div>
-                      </div>
-                    )}
                     {folders && onMoveNote && (
                       <div className="editor-actions-menu__section" role="group" aria-label="目录">
                         <span className="editor-actions-menu__heading">目录</span>
@@ -528,6 +504,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
             />
           </div>
         </div>
+        <AiSummaryWidget noteId={document.id} title={displayTitle} markdown={draftMarkdownRef.current} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages} />
       </div>
       {linkDialogOpen && links && (
         <InternalLinkDialog

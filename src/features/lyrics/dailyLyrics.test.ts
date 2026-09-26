@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { DAILY_LYRIC_LIBRARY, dailyLyricForDate } from './dailyLyrics'
+import { DAILY_LYRIC_LIBRARY, MAX_DAILY_LYRIC_LENGTH, dailyLyricForDate, loadExpandedDailyLyrics } from './dailyLyrics'
 
 describe('daily lyrics', () => {
+  it('ships the expanded local library', async () => {
+    await loadExpandedDailyLyrics()
+    expect(DAILY_LYRIC_LIBRARY).toHaveLength(2919)
+    expect(DAILY_LYRIC_LIBRARY.every((entry) => entry.text && entry.artist && entry.title)).toBe(true)
+    expect(DAILY_LYRIC_LIBRARY.every((entry) => entry.text.length <= MAX_DAILY_LYRIC_LENGTH)).toBe(true)
+  })
+
   it('chooses a stable library entry for the same local date', () => {
     const first = dailyLyricForDate('2026-09-14')
     const second = dailyLyricForDate('2026-09-14')

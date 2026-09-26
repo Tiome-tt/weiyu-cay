@@ -13,5 +13,6 @@
   "showMenuBarIcon": true,
   "defaultEditorMode": "source",
   "autosaveDelayMs": 500,
-  "dataRoot": { "mode": "default" }
+  "dataRoot": { "mode": "default" },
+  "deepseekModel": "deepseek-flash"
 }

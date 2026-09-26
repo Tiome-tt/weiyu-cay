@@ -54,6 +54,16 @@ describe('TauriClient', () => {
     void temporaryWindows.show(otherId)
     expect(invokeMock).toHaveBeenCalledTimes(5)
   })
+  it('sends the API Key under the Rust command parameter name', async () => {
+    invokeMock.mockResolvedValue({ configured: true, storage: 'encrypted-file' })
+    await createTauriPorts().ai.saveDeepSeekApiKey('sk-test-key')
+    expect(invokeMock).toHaveBeenCalledWith('save_deepseek_api_key', { api_key: 'sk-test-key' })
+  })
+  it('reads a saved AI summary with the registered read-only command', async () => {
+    invokeMock.mockResolvedValue({ summary: '已保存', keyPoints: [], outline: [], todos: [], keywords: [] })
+    await createTauriPorts().ai.getCachedSummary('legacy-note-id')
+    expect(invokeMock).toHaveBeenCalledWith('get_cached_ai_summary', { note_id: 'legacy-note-id' })
+  })
   it('routes main-window chrome through the current Tauri webview window', async () => {
     const { windowChrome } = createTauriPorts()
 
@@ -353,5 +363,17 @@ describe('TauriClient', () => {
       ['read_image_asset', { input: { noteId, relativePath } }],
       ['open_external_link', { url: 'https://example.com/path' }],
     ])
+  })
+  it('maps batched image reads to the privileged asset command', async () => {
+    const noteId = '019c0000-0000-7000-8000-000000000002' as NoteId
+    const relativePaths = [`assets/screenshot-${noteId}.png`, `assets/screenshot-${noteId}.webp`]
+    invokeMock.mockResolvedValue([{ relativePath: relativePaths[0], mediaType: 'image/png', bytes: [1] }])
+    const { assets } = createTauriPorts()
+    if (assets.readImages === undefined) throw new Error('batch image reader is unavailable')
+
+    await expect(assets.readImages({ noteId, relativePaths })).resolves.toEqual([
+      { relativePath: relativePaths[0], mediaType: 'image/png', bytes: new Uint8Array([1]) },
+    ])
+    expect(invokeMock).toHaveBeenCalledWith('read_image_assets', { input: { noteId, relativePaths } })
   })
 })

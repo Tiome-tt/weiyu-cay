@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-summarize-with-deepseek"
+description = "Enables the summarize_with_deepseek command without any pre-configured scope."
+commands.allow = ["summarize_with_deepseek"]
+
+[[permission]]
+identifier = "deny-summarize-with-deepseek"
+description = "Denies the summarize_with_deepseek command without any pre-configured scope."
+commands.deny = ["summarize_with_deepseek"]

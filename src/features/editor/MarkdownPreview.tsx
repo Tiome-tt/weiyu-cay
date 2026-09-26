@@ -1,6 +1,7 @@
 import { forwardRef, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
+import { readImageAsset } from '../content/imageAssetLoader'
 import {
   markdownWithPreviewLinks,
   resolutionClass,
@@ -54,11 +55,11 @@ export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps
           Array.from(html.matchAll(/data-simple-notes-asset="([^"]+)"/gu), (match) => match[1]),
         )
         for (const relativePath of relativePaths) {
-          void assetReader.readImage({ noteId, relativePath }).then(
+          void readImageAsset(assetReader, noteId, relativePath).then(
             (loaded) => {
               if (!current) return
               try {
-                const objectUrl = URL.createObjectURL(new Blob([loaded.bytes.slice().buffer], { type: loaded.mediaType }))
+                const objectUrl = URL.createObjectURL(new Blob([loaded.bytes], { type: loaded.mediaType }))
                 objectUrls.push(objectUrl)
                 setAssetState((state) => state.html === html
                   ? { html, urls: new Map(state.urls).set(relativePath, objectUrl) }

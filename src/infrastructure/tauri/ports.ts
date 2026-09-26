@@ -3,7 +3,7 @@ import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
-import type { AppNavigationAction, AppNavigationPort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LifecycleFailure, LifecycleParticipantPort, LifecycleRequest, LinkPort, MainCloseChoiceRequest, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrayActionFailure, TrashEntry, TrashFolderEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
+import type { AiPort, AiSummaryProgress, AppNavigationAction, AppNavigationPort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LifecycleFailure, LifecycleParticipantPort, LifecycleRequest, LinkPort, MainCloseChoiceRequest, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrayActionFailure, TrashEntry, TrashFolderEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
 
@@ -268,6 +268,15 @@ class TauriAssetPort implements AssetPort {
     const result = await this.client.invoke<{ mediaType: string; bytes: number[] }>('read_image_asset', { input })
     return { mediaType: result.mediaType, bytes: Uint8Array.from(result.bytes) }
   }
+
+  async readImages(input: Parameters<NonNullable<ImageReadPort['readImages']>>[0]) {
+    const result = await this.client.invoke<ReadonlyArray<{ relativePath: string; mediaType: string; bytes: number[] }>>('read_image_assets', { input })
+    return result.map((image) => ({
+      relativePath: image.relativePath,
+      mediaType: image.mediaType,
+      bytes: Uint8Array.from(image.bytes),
+    }))
+  }
 }
 
 class TauriExportPort implements ExportPort {
@@ -448,6 +457,37 @@ class TauriTrashPort implements TrashPort {
   }
 }
 
+class TauriAiPort implements AiPort {
+  constructor(private readonly client: TauriClient) {}
+
+  getCredentialStatus() {
+    return this.client.invoke<{ configured: boolean; storage: string }>('get_ai_credential_status')
+  }
+
+  saveDeepSeekApiKey(apiKey: string) {
+    return this.client.invoke<{ configured: boolean; storage: string }>('save_deepseek_api_key', { api_key: apiKey })
+  }
+
+  clearDeepSeekApiKey() {
+    return this.client.invoke<{ configured: boolean; storage: string }>('clear_deepseek_api_key')
+  }
+
+  getCachedSummary(noteId: string) {
+    return this.client.invoke<Awaited<ReturnType<AiPort['getCachedSummary']>>>('get_cached_ai_summary', { note_id: noteId })
+  }
+
+  summarize(input: Parameters<AiPort['summarize']>[0]) {
+    return this.client.invoke<Awaited<ReturnType<AiPort['summarize']>>>('summarize_with_deepseek', { request: input })
+  }
+
+  relabel(input: { noteId: string; model?: string }) {
+    return this.client.invoke<Awaited<ReturnType<AiPort['summarize']>>>('relabel_ai_summary', { note_id: input.noteId, model: input.model ?? null })
+  }
+
+  subscribeSummaryProgress(listener: (progress: AiSummaryProgress) => void) {
+    return getCurrentWebviewWindow().listen<AiSummaryProgress>('ai-summary-progress', (event) => listener(event.payload))
+  }
+}
 class TauriSettingsPort implements SettingsPort {
   constructor(private readonly client: TauriClient) {}
 
@@ -508,6 +548,7 @@ export function createTauriPorts(): {
   temporaryWindows: TemporaryWindowPort
   trash: TrashPort
   settings: SettingsPort
+  ai: AiPort
   stickySettings: StickySettingsPort
   exporter: ExportPort
   exportDestinationPicker: ExportDestinationPicker
@@ -531,6 +572,7 @@ export function createTauriPorts(): {
     temporaryWindows: new TauriTemporaryWindowPort(client),
     trash: new TauriTrashPort(client),
     settings: new TauriSettingsPort(client),
+    ai: new TauriAiPort(client),
     stickySettings: new TauriStickySettingsPort(client),
     exporter: new TauriExportPort(client),
     exportDestinationPicker: new TauriExportDestinationPicker(),

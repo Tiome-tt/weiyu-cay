@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { emptyRichDocument } from '../../domain/content'
-import { RichDocumentEditor, nextRichDocumentZoom, type RichDocumentEditorHandle } from './RichDocumentEditor'
+import { chooseTablePickerSide, RichDocumentEditor, nextRichDocumentZoom, type RichDocumentEditorHandle } from './RichDocumentEditor'
 
 beforeAll(() => {
  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => document.querySelector('.tiptap') })
@@ -14,6 +14,10 @@ beforeAll(() => {
 afterEach(cleanup)
 
 describe('RichDocumentEditor', () => {
+  it('chooses the side with enough viewport space for the table picker', () => {
+    expect(chooseTablePickerSide({ triggerLeft: 900, triggerRight: 950, pickerWidth: 180, viewportWidth: 1024 })).toBe('left')
+    expect(chooseTablePickerSide({ triggerLeft: 500, triggerRight: 550, pickerWidth: 180, viewportWidth: 1024 })).toBe('right')
+  })
   it('changes document zoom with Ctrl+wheel while keeping the zoom bounded', () => {
     expect(nextRichDocumentZoom(1, -100)).toBe(1.1)
     expect(nextRichDocumentZoom(1, 100)).toBe(0.9)
@@ -38,6 +42,19 @@ describe('RichDocumentEditor', () => {
     expect(screen.getByRole('spinbutton', { name: '字号' })).toHaveAttribute('inputmode', 'numeric')
     expect(screen.getByRole('combobox', { name: '字号选项' })).toBeInTheDocument()
   })
+  it('collapses and expands the rich-document formatting toolbar', async () => {
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+    const toolbar = screen.getByRole('toolbar', { name: '文档格式' })
+    const toggle = screen.getByRole('button', { name: '收起格式工具栏' })
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(toggle)
+    expect(toolbar).toHaveClass('rich-document__toolbar--collapsed')
+    expect(screen.getByRole('button', { name: '展开格式工具栏' })).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByRole('button', { name: '展开格式工具栏' }))
+    expect(toolbar).not.toHaveClass('rich-document__toolbar--collapsed')
+    expect(screen.getByRole('button', { name: '收起格式工具栏' })).toHaveAttribute('aria-expanded', 'true')
+  })
   it('applies a custom numeric font size from the integrated size control', async () => {
     const onChange = vi.fn()
     render(<RichDocumentEditor value={emptyRichDocument()} onChange={onChange} />)
@@ -60,6 +77,22 @@ describe('RichDocumentEditor', () => {
     }))
   })
 
+  it('uses compact icon controls with hover labels and an ordered-list insertion action', async () => {
+    render(<RichDocumentEditor value={{ schemaVersion: 1, root: { type: 'doc', content: [{ type: 'paragraph' }] } }} onChange={vi.fn()} />)
+    const highlight = screen.getByRole('button', { name: '高亮' })
+    expect(highlight).toHaveAttribute('title', '高亮')
+    expect(highlight).not.toHaveTextContent('高亮')
+    const font = screen.getByRole('combobox', { name: '字体' })
+    expect(font).not.toHaveAttribute('title')
+    expect(font).toHaveTextContent('默认字体')
+    const size = screen.getByRole('group', { name: '字号' })
+    expect(size.querySelectorAll('input, select')).toHaveLength(2)
+    const insert = screen.getByRole('button', { name: '插入' })
+    expect(insert).toHaveAttribute('title', '插入')
+    expect(insert.querySelector('svg')).not.toBeNull()
+    await userEvent.setup().click(insert)
+    expect(screen.getByRole('menuitem', { name: '有序列表' })).toBeInTheDocument()
+  })
   it('keeps rich-document headings directly editable like Markdown headings', async () => {
     const value = {
       schemaVersion: 1 as const,
@@ -91,6 +124,42 @@ describe('RichDocumentEditor', () => {
     expect(heading).toHaveClass('rich-document__heading--editing')
     expect(editor).toHaveFocus()
     expect(editor).toHaveAttribute('contenteditable', 'true')
+  })
+  it('lets typing at the start of a heading prepend title text instead of editing the marker', async () => {
+    const onChange = vi.fn()
+    render(<RichDocumentEditor value={{
+      schemaVersion: 1,
+      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '旧标题' }] }] },
+    }} onChange={onChange} />)
+    const heading = screen.getByRole('heading', { name: '旧标题', level: 2 })
+    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
+    await userEvent.setup().click(marker)
+    await userEvent.setup().keyboard('新')
+    expect(screen.getByRole('heading', { name: '新旧标题', level: 2 })).toBeInTheDocument()
+  })
+  it('lets the marker gain focus and add a # without putting it in the title', async () => {
+    render(<RichDocumentEditor value={{
+      schemaVersion: 1,
+      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '针对问题' }] }] },
+    }} onChange={vi.fn()} />)
+    const marker = screen.getByRole('heading', { name: '针对问题', level: 2 }).querySelector('.rich-document__heading-marker') as HTMLElement
+    await userEvent.setup().click(marker)
+    expect(marker).toHaveFocus()
+    await userEvent.setup().keyboard('#')
+    expect(screen.getByRole('heading', { name: '针对问题', level: 3 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '针对问题', level: 3 }).querySelector('.rich-document__heading-marker')).toHaveTextContent('###')
+  })
+
+  it('treats # typed at the title start as a heading-level change', async () => {
+    render(<RichDocumentEditor value={{
+      schemaVersion: 1,
+      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '针对问题' }] }] },
+    }} onChange={vi.fn()} />)
+    const marker = screen.getByRole('heading', { name: '针对问题', level: 2 }).querySelector('.rich-document__heading-marker') as HTMLElement
+    fireEvent.mouseDown(marker)
+    screen.getByRole('textbox', { name: '文档正文' }).focus()
+    await userEvent.setup().keyboard('#')
+    expect(screen.getByRole('heading', { name: '针对问题', level: 3 })).toBeInTheDocument()
   })
   it('converts Markdown heading markers when Enter is pressed', async () => {
     const onChange = vi.fn()
@@ -172,15 +241,20 @@ describe('RichDocumentEditor', () => {
     expect(editor).toHaveTextContent('\\# 普通文字')
   })
   it('converts Markdown headings before a mouse click leaves the line', async () => {
-    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+    const onChange = vi.fn()
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={onChange} />)
     const user = userEvent.setup()
     const editor = screen.getByRole('textbox', { name: '文档正文' })
 
     await user.click(editor)
     await user.type(editor, '### 鼠标离开')
     fireEvent.mouseDown(editor)
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
 
     expect(screen.getByRole('heading', { name: '鼠标离开', level: 3 })).toBeInTheDocument()
+    const latest = onChange.mock.calls[onChange.mock.calls.length - 1]?.[0] as { root?: { content?: unknown[] } } | undefined
+    expect(latest?.root?.content).toHaveLength(1)
+    expect(editor.querySelector('p')).not.toBeInTheDocument()
   })
   it('persists a heading level change made by deleting a marker', () => {
     const value = {
@@ -417,6 +491,24 @@ describe('RichDocumentEditor', () => {
     expect(onChange.mock.calls.some(([value]) => value.root.content?.some((node: { type: string }) => node.type === 'table'))).toBe(true)
   })
 
+  it('flips the table picker to the left when the right side is clipped', async () => {
+    const innerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('rich-document__table-picker-trigger')) return new DOMRect(900, 0, 50, 30)
+      if (this.classList.contains('rich-document__table-picker-grid')) return new DOMRect(0, 0, 180, 170)
+      return new DOMRect(0, 0, 0, 0)
+    })
+    try {
+      render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
+      fireEvent.click(document.querySelector('.rich-document__insert-trigger') as HTMLElement)
+      fireEvent.click(document.querySelector('.rich-document__table-picker-trigger') as HTMLElement)
+      expect(document.querySelector('.rich-document__table-picker-grid')).toHaveAttribute('data-placement', 'left')
+    } finally {
+      rectSpy.mockRestore()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth })
+    }
+  })
   it('inserts and edits a LaTeX formula from the editor toolbar', async () => {
     const onChange = vi.fn()
     render(<RichDocumentEditor value={emptyRichDocument()} onChange={onChange} />)
