@@ -130,6 +130,10 @@ Do not claim a command passes unless it was run in the current worktree. If scaf
 - Classify changes only as `新增`, `修复`, `变更`, or `已知问题`; write each bullet as one action plus its result.
 - Record every user-visible behavior change, bug fix, release workflow change, and verification boundary in the current unreleased version entry before declaring the work complete.
 - Never rewrite a published version entry. Keep `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and release tags on the same version.
+- Every publication task automatically includes synchronizing `README.md`; do not wait for a separate user reminder. Update the public stable-version label, feature summary, release/download links, actual installer filenames, update description, and project status as one release-completion step. `README.md` is an overview, not a second version history; keep detailed records in `CHANGELOG.md` only.
+- Before handing off a stable publication, verify that GitHub Latest, the newest stable `CHANGELOG.md` entry, and the README public-version sections agree, and that every README installer link identifies an uploaded release asset. Drafts and RCs must not replace the README public stable version; a withdrawal/rollback must restore the previous public stable references.
+- Keep screenshot provenance honest: refresh materially outdated screenshots when possible, or label them as historical examples. Never relabel an old screenshot as the new release without capturing it from that version.
+- Run `pnpm test scripts/release-readme.test.ts` and `git diff --check` for release-documentation synchronization. The contract follows the newest stable changelog entry rather than an unreleased package version; documentation-only changes do not require recompiling the application.
 
 ## Scope discipline
 
