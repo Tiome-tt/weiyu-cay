@@ -17,8 +17,9 @@ test('promotes a simulated interrupted-save candidate on reopen', async ({ page 
 
   await page.reload()
 
-  await expect(page.getByText('已恢复 1 篇笔记并重建本地索引')).toBeVisible()
   await page.getByRole('treeitem', { name: '项目' }).click()
   await page.locator('.note-card').filter({ hasText: '恢复的中断保存' }).click()
   await expect(page.getByRole('heading', { name: '恢复的中断保存' })).toBeVisible()
+  await expect(page.getByText('候选正文')).toBeVisible()
+  await expect(page.getByText('已恢复 1 篇笔记并重建本地索引')).toHaveCount(0)
 })
