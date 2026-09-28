@@ -12,7 +12,9 @@ describe('main window layout contracts', () => {
     expect(mainWindowCss).toMatch(/\.main-window \.editor-toolbar\s*{[^}]*height:\s*44px/s)
     expect(mainWindowCss).not.toContain('.editor-toolbar__secondary')
     expect(mainWindowCss).toMatch(/\.main-window \.editor-actions-menu__popover\s*{[^}]*position:\s*absolute[^}]*max-height:/s)
-    expect(mainWindowCss).not.toMatch(/scrollbar-width:\s*none/)
+    const hiddenScrollbars = [...mainWindowCss.matchAll(/([^{}]+)\{[^{}]*scrollbar-width:\s*none[^{}]*\}/g)]
+    expect(hiddenScrollbars.map((match) => match[1].trim())).toEqual(['.main-window .markdown-source .cm-live-table-viewport'])
+    expect(cssRule('.main-window .markdown-source .cm-live-table-scrollbar')).toMatch(/scrollbar-width:\s*thin/)
   })
 
   it('keeps the more-actions popover inside the 420px editor boundary even with save status present', () => {
