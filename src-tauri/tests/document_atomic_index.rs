@@ -42,7 +42,11 @@ fn index_failure_keeps_the_new_text_payload_rebuildable_without_partial_metadata
     assert!(paths.root().join("rebuild-needed.json").exists());
     drop(connection);
     updated.revision = 1;
-    assert_eq!(repository.load(old.id).unwrap(), updated);
+    let durable = repository.load(old.id).unwrap();
+    assert_ne!(durable.updated_at, old.updated_at);
+    assert!(chrono::DateTime::parse_from_rfc3339(&durable.updated_at).is_ok());
+    updated.updated_at = durable.updated_at.clone();
+    assert_eq!(durable, updated);
     assert_eq!(rebuild_index_strict(&paths).unwrap().notes_recovered, 1);
     let connection = rusqlite::Connection::open(paths.database()).unwrap();
     assert_eq!(

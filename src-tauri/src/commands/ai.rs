@@ -29,6 +29,7 @@ const CREDENTIAL_USER: &str = "ai-summary-key";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const API_KEY_CREDENTIAL_USER: &str = "ai-summary-api-key";
 const CREDENTIAL_FILE: &str = "ai-credentials.json.enc";
+#[cfg(target_os = "windows")]
 const MASTER_KEY_FILE: &str = "ai-master.key.dpapi";
 const MAX_SUMMARY_INPUT_TOKENS: usize = 80_000;
 const COMPRESSION_CHUNK_TOKENS: usize = 24_000;
