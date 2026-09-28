@@ -21,6 +21,14 @@ Complete this checklist for every Tauri-signed prerelease and stable version tag
 - [ ] Stable promotion is a deliberate two-phase operation. First install the exact verified draft installers and complete all non-updater checks on both platforms. Then run the plan's `publishCommand` (`gh release edit <candidate> --repo <owner/repository> --draft=false --latest`). Confirm `releases/latest/download/latest.json` reports the candidate version, install the recorded prior stable on both platforms, explicitly check/download/install/restart through the application, and record both successful transitions.
 - [ ] If either stable updater smoke fails, stop distribution immediately and run both plan `rollbackCommands`: return the candidate to draft, then mark the recorded prior tag Latest. Confirm `releases/latest/download/latest.json` again reports the prior version and record the failure. Only after both updater smokes pass may the stable publication be treated as complete. RC remains available through its owner-controlled channel; stable binaries never use staging and check GitHub `releases/latest/download/latest.json` only.
 
+## Public release documentation
+
+- [ ] Treat README synchronization as part of every publication task, without requiring a separate user reminder. After stable promotion and before declaring publication complete, update `README.md` latest-version text, feature summary, Windows/macOS release and installer links, update description, and project status.
+- [ ] Cross-check README against GitHub Latest and the newest stable `CHANGELOG.md` entry. Confirm each linked installer exists among that release's uploaded assets and uses its actual filename; keep detailed version history and hashes in `CHANGELOG.md`, not in a second release-notes file.
+- [ ] Keep drafts and RCs from changing the public stable README references. If a stable release is withdrawn, restore README references to the actual public stable baseline.
+- [ ] Refresh screenshots when practical, or explicitly label historical screenshots; do not change an old screenshot's version label to imply it was captured from the new release.
+- [ ] Run `pnpm test scripts/release-readme.test.ts` and `git diff --check`, and merge the documentation update into `main` before the publication handoff. Do not recompile the application just to synchronize documentation.
+
 ## Windows release candidate
 
 - [ ] Install the unsigned Windows installer and record the SmartScreen/publisher warning shown on a clean machine.

@@ -4,6 +4,8 @@
 
 ![Cay（微屿）v1.1.1 界面示意图](docs/screenshots/weiyu-editor.png)
 
+上图为 v1.1.1 的历史界面示意；当前版本与下载入口见下方。
+
 ## 核心特点
 
 - 本地优先：离线即可使用，Markdown 文件是可长期保存的内容。
@@ -14,33 +16,34 @@
 - 三种编辑视图：源码、分栏和预览，适合快速记录与整理。
 - 临时便笺：先快速捕捉想法，再整理为正式笔记。
 - 安全恢复：删除内容进入回收站，可在需要时恢复。
+- 可选 AI 总结：按需生成全文总结，整合图片信息、保存总结并提供可切换的重点标注；需自行配置 DeepSeek API Key 和联网，查看已保存结果不会自动请求模型。
 - 轻量界面：温暖、圆润、低干扰，适合长时间阅读和写作。
 
 ## 最新版本
 
-当前公开稳定版本为 [Cay v1.1.1](https://github.com/Tiome-tt/weiyu-cay/releases/latest)。
+当前公开稳定版本为 [Cay v1.1.2](https://github.com/Tiome-tt/weiyu-cay/releases/latest)。
 
-v1.1.1 提供 Windows x64 和 macOS（Intel / Apple Silicon）安装包，并包含 Tauri updater 所需的签名更新元数据；同时改善 PDF 导出、表格编辑、标题层级编辑和笔记打开速度。富文档标题支持在前缀处回车插入空行，目录折叠状态会按笔记保留，图片右键菜单仅保留“复制图片”。
+v1.1.2 提供 Windows x64 和 macOS（Intel / Apple Silicon）安装包，并包含签名更新元数据。本版重点改善富文档工具栏、标题编辑和图片加载；新增按需生成并持久保存的 AI 总结，支持整合图片信息、全文压缩、重点速览与六类语义标注。完整变更和验证范围见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## Windows 安装
 
-可前往 [Cay v1.1.1 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1) 下载 Windows x64 安装包。
+可前往 [Cay v1.1.2 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.2) 下载 Windows x64 安装包。
 
-- [`_1.1.1_x64-setup.exe`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：普通用户推荐，双击即可安装。
-- [`_1.1.1_x64_en-US.msi`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：需要 MSI 安装包时使用。
+- [`_1.1.2_x64-setup.exe`](https://github.com/Tiome-tt/weiyu-cay/releases/download/v1.1.2/_1.1.2_x64-setup.exe)：普通用户推荐，双击即可安装。
+- [`_1.1.2_x64_en-US.msi`](https://github.com/Tiome-tt/weiyu-cay/releases/download/v1.1.2/_1.1.2_x64_en-US.msi)：需要 MSI 安装包时使用。
 
 ## macOS 安装
 
-可在 [Cay v1.1.1 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1) 中选择对应芯片的安装包：
+可在 [Cay v1.1.2 Release](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.2) 中选择对应芯片的安装包：
 
-- [`_1.1.1_x64.dmg`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：Intel 芯片 Mac。
-- [`_1.1.1_aarch64.dmg`](https://github.com/Tiome-tt/weiyu-cay/releases/tag/v1.1.1)：Apple 芯片 Mac。
+- [`_1.1.2_x64.dmg`](https://github.com/Tiome-tt/weiyu-cay/releases/download/v1.1.2/_1.1.2_x64.dmg)：Intel 芯片 Mac。
+- [`_1.1.2_aarch64.dmg`](https://github.com/Tiome-tt/weiyu-cay/releases/download/v1.1.2/_1.1.2_aarch64.dmg)：Apple 芯片 Mac。
 
 首次打开如果出现系统安全提示，请在系统设置中允许打开微屿。
 
 ## 自动更新
 
-v1.1.1 发布包包含签名的更新清单和安装包。应用内的“检查更新”操作会查询 GitHub 最新稳定版本；发现新版本后，由用户确认下载、安装并重启，不会在后台静默安装。
+v1.1.2 发布包包含签名的更新清单和更新包。应用内的“检查更新”操作会查询 GitHub 最新稳定版本；发现新版本后，由用户确认下载、安装并重启，不会在后台静默安装。平台安装包仍未做系统代码签名或 macOS 公证，不能将更新包签名等同于系统发行者认证。
 
 ## 从源码运行
 
@@ -67,4 +70,4 @@ pnpm tauri build
 
 ## 项目状态
 
-当前公开稳定版本为 v1.1.1。项目仍在持续完善中，欢迎通过 [Issues](https://github.com/Tiome-tt/weiyu-cay/issues) 反馈问题或建议。
+当前公开稳定版本为 v1.1.2。项目仍在持续完善中，欢迎通过 [Issues](https://github.com/Tiome-tt/weiyu-cay/issues) 反馈问题或建议。
