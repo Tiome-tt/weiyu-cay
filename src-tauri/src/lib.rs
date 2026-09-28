@@ -13,10 +13,16 @@ use tauri::Manager;
 pub fn run() {
     let shortcut_dispatcher = commands::shortcuts::PluginEventDispatcher::default();
     let plugin_dispatcher = shortcut_dispatcher.clone();
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            windows::main::activate_main(app);
-        }))
+    let builder = tauri::Builder::default();
+    // Do not let a stale tray process absorb `pnpm tauri dev` launches. In
+    // production, single-instance activation remains part of the tray
+    // lifecycle contract; development must always exercise the freshly built
+    // command handler.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        windows::main::activate_main(app);
+    }));
+    let app = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -99,6 +105,13 @@ pub fn run() {
             commands::notes::rename_target_labels,
             commands::assets::save_image,
             commands::assets::read_image_asset,
+            commands::assets::read_image_assets,
+            commands::ai::get_ai_credential_status,
+            commands::ai::save_deepseek_api_key,
+            commands::ai::clear_deepseek_api_key,
+            commands::ai::get_cached_ai_summary,
+            commands::ai::summarize_with_deepseek,
+            commands::ai::relabel_ai_summary,
             commands::external::open_external_link,
             commands::folders::list_folders,
             commands::folders::create_folder,

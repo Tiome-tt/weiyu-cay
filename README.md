@@ -57,6 +57,14 @@ pnpm test
 pnpm tauri build
 ```
 
+## 特别感谢
+
+感谢每一位通过反馈帮助微屿变得更可靠的用户和开发者。
+
+| 贡献者 | 主页 |
+| --- | --- |
+| Wiem-coder | [GitHub](https://github.com/Wiem-coder) |
+
 ## 项目状态
 
 当前公开稳定版本为 v1.1.1。项目仍在持续完善中，欢迎通过 [Issues](https://github.com/Tiome-tt/weiyu-cay/issues) 反馈问题或建议。

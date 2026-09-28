@@ -9,6 +9,13 @@
   --color-accent-border: #9CC9B9;
   --color-accent-haze: rgb(88 163 142 / 20%);
   --color-warm: #D59A5E;
+  --color-ai-keyword: #315F8C;
+  --color-ai-concept: #315F8C;
+  --color-ai-mechanism: #196D70;
+  --color-ai-evidence: #6F4F91;
+  --color-ai-conclusion: #276B55;
+  --color-ai-action: #8A5A19;
+  --color-ai-caveat: #A44545;
   --color-text: #263A33;
   --color-heading: #172621;
   --color-muted: #61756D;

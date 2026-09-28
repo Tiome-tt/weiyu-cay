@@ -3,7 +3,7 @@ import type { Folder, NoteId, NoteSummary } from '../../domain/model'
 import { InternalLinkTree } from './InternalLinkTree'
 
 interface InternalLinkDialogProps {
-  currentNoteId: NoteId
+  currentNoteId?: NoteId
   folders: Folder[]
   targets: NoteSummary[]
   onInsert(target: NoteSummary): boolean
@@ -59,6 +59,7 @@ export function InternalLinkDialog({
         aria-modal="true"
         aria-labelledby="internal-link-dialog-title"
         onKeyDown={handleKeys}
+        onWheel={(event) => event.stopPropagation()}
       >
         <header>
           <div>

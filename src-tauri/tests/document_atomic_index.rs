@@ -1,6 +1,6 @@
 use serde_json::json;
 use simple_notes_lib::{
-    commands::assets::{read_image_asset_from, save_image_to},
+    commands::assets::{read_image_asset_from, read_image_assets_from, save_image_to},
     domain::{NoteContent, NoteDocument, NoteId, SaveImageInput},
     storage::{
         paths::StoragePaths, rebuild::rebuild_index_strict, recovery::recover_startup,
@@ -42,7 +42,11 @@ fn index_failure_keeps_the_new_text_payload_rebuildable_without_partial_metadata
     assert!(paths.root().join("rebuild-needed.json").exists());
     drop(connection);
     updated.revision = 1;
-    assert_eq!(repository.load(old.id).unwrap(), updated);
+    let durable = repository.load(old.id).unwrap();
+    assert_ne!(durable.updated_at, old.updated_at);
+    assert!(chrono::DateTime::parse_from_rfc3339(&durable.updated_at).is_ok());
+    updated.updated_at = durable.updated_at.clone();
+    assert_eq!(durable, updated);
     assert_eq!(rebuild_index_strict(&paths).unwrap().notes_recovered, 1);
     let connection = rusqlite::Connection::open(paths.database()).unwrap();
     assert_eq!(
@@ -104,6 +108,15 @@ fn structured_documents_share_the_validated_image_asset_boundary() {
     .unwrap();
     let read = read_image_asset_from(&paths, note.id, &saved.relative_path).unwrap();
     assert_eq!(read.bytes, bytes);
+    let batch = read_image_assets_from(
+        &paths,
+        note.id,
+        &[saved.relative_path.clone(), saved.relative_path.clone()],
+    )
+    .unwrap();
+    assert_eq!(batch.len(), 2);
+    assert_eq!(batch[0].relative_path, saved.relative_path);
+    assert_eq!(batch[0].bytes, bytes);
     assert!(read_image_asset_from(&paths, note.id, "assets/../entry.json").is_err());
     assert_eq!(repository.load(note.id).unwrap(), note);
 }

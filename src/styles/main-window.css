@@ -1324,8 +1324,25 @@
 }
 
 .main-window .internal-link-tree__folder {
+  width: 100%;
+  color: var(--color-muted);
   font-weight: 650;
+  text-align: left;
   user-select: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.main-window .internal-link-tree__folder:hover,
+.main-window .internal-link-tree__folder:focus-visible {
+  color: var(--color-heading);
+  background: var(--color-accent-soft);
+}
+
+.main-window .internal-link-tree__folder-spacer {
+  width: 12px;
+  flex: 0 0 12px;
 }
 
 .main-window .internal-link-tree__note {
@@ -1351,6 +1368,37 @@
 }
 
 .main-window .tags-editor { position: relative; min-width: 0; gap: 4px; }
+.main-window .editor-actions-menu__section .tags-editor {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  gap: 6px;
+}
+.main-window .editor-actions-menu__section .tags-editor__chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+.main-window .editor-actions-menu__section .tags-editor__add {
+  display: inline-grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-border);
+  border-radius: 8px;
+  cursor: pointer;
+  place-items: center;
+}
+.main-window .editor-actions-menu__section .tags-editor__add:hover,
+.main-window .editor-actions-menu__section .tags-editor__add:focus-visible {
+  background: var(--color-accent-border);
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
 .main-window .tags-editor__chips { flex: 1 1 auto; min-width: 0; max-width: 170px; gap: 3px; overflow: auto; }
 .main-window .typed-editor__metadata .tags-editor__chips { flex: 0 1 auto; max-width: min(170px, 35vw); }
 .main-window .tag-chip { gap: 3px; padding: 2px 4px 2px 7px; color: var(--color-muted); font-size: calc(.68 * var(--app-font-size)); background: var(--color-panel-warm); border: 1px solid var(--color-border-soft); border-radius: 999px; }
@@ -1418,6 +1466,7 @@
   --document-inline-padding: clamp(24px, 4vw, 48px);
   --document-gutter: 10px;
   grid-area: document;
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -1633,6 +1682,7 @@
   border: 1px solid var(--color-border-soft);
   border-radius: 10px;
 }
+.main-window .markdown-source .cm-live-table-viewport { scrollbar-width: none; scrollbar-color: transparent transparent; }
 .main-window .markdown-source .cm-live-table-viewport {
   box-sizing: border-box;
   width: 100%;
@@ -2268,10 +2318,40 @@
   border-radius: 9px;
 }
 .main-window .internal-link-dialog__body input:focus { outline: 2px solid var(--color-focus); outline-offset: 1px; }
-.main-window .internal-link-dialog .internal-link-tree { max-height: 330px; }
+.main-window .internal-link-dialog__body { overflow: hidden; }
+.main-window .internal-link-dialog .internal-link-tree {
+  min-height: 0;
+  max-height: min(330px, calc(100vh - 300px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .main-window .internal-link-dialog footer button { padding: 7px 12px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-soft); border-radius: 8px; cursor: pointer; }
 .main-window .internal-link-dialog footer button:disabled { opacity: .45; cursor: default; }
 .main-window .internal-link-dialog footer .internal-link-dialog__primary { color: var(--color-on-accent); background: var(--color-accent); border-color: var(--color-accent); }
 
 .main-window .markdown-preview .katex { white-space: nowrap; }
 .main-window .markdown-preview .katex-display { overflow-x: auto; padding: 3px 0; text-align: center; }
+/* Application chrome is a control surface; note content remains selectable. */
+.main-window,
+.main-window button,
+.main-window label,
+.main-window nav,
+.main-window [role="button"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.main-window input,
+.main-window textarea,
+.main-window [contenteditable="true"],
+.main-window .cm-content,
+.main-window .cm-content *,
+.main-window .markdown-preview__page,
+.main-window .markdown-preview__page *,
+.main-window .rich-document__content,
+.main-window .rich-document__content *,
+.main-window .typed-editor__body,
+.main-window .typed-editor__body * {
+  user-select: text;
+  -webkit-user-select: text;
+}

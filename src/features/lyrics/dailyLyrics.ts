@@ -4,7 +4,13 @@ export interface DailyLyricEntry {
   title: string
 }
 
-export const DAILY_LYRIC_LIBRARY: readonly DailyLyricEntry[] = [
+export const MAX_DAILY_LYRIC_LENGTH = 32
+
+function usableDailyLyrics(entries: readonly DailyLyricEntry[]): readonly DailyLyricEntry[] {
+  return entries.filter((entry) => entry.text.length <= MAX_DAILY_LYRIC_LENGTH)
+}
+
+const CURATED_DAILY_LYRIC_LIBRARY: readonly DailyLyricEntry[] = [
   // Use short excerpts from classical works in the public domain only.
   { text: '两岸猿声啼不住，轻舟已过万重山', artist: '李白', title: '早发白帝城' },
   { text: '海内存知己，天涯若比邻', artist: '王勃', title: '送杜少府之任蜀州' },
@@ -15,6 +21,17 @@ export const DAILY_LYRIC_LIBRARY: readonly DailyLyricEntry[] = [
   { text: '行到水穷处，坐看云起时', artist: '王维', title: '终南别业' },
   { text: '海上生明月，天涯共此时', artist: '张九龄', title: '望月怀远' },
 ]
+
+export let DAILY_LYRIC_LIBRARY: readonly DailyLyricEntry[] = CURATED_DAILY_LYRIC_LIBRARY
+let expandedLibraryPromise: Promise<void> | undefined
+
+export function loadExpandedDailyLyrics(): Promise<void> {
+  if (expandedLibraryPromise !== undefined) return expandedLibraryPromise
+  expandedLibraryPromise = import('./dailyLyricsExpanded.json').then(({ default: entries }) => {
+    DAILY_LYRIC_LIBRARY = [...CURATED_DAILY_LYRIC_LIBRARY, ...usableDailyLyrics(entries)]
+  })
+  return expandedLibraryPromise
+}
 
 export function localDateKey(date: Date = new Date()): string {
   const year = date.getFullYear()

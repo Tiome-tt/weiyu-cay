@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relabel-ai-summary"
+description = "Enables the relabel_ai_summary command without any pre-configured scope."
+commands.allow = ["relabel_ai_summary"]
+
+[[permission]]
+identifier = "deny-relabel-ai-summary"
+description = "Denies the relabel_ai_summary command without any pre-configured scope."
+commands.deny = ["relabel_ai_summary"]

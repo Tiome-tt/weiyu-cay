@@ -1,4 +1,4 @@
-import type { AppNavigationPort, AssetPort, ExportDestinationPicker, ExportPort, FolderPort, ImageReadPort, LifecycleParticipantPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StickySettingsPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort, UpdatePort, WindowChromePort } from '../domain/ports'
+import type { AiPort, AppNavigationPort, AssetPort, ExportDestinationPicker, ExportPort, FolderPort, ImageReadPort, LifecycleParticipantPort, LinkPort, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StickySettingsPort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort, UpdatePort, WindowChromePort } from '../domain/ports'
 import type { LibraryNotePort } from '../features/library/useLibrary'
 import { createTauriPorts } from '../infrastructure/tauri/ports'
 import { createE2EAppServices } from './e2eServices'
@@ -15,6 +15,7 @@ export interface AppServices {
   temporaryWindows?: TemporaryWindowPort
   trash?: TrashPort
   settings?: SettingsPort
+  ai?: AiPort
   stickySettings?: StickySettingsPort
   exporter?: ExportPort
   exportDestinationPicker?: ExportDestinationPicker

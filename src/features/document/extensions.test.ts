@@ -1,6 +1,6 @@
 import { Editor, type JSONContent } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { decreaseRichHeadingLevel, pasteTsvAtSelection, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, toggleYellowHighlight } from './extensions'
+import { convertMarkdownHeadingAt, decreaseRichHeadingLevel, pasteTsvAtSelection, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, toggleYellowHighlight } from './extensions'
 
 const editors: Editor[] = []
 function createEditor(content?: object) {
@@ -11,6 +11,29 @@ function createEditor(content?: object) {
 afterEach(() => editors.splice(0).forEach((editor) => editor.destroy()))
 
 describe('rich editor commands', () => {
+  it('converts a heading after a pointer selection without stealing the selection', () => {
+    const editor = createEditor({
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '#### 待转换' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '目标位置' }] },
+      ],
+    })
+    const firstParagraph = editor.state.doc.child(0)
+    const targetPosition = firstParagraph.nodeSize + 1
+    editor.commands.setTextSelection(targetPosition)
+    expect(convertMarkdownHeadingAt(editor, 0, { preserveSelection: true, scrollIntoView: false, focus: false })).toBe(true)
+    expect(editor.state.selection.$from.parent.textContent).toBe('目标位置')
+    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', content: [{ text: '待转换' }] })
+  })
+
+  it('does not append a paragraph when pointer conversion preserves the clicked selection', () => {
+    const editor = createEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '### 标题' }] }] })
+    editor.commands.setTextSelection(5)
+    expect(convertMarkdownHeadingAt(editor, 0, { preserveSelection: true, scrollIntoView: false, focus: false, insertTrailingParagraph: false })).toBe(true)
+    expect(editor.getJSON().content).toHaveLength(1)
+  })
+
   it('lowers a heading when its leading Markdown marker is deleted', () => {
     const editor = createEditor({
       type: 'doc',

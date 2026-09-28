@@ -24,6 +24,7 @@ describe('managed rich images', () => {
       extensions: richEditorExtensions({ noteId: NOTE_ID, assetReader: { readImage } }),
       content: { type: 'doc', content: [{ type: 'image', attrs: { src: IMAGE_PATH } }] },
     })
+    await new Promise((resolve) => setTimeout(resolve, 16))
     editor.destroy()
     finishRead({ mediaType: 'image/png', bytes: new Uint8Array([1]) })
     await Promise.resolve()
@@ -44,5 +45,25 @@ describe('managed rich images', () => {
     const created = vi.mocked(URL.createObjectURL).mock.calls.length
     editor.destroy()
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(created)
+  })
+
+  it('loads managed images without waiting for an intersection callback', async () => {
+    const observe = vi.fn()
+    class NeverIntersects {
+      observe = observe
+      disconnect = vi.fn()
+    }
+    vi.stubGlobal('IntersectionObserver', NeverIntersects)
+    const readImage = vi.fn().mockResolvedValue({ mediaType: 'image/png', bytes: new Uint8Array([1]) })
+    const element = document.createElement('div')
+    const editor = new Editor({
+      element,
+      extensions: richEditorExtensions({ noteId: NOTE_ID, assetReader: { readImage } }),
+      content: { type: 'doc', content: [{ type: 'image', attrs: { src: IMAGE_PATH } }] },
+    })
+
+    await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
+    expect(readImage).toHaveBeenCalledOnce()
+    editor.destroy()
   })
 })

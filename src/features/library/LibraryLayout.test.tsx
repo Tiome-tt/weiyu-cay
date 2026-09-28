@@ -259,6 +259,10 @@ describe('LibraryLayout', () => {
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '# 实时目录' } }))
 
     expect(await screen.findByRole('button', { name: '实时目录' })).toBeVisible()
+
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '' } }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: '实时目录' })).not.toBeInTheDocument())
     expect(notes.loadNote).toHaveBeenCalledOnce()
   })
 

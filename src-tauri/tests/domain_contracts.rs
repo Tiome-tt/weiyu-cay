@@ -76,8 +76,14 @@ fn domain_command_errors_serialize_only_the_stable_safe_contract() {
 
     assert_eq!(json["code"], "database");
     assert_eq!(json["message"], "The local note index is unavailable.");
-    assert_eq!(json.as_object().unwrap().len(), 2);
-    assert!(!json.to_string().contains("person"));
+    if cfg!(debug_assertions) {
+        assert_eq!(json.as_object().unwrap().len(), 3);
+        assert_eq!(json["diagnostic"], error.diagnostic().unwrap());
+    } else {
+        assert_eq!(json.as_object().unwrap().len(), 2);
+        assert!(!json.to_string().contains("person"));
+        assert!(json.get("diagnostic").is_none());
+    }
     assert_eq!(serde_json::from_value::<CommandError>(json).unwrap(), error);
     assert_eq!(error.code(), CommandErrorCode::Database);
 }

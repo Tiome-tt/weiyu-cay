@@ -57,6 +57,14 @@ export interface ImageReadPort {
     noteId: NoteId
     relativePath: string
   }): Promise<{ mediaType: string; bytes: Uint8Array }>
+  readImages?(input: {
+    noteId: NoteId
+    relativePaths: string[]
+  }): Promise<ReadonlyArray<{
+    relativePath: string
+    mediaType: string
+    bytes: Uint8Array
+  }>>
 }
 
 export interface ExportReport {
@@ -310,6 +318,8 @@ export interface AppSettings {
   defaultEditorMode: EditorMode
   autosaveDelayMs: number
   dataRoot: { mode: 'default' } | { mode: 'custom'; path: string }
+  /** Selected model for the opt-in DeepSeek summary feature. */
+  deepseekModel?: string
 }
 
 export interface StickySettings {
@@ -350,6 +360,44 @@ export interface SettingsPort {
   }>
 }
 
+export interface AiSummaryProgress {
+  noteId: string
+  phase: 'cache' | 'images' | 'compress' | 'summary' | 'labels' | 'complete'
+  current: number
+  total: number
+  message: string
+}
+
+export type AiSummaryEmphasisKind = 'concept' | 'mechanism' | 'evidence' | 'conclusion' | 'action' | 'caveat'
+
+export interface AiSummaryEmphasis {
+  kind: AiSummaryEmphasisKind
+  quote: string
+  blockId?: string
+  occurrence?: number
+}
+
+export interface AiSummaryResult {
+  summary: string
+  keyPoints: string[]
+  outline: Array<{ heading: string; points: string[] }>
+  todos: string[]
+  keywords: string[]
+  emphasis?: AiSummaryEmphasis[]
+  annotationStatus?: 'ready' | 'failed'
+  annotationVersion?: number
+  sourceHash?: string
+}
+
+export interface AiPort {
+  getCredentialStatus(): Promise<{ configured: boolean; storage: string }>
+  saveDeepSeekApiKey(apiKey: string): Promise<{ configured: boolean; storage: string }>
+  clearDeepSeekApiKey(): Promise<{ configured: boolean; storage: string }>
+  getCachedSummary(noteId: string): Promise<AiSummaryResult | null>
+  summarize(input: { noteId: string; title: string; markdown: string; model?: string; force?: boolean }): Promise<AiSummaryResult>
+  relabel?(input: { noteId: string; model?: string }): Promise<AiSummaryResult>
+  subscribeSummaryProgress?(listener: (progress: AiSummaryProgress) => void): Promise<() => void>
+}
 export interface FileImportResult {
   imported: NoteDocument[]
   failed: Array<{ name: string; message: string }>

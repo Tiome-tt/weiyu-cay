@@ -1,6 +1,7 @@
 import { WidgetType, type EditorView } from '@codemirror/view'
 import type { NoteId } from '../../domain/model'
 import type { ImageReadPort } from '../../domain/ports'
+import { readImageAsset } from '../content/imageAssetLoader'
 import {
   mergeTableCells,
   splitTableCell,
@@ -61,17 +62,18 @@ export class DocumentImageWidget extends WidgetType {
       this.showFailure(container)
       return container
     }
-    void assetReader.readImage({ noteId, relativePath: this.relativePath }).then(
+    void readImageAsset(assetReader, noteId, this.relativePath).then(
       (loaded) => {
         if (this.disposed || !container.isConnected) return
         try {
-          const objectUrl = URL.createObjectURL(new Blob([loaded.bytes.slice().buffer], { type: loaded.mediaType }))
+          const objectUrl = URL.createObjectURL(new Blob([loaded.bytes], { type: loaded.mediaType }))
           if (this.disposed || !container.isConnected) {
             URL.revokeObjectURL(objectUrl)
             return
           }
           this.objectUrl = objectUrl
           const image = document.createElement('img')
+          image.decoding = 'async'
           image.src = objectUrl
           image.alt = this.alt
           image.addEventListener('error', () => {
@@ -183,6 +185,8 @@ export class DocumentTableWidget extends WidgetType {
     toolbarLayer.className = 'cm-live-table-toolbar-layer'
     const viewport = document.createElement('div')
     viewport.className = 'cm-live-table-viewport'
+    viewport.style.scrollbarWidth = 'none'
+    viewport.style.setProperty('-ms-overflow-style', 'none')
     const scrollRail = document.createElement('div')
     scrollRail.className = 'cm-live-table-scrollbar'
     scrollRail.setAttribute('role', 'scrollbar')
@@ -322,19 +326,6 @@ export class DocumentTableWidget extends WidgetType {
     table.setAttribute('aria-label', 'Markdown 表格')
     const grid = document.createElement('tbody')
     const mergeAt = (row: number, column: number) => current.merges?.find((merge) => row >= merge.row && row < merge.row + merge.rowSpan && column >= merge.column && column < merge.column + merge.columnSpan)
-    const focusTableCell = (row: number, column: number): boolean => {
-      const target = wrapper.querySelector<HTMLTextAreaElement>('textarea[aria-label="' + (row + 1) + ' 行 ' + (column + 1) + ' 列"]')
-      if (target === null) return false
-      target.focus({ preventScroll: true })
-      const viewportRect = viewport.getBoundingClientRect()
-      const cell = target.closest<HTMLElement>('[data-row][data-column]')
-      const cellRect = cell?.getBoundingClientRect()
-      if (cellRect !== undefined && viewportRect.width > 0) {
-        if (cellRect.left < viewportRect.left) viewport.scrollLeft -= viewportRect.left - cellRect.left
-        else if (cellRect.right > viewportRect.right) viewport.scrollLeft += cellRect.right - viewportRect.right
-      }
-      return true
-    }
     const renderCell = (row: number, column: number) => {
       const merge = mergeAt(row, column)
       if (merge !== undefined && (merge.row !== row || merge.column !== column)) return
@@ -448,9 +439,17 @@ export class DocumentTableWidget extends WidgetType {
             nextRow -= 1
             nextColumn = columns - 1
           }
-          if (!focusTableCell(nextRow, nextColumn)) return
+          const nextTarget = wrapper.querySelector<HTMLTextAreaElement>('textarea[aria-label="' + (nextRow + 1) + ' 行 ' + (nextColumn + 1) + ' 列"]')
+          if (nextTarget === null) {
+            updateCell()
+            return
+          }
           event.preventDefault()
           event.stopPropagation()
+          commit(
+            tableWithCell(current, merge?.row ?? row, merge?.column ?? column, input.value.replace(/\r?\n/gu, ' ')),
+            { row: nextRow, column: nextColumn },
+          )
         })
         cell.append(input)
         const actions = document.createElement('span')

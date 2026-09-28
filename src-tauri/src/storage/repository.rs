@@ -225,6 +225,7 @@ impl NoteRepository {
             ));
         }
         document.created_at = current.created_at;
+        document.updated_at = chrono::Utc::now().to_rfc3339();
         document.revision = expected_revision
             .checked_add(1)
             .ok_or_else(|| CommandError::validation("note revision overflow"))?;

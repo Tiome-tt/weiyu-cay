@@ -1865,6 +1865,12 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-request-storage-relocation",
             "allow-cancel-storage-relocation",
             "allow-set-tray-navigation-ready",
+            "allow-get-ai-credential-status",
+            "allow-save-deepseek-api-key",
+            "allow-clear-deepseek-api-key",
+            "allow-get-cached-ai-summary",
+            "allow-summarize-with-deepseek",
+            "allow-relabel-ai-summary",
             "allow-export-library"
         ])
     );

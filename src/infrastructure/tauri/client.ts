@@ -8,7 +8,11 @@ export class TauriClient {
     try {
       return await invoke<Result>(command, args)
     } catch (error: unknown) {
-      throw normalizeCommandError(error)
+      const normalized = normalizeCommandError(error)
+      if (normalized.diagnostic !== undefined) {
+        console.error(`[Tauri] ${command} failed`, normalized.diagnostic)
+      }
+      throw normalized
     }
   }
 }

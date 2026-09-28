@@ -157,8 +157,8 @@ function MainApplication({ services }: { services: AppServices }) {
         setRecoveryNotice({ status: 'idle' })
         return
       }
-      const recovered = report.recovered.length > 0 ? `已恢复 ${report.recovered.length} 篇笔记` : '启动恢复检查已完成'
-      setRecoveryNotice({ status: 'success', message: `${recovered}${report.indexRebuilt ? '并重建本地索引' : ''}${report.quarantined.length > 0 ? `；隔离 ${report.quarantined.length} 个不安全候选` : ''}` })
+      // A successful startup repair is silent; only failures need user attention.
+      setRecoveryNotice({ status: 'idle' })
     }
     const load = async () => {
       const request = ++recoveryRequest.current
@@ -301,9 +301,9 @@ function MainApplication({ services }: { services: AppServices }) {
             }
           }}
         />
-        <LibraryLayout files={services.files} ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
+        <LibraryLayout files={services.files} ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} ai={services.ai} deepseekModel={settings.deepseekModel} onOpenSettings={() => setSettingsOpen(true)} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
       </div>
-      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} platform={services.windowChrome.platform} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={async () => {
+      {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} platform={services.windowChrome.platform} ai={services.ai} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={async () => {
         if (services.lifecycle?.prepareRelocation === undefined || services.lifecycle.cancelRelocation === undefined) return null
         const generation = await services.lifecycle.prepareRelocation()
         let active = true

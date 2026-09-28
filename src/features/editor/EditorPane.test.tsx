@@ -83,34 +83,12 @@ describe('EditorPane', () => {
     fireEvent.change(select, { target: { value: folders()[0].id } })
     await waitFor(() => expect(onMoveNote).toHaveBeenCalledWith(folders()[0].id))
   })
-
-  it('inserts and retargets escaped stable links through keyboard-reachable controls', async () => {
-    const first = {
-      ...note(''),
-      id: '019c0000-0000-7000-8000-000000000081' as NoteId,
-      title: 'A|B[1]',
-      excerpt: '',
-    }
-    const second = {
-      ...note(''),
-      id: '019c0000-0000-7000-8000-000000000082' as NoteId,
-      title: 'Second',
-      excerpt: '',
-    }
-    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([first, second]) })
-    const user = userEvent.setup()
-    render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} linkCache={new Map()} />)
-
-    openMoreActions()
-    await user.click(await screen.findByRole('treeitem', { name: '选择链接：A|B[1]' }))
-    await user.click(screen.getByRole('menuitem', { name: '插入内部链接' }))
-    expect(view().state.doc.toString()).toBe(`[[A\\|B\\[1\\]|${first.id}]]`)
-
-    openMoreActions()
-    await user.click(screen.getByRole('treeitem', { name: '选择链接：Second' }))
-    await user.click(screen.getByRole('menuitem', { name: '重定向内部链接' }))
-    expect(view().state.doc.toString()).toBe(`[[Second|${second.id}]]`)
-    expect(screen.getByRole('link', { name: '[[Second]]' })).toBeVisible()
+  it('keeps internal-link insertion in the right-click picker instead of the more menu', async () => {
+    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([]) })
+    render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} />)
+    expect(screen.queryByRole('button', { name: '笔记更多操作' })).not.toBeInTheDocument()
+    fireEvent.contextMenu(view().contentDOM, { clientX: 80, clientY: 120 })
+    expect(await screen.findByRole('menuitem', { name: '插入内部链接' })).toBeVisible()
   })
 
   it('starts in the configured default editor view', () => {
@@ -242,8 +220,6 @@ describe('EditorPane', () => {
     const folderTarget = within(menu).getByRole('combobox', { name: '笔记文件夹' })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(folderTarget).toHaveFocus()
-    expect(within(menu).getByRole('menuitem', { name: '插入内部链接' })).toBeDisabled()
-    expect(within(menu).getByRole('menuitem', { name: '重定向内部链接' })).toBeDisabled()
     expect(folderTarget).toBeEnabled()
     await user.click(within(menu).getByRole('button', { name: '添加标签' }))
     expect(within(menu).getByRole('textbox', { name: '添加标签' })).toBeEnabled()
@@ -309,8 +285,7 @@ describe('EditorPane', () => {
       vi.useRealTimers()
     }
   })
-
-  it('shows internal-link targets in a folder tree while keeping folders non-selectable', async () => {
+  it('keeps folder targets in the shared picker after the more menu is removed', async () => {
     const root = folders()[0]
     const child = {
       id: '019c0000-0000-7000-8000-000000000091' as import('../../domain/model').FolderId,
@@ -326,22 +301,13 @@ describe('EditorPane', () => {
       excerpt: '',
     }
     const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([target]) })
-    render(
-      <EditorPane
-        document={note('')}
-        notes={fakeNotePort()}
-        links={links}
-        folders={[root, child]}
-      />,
-    )
-
-    await userEvent.click(screen.getByRole('button', { name: '笔记更多操作' }))
+    render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} folders={[root, child]} />)
+    fireEvent.contextMenu(view().contentDOM, { clientX: 80, clientY: 120 })
+    await userEvent.click(await screen.findByRole('menuitem', { name: '插入内部链接' }))
     const tree = await screen.findByRole('tree', { name: '内部链接目标' })
     expect(within(tree).getByText(root.name)).toBeVisible()
     expect(within(tree).getByText(child.name)).toBeVisible()
     expect(within(tree).getByRole('treeitem', { name: '选择链接：子目录笔记' })).toBeVisible()
-    expect(within(tree).queryByRole('button', { name: root.name })).not.toBeInTheDocument()
-    expect(within(tree).queryByRole('button', { name: child.name })).not.toBeInTheDocument()
   })
 
   it('coalesces split preview refreshes while typing', () => {

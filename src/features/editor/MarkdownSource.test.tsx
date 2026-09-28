@@ -500,19 +500,21 @@ describe('MarkdownSource', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 3 列' })).toHaveFocus())
     expect(onChange).toHaveBeenLastCalledWith('| A | B | C |\n| --- | --- | --- |\n| edited | 2 | 3 |')
   })
-  it('moves through editable table cells with Tab without leaving the table', () => {
-    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'} onChange={vi.fn()} />)
+  it('moves through editable table cells with Tab without leaving the table', async () => {
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'} onChange={onChange} />)
     const first = screen.getByRole('textbox', { name: '2 行 1 列' })
-    const second = screen.getByRole('textbox', { name: '2 行 2 列' })
-    const nextRow = screen.getByRole('textbox', { name: '3 行 1 列' })
 
     first.focus()
+    fireEvent.input(first, { target: { value: 'edited' } })
     fireEvent.keyDown(first, { key: 'Tab' })
-    expect(document.activeElement).toBe(second)
-    fireEvent.keyDown(second, { key: 'Tab' })
-    expect(document.activeElement).toBe(nextRow)
-    fireEvent.keyDown(nextRow, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(second)
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 2 列' })).toHaveFocus())
+    expect(onChange).toHaveBeenLastCalledWith('| A | B |\n| --- | --- |\n| edited | 2 |\n| 3 | 4 |')
+
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '2 行 2 列' }), { key: 'Tab' })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '3 行 1 列' })).toHaveFocus())
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '3 行 1 列' }), { key: 'Tab', shiftKey: true })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 2 列' })).toHaveFocus())
   })
   it('keeps a floating horizontal scrollbar for wide tables', () => {
     render(<MarkdownSource markdown={'| A very wide column | Another wide column |\n| --- | --- |\n| content | more content |'} onChange={vi.fn()} />)

@@ -1,6 +1,6 @@
 import {forwardRef,lazy,Suspense,useCallback,useEffect,useImperativeHandle,useRef,useState} from 'react'
 import {flushSync} from 'react-dom'
-import {contentOutlineMarkdown,type NoteContent} from '../../domain/content'
+import {contentOutlineMarkdown,contentSummaryMarkdown,type NoteContent} from '../../domain/content'
 import type {EditorPaneHandle,EditorPaneProps} from '../editor/EditorPane'
 import type {RichDocumentEditorHandle} from '../document/RichDocumentEditor'
 import {useContentAutosave} from './useContentAutosave'
@@ -8,13 +8,16 @@ import {PlainTextEditor,type PlainTextEditorHandle} from './PlainTextEditor'
 import {FileViewer} from './FileViewer'
 import {TagsEditor} from '../search/TagsEditor'
 import {Backlinks} from '../editor/Backlinks'
+import { AiSummaryWidget } from '../ai/AiSummaryWidget'
+import { waitForImageAssets } from './imageAssetLoader'
 
 import './content.css'
 const RichDocumentEditor=lazy(()=>import('../document/RichDocumentEditor').then(module=>({default:module.RichDocumentEditor})))
 function formatLastEdited(value:string){const date=new Date(value);if(Number.isNaN(date.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(date)}
 export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(function TypedEditorPane(props,ref){
- const {document,notes,files,assets,assetReader,links,onNavigateNote,search,onDocumentAdopt,onConvertFileToDocument,onSaveStateChange,onDraftChange,autosaveDelayMs,external}=props
+ const {document,notes,files,assets,assetReader,links,folders,onNavigateNote,search,onDocumentAdopt,onConvertFileToDocument,onSaveStateChange,onDraftChange,autosaveDelayMs,external,ai,deepseekModel,onOpenSettings}=props
  const save=useContentAutosave(document,notes,autosaveDelayMs)
+ const aiMarkdown=save.content.type==='text' ? save.content.text : save.content.type==='document' ? contentSummaryMarkdown({ content: save.content }) : document.title
  const rich=useRef<RichDocumentEditorHandle>(null)
  const text=useRef<PlainTextEditorHandle>(null)
  const [blocked,setBlocked]=useState(false)
@@ -23,6 +26,7 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  const [error,setError]=useState<string|null>(null)
  const exportRef=useRef<(kind:'word'|'pdf')=>Promise<boolean>>(()=>Promise.resolve(false))
  const [title,setTitle]=useState(document.title)
+ const waitForImages=assetReader?()=>waitForImageAssets(assetReader,document.id):undefined
  const body=useRef<HTMLDivElement>(null)
  const commit=useCallback(async()=>{await rich.current?.commitComposition();await text.current?.commitComposition()},[])
  const flush=useCallback(async()=>{try{await commit();return await save.flush()}catch{setError('请先完成当前输入，再重试保存。');return false}},[commit,save.flush]); const reloadLatest=useCallback(async()=>{const latest=await save.reloadLatest();if(latest){onDocumentAdopt?.(latest)}else setError('无法载入最新版本，请重试。')},[onDocumentAdopt,save.reloadLatest])
@@ -87,8 +91,9 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
   <div className="typed-editor__body" ref={body}>
    {save.content.type==='text'&&<PlainTextEditor ref={text} value={save.content.text} editable={!readOnly} onChange={value=>update({type:'text',text:value})}/>}
    {save.content.type==='file'&&<FileViewer document={{...document,content:save.content}} files={files} onConvertToDocument={onConvertFileToDocument}/>}
-   {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
+   {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
   </div>
+  <AiSummaryWidget noteId={document.id} title={title} markdown={aiMarkdown} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages}/>
   {links&&onNavigateNote&&<Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>}
  </div>
 })

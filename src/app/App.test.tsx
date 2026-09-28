@@ -406,7 +406,7 @@ describe('App', () => {
       },
     }} />)
 
-    expect(await screen.findByText('已恢复 1 篇笔记并重建本地索引')).toHaveAttribute('role', 'status')
+    await waitFor(() => expect(screen.queryByText('已恢复 1 篇笔记并重建本地索引')).not.toBeInTheDocument())
   })
 
   it('keeps the application usable when startup recovery fails and retries the recovery operation', async () => {
@@ -434,7 +434,7 @@ describe('App', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('本地索引恢复仍未完成')
     await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
-    expect(await screen.findByText(/并重建本地索引/)).toHaveAttribute('role', 'status')
+    await waitFor(() => expect(screen.queryByText(/并重建本地索引/)).not.toBeInTheDocument())
   })
 
   it('refreshes recovered folders, notes, and the mounted temporary inbox after a repeated retry', async () => {
@@ -540,7 +540,7 @@ describe('App', () => {
     expect(retryButton).toBeDisabled()
 
     refreshFolders.resolve([])
-    expect(await screen.findByText(/重建本地索引/)).toHaveAttribute('role', 'status')
+    await waitFor(() => expect(screen.queryByText(/重建本地索引/)).not.toBeInTheDocument())
     expect(screen.queryByRole('button', { name: '重试启动恢复' })).not.toBeInTheDocument()
   })
 

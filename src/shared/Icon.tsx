@@ -21,6 +21,7 @@ export type IconName =
   | 'restore'
   | 'close'
   | 'star'
+  | 'ai-fusion'
   | 'file'
   | 'file-pdf'
   | 'file-word'
@@ -56,6 +57,7 @@ const ICON_LABELS: Record<IconName, string> = {
   restore: '还原',
   close: '关闭',
   star: '星标',
+  'ai-fusion': '微屿 AI 总结',
   file: '附件',
   'file-pdf': 'PDF 文件',
   'file-word': 'Word 文档',
@@ -107,6 +109,8 @@ function glyphFor(name: IconName): ReactNode {
       return <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" />
     case 'star':
       return <path d="m12 3.75 2.55 5.16 5.7.83-4.13 4.03.98 5.69L12 16.77l-5.1 2.69.98-5.69-4.13-4.03 5.7-.83Z" />
+    case 'ai-fusion':
+      return <><path d="m17.5 2.8 1.15 2.35L21 6.3l-2.35 1.15-1.15 2.35-1.15-2.35L14 6.3l2.35-1.15Z" /><rect x="4.5" y="9" width="12.5" height="9.5" rx="2.8" /><path d="M10.75 9V6.8M8 13h.01M13.5 13h.01M8.25 15.5h5M4.5 13H3M17 13h1.5" /></>
     case 'file':
       return <><path d="M6 3.75h8.5L18 7.25v13H6z" /><path d="M14.5 3.75v3.5H18M9 11.5h6M9 15h4" /></>
     case 'file-pdf':

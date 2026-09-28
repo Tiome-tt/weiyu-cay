@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppSettings, SettingsPort } from '../../domain/ports'
+import type { AiPort, AppSettings, SettingsPort } from '../../domain/ports'
 import { SettingsView } from './SettingsView'
 import { DEFAULT_APP_SETTINGS } from './theme'
 import type { UpdateController } from './UpdateSettings'
@@ -21,6 +21,16 @@ function settingsPort(overrides: Partial<SettingsPort> = {}): SettingsPort {
   }
 }
 
+function aiPort(overrides: Partial<AiPort> = {}): AiPort {
+  return {
+    getCredentialStatus: vi.fn().mockResolvedValue({ configured: false, storage: 'encrypted-file' }),
+    saveDeepSeekApiKey: vi.fn().mockResolvedValue({ configured: true, storage: 'system-keyring' }),
+    clearDeepSeekApiKey: vi.fn().mockResolvedValue({ configured: false, storage: 'encrypted-file' }),
+    getCachedSummary: vi.fn().mockResolvedValue(null),
+    summarize: vi.fn().mockResolvedValue({ summary: '', keyPoints: [], outline: [], todos: [], keywords: [] }),
+    ...overrides,
+  }
+}
 describe('SettingsView', () => {
   afterEach(cleanup)
   it('exposes the complete accessible settings surface and loads storage information', async () => {
@@ -40,7 +50,7 @@ describe('SettingsView', () => {
     expect(screen.getByLabelText('每日歌词')).toBeChecked()
     expect(screen.getByText('只调整应用界面，不影响笔记正文')).toBeVisible()
     expect(screen.getByLabelText('行高')).toHaveAttribute('max', '2.2')
-    expect(screen.getByLabelText('全局快捷键')).toBeVisible()
+    expect(screen.getByLabelText('便笺快捷键')).toBeVisible()
     expect(screen.getByLabelText('开机启动')).toBeVisible()
     expect(screen.getByLabelText('关闭主窗口时隐藏到托盘')).toBeChecked()
     expect(screen.getByLabelText('默认编辑视图')).toBeVisible()
@@ -51,6 +61,18 @@ describe('SettingsView', () => {
     expect(await screen.findByText(/3 KB/)).toBeVisible()
   })
 
+  it('passes a newly entered API Key to the AI port and clears the draft after saving', async () => {
+    const saveDeepSeekApiKey = vi.fn().mockResolvedValue({ configured: true, storage: 'system-keyring' })
+    const user = userEvent.setup()
+    render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} ai={aiPort({ saveDeepSeekApiKey })} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+
+    await user.type(screen.getByLabelText('DeepSeek API Key'), 'sk-test-key')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(saveDeepSeekApiKey).toHaveBeenCalledWith('sk-test-key'))
+    expect(screen.getByLabelText('DeepSeek API Key')).toHaveValue('')
+    expect(screen.queryByText('已配置（加密保存）')).not.toBeInTheDocument()
+  })
   it('persists the daily lyric visibility switch', async () => {
     const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, dailyLyrics: false })
     const user = userEvent.setup()
@@ -102,10 +124,10 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, shortcut: 'Control+Alt+N' })
     render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    const record = screen.getByRole('button', { name: '录制快捷键' })
+    const record = screen.getByRole('button', { name: '录制便笺快捷键' })
     await user.click(record)
     await user.keyboard('{Control>}{Alt>}n{/Alt}{/Control}')
-    expect(screen.getByLabelText('全局快捷键')).toHaveValue('Control+Alt+N')
+    expect(screen.getByLabelText('便笺快捷键')).toHaveValue('Control+Alt+N')
     expect(update).toHaveBeenCalledWith({ shortcut: 'Control+Alt+N' })
   })
 
@@ -113,9 +135,9 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     const update = vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, shortcut: 'F8' })
     render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    await user.click(screen.getByRole('button', { name: '录制快捷键' }))
+    await user.click(screen.getByRole('button', { name: '录制便笺快捷键' }))
     await user.keyboard('{F8}')
-    expect(screen.getByLabelText('全局快捷键')).toHaveValue('F8')
+    expect(screen.getByLabelText('便笺快捷键')).toHaveValue('F8')
     expect(update).toHaveBeenCalledWith({ shortcut: 'F8' })
   })
 
@@ -143,7 +165,7 @@ describe('SettingsView', () => {
         startupError: { kind: 'conflict', reason: 'already registered', accelerator: 'CommandOrControl+Shift+Space' },
       }),
     })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    expect(await screen.findByRole('status', { name: '快捷键状态警告' })).toHaveTextContent('全局快捷键未能启用')
+    expect(await screen.findByRole('status', { name: '快捷键状态警告' })).toHaveTextContent('便笺快捷键未能启用')
     expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible()
   })
 
@@ -151,7 +173,7 @@ describe('SettingsView', () => {
     const update = vi.fn().mockRejectedValueOnce(new Error('shortcut conflict'))
     const user = userEvent.setup()
     render(<SettingsView settings={settingsPort({ update })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
-    await user.click(screen.getByRole('button', { name: '录制快捷键' }))
+    await user.click(screen.getByRole('button', { name: '录制便笺快捷键' }))
     await user.keyboard('{Control>}{Space}{/Control}')
     expect(await screen.findByRole('alert')).toHaveTextContent('快捷键已被占用')
   })
@@ -166,7 +188,7 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     render(<SettingsView settings={settingsPort({ update, getShortcutStatus })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
     expect(await screen.findByRole('status', { name: '快捷键状态警告' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '录制快捷键' }))
+    await user.click(screen.getByRole('button', { name: '录制便笺快捷键' }))
     await user.keyboard('{Control>}{Alt>}n{/Alt}{/Control}')
     expect(getShortcutStatus).toHaveBeenCalledOnce()
     updated.resolve({ ...DEFAULT_APP_SETTINGS, shortcut: 'Ctrl+Alt+N' })

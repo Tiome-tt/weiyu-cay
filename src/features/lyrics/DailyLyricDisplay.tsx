@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react'
-import { dailyLyricForDate, localDateKey } from './dailyLyrics'
+import { dailyLyricForDate, loadExpandedDailyLyrics, localDateKey } from './dailyLyrics'
 
 export function DailyLyricDisplay({ enabled }: { enabled: boolean }) {
   const [dateKey, setDateKey] = useState(() => localDateKey())
+  const [, setLibraryLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!enabled) return
+    let active = true
+    void loadExpandedDailyLyrics().then(
+      () => { if (active) setLibraryLoaded(true) },
+      () => undefined,
+    )
+    return () => { active = false }
+  }, [enabled])
 
   useEffect(() => {
     const timer = window.setInterval(() => {

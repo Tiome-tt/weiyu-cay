@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import type { AppSettings, SettingsPort, StorageInfo, WindowChromePort } from '../../domain/ports'
+import type { AiPort, AppSettings, SettingsPort, StorageInfo, WindowChromePort } from '../../domain/ports'
 import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
 import { APP_NAME } from '../../shared/brand'
@@ -16,9 +16,10 @@ interface SettingsViewProps {
   exportController?: ExportLibraryController
   updateController?: UpdateController
   platform?: WindowChromePort['platform']
+  ai?: AiPort
 }
 
-export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController, updateController, platform = 'windows' }: SettingsViewProps) {
+export function SettingsView({ settings, value, onChange, onClose, prepareStorageMove, onRestartRequired, exportController, updateController, platform = 'windows', ai }: SettingsViewProps) {
   const [draft, setDraft] = useState(value)
   const [storage, setStorage] = useState<StorageInfo | null>(null)
   const [destination, setDestination] = useState('')
@@ -38,6 +39,20 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
   const restartBarrierReleaseRef = useRef<(() => void) | null>(null)
   const operationBusy = busy !== null || exportController?.busy === true
   const closeDisabled = busy === 'move' || busy === 'reset' || exportController?.busy === true
+  const [apiKeyDraft, setApiKeyDraft] = useState('')
+  const [credentialConfigured, setCredentialConfigured] = useState(false)
+  const [credentialBusy, setCredentialBusy] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    if (ai === undefined) return () => { active = false }
+    void ai.getCredentialStatus().then((status) => {
+      if (active) setCredentialConfigured(status.configured)
+    }).catch(() => {
+      if (active) setCredentialConfigured(false)
+    })
+    return () => { active = false }
+  }, [ai])
 
   useEffect(() => {
     if (busyRef.current) return
@@ -60,9 +75,9 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     try {
       const status = await settings.getShortcutStatus()
       if (shortcutStatusRequest.current !== request) return
-      setShortcutWarning(status.startupError !== null || !status.acceptingTriggers ? '全局快捷键未能启用；本地笔记仍可正常使用。请更换快捷键后重试。' : null)
+      setShortcutWarning(status.startupError !== null || !status.acceptingTriggers ? '便笺快捷键未能启用；本地笔记仍可正常使用。请更换快捷键后重试。' : null)
     } catch {
-      if (shortcutStatusRequest.current === request) setShortcutWarning('无法确认全局快捷键状态；本地笔记仍可正常使用。')
+      if (shortcutStatusRequest.current === request) setShortcutWarning('无法确认便笺快捷键状态；本地笔记仍可正常使用。')
     }
   }, [settings])
   useEffect(() => {
@@ -126,6 +141,41 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
     }
   }
 
+  const saveApiKey = async () => {
+    if (ai === undefined || apiKeyDraft.trim().length === 0 || credentialBusy) return
+    setCredentialBusy(true)
+    setError(null)
+    try {
+      const status = await ai.saveDeepSeekApiKey(apiKeyDraft)
+      setCredentialConfigured(status.configured)
+      setApiKeyDraft('')
+    } catch (error: unknown) {
+      console.error('[AI] 保存 API Key 失败', error)
+      const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+      const diagnostic = typeof error === 'object' && error !== null && 'diagnostic' in error && typeof error.diagnostic === 'string'
+        ? error.diagnostic
+        : undefined
+      setError(code === 'validation'
+        ? 'API Key 格式不正确，请确认粘贴的是完整的 DeepSeek API Key。'
+        : import.meta.env.DEV && diagnostic !== undefined
+          ? 'API Key 保存失败：' + diagnostic
+          : 'API Key 未能写入本地加密凭据，请完全退出微屿后重试。')
+    } finally {
+      setCredentialBusy(false)
+    }
+  }
+
+  const clearApiKey = async () => {
+    if (ai === undefined || credentialBusy) return
+    setCredentialBusy(true)
+    try {
+      setCredentialConfigured((await ai.clearDeepSeekApiKey()).configured)
+    } catch {
+      setError('API Key 未能删除。')
+    } finally {
+      setCredentialBusy(false)
+    }
+  }
   const editDraft = (patch: Partial<AppSettings>) => {
     const next = { ...draftRef.current, ...patch }
     draftRef.current = next
@@ -230,9 +280,17 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
             <label>默认编辑视图<select aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">文档编辑</option><option value="split">分栏校对</option><option value="preview">阅读视图</option></select></label>
             <label>自动保存延迟<input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumberDraft('autosaveDelayMs')} onBlur={() => void update({ autosaveDelayMs: draftRef.current.autosaveDelayMs })} /><span>毫秒</span></label>
           </fieldset>
+          <fieldset className="settings-view__ai-settings" disabled={operationBusy || credentialBusy}>
+            <legend>AI 总结</legend>
+            <div className="settings-view__ai-key-row">
+              <label className="settings-view__ai-key-field">DeepSeek API Key<input aria-label="DeepSeek API Key" type="password" value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} autoComplete="off" placeholder={credentialConfigured ? "已配置，输入新 Key 可替换" : "粘贴 DeepSeek API Key"} /></label>
+              <div className="settings-view__ai-actions"><button type="button" disabled={ai === undefined || apiKeyDraft.trim().length === 0} onClick={() => void saveApiKey()}>保存</button><button type="button" disabled={ai === undefined || !credentialConfigured} onClick={() => void clearApiKey()}>清除 Key</button></div>
+            </div>
+            <label className="settings-view__ai-model">总结模型<select aria-label="总结模型" value={draft.deepseekModel ?? "deepseek-flash"} onChange={(event) => void update({ deepseekModel: event.target.value })}><option value="deepseek-flash">DeepSeek V4.1 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro（API: deepseek-v4-pro）</option></select></label>
+          </fieldset>
           <fieldset disabled={operationBusy}>
             <legend>系统</legend>
-            <label className="settings-view__shortcut">全局快捷键<input aria-label="全局快捷键" readOnly value={draft.shortcut} /><button type="button" aria-label="录制快捷键" onClick={() => { recordedShortcutKeysRef.current.clear(); pressedShortcutKeysRef.current.clear(); recordedNonModifierRef.current = false; setRecordingShortcut(true) }}>{recordingShortcut ? '请按下按键…' : '录制快捷键'}</button></label>
+            <label className="settings-view__shortcut">便笺快捷键<input aria-label="便笺快捷键" readOnly value={draft.shortcut} /><button type="button" aria-label="录制便笺快捷键" onClick={() => { recordedShortcutKeysRef.current.clear(); pressedShortcutKeysRef.current.clear(); recordedNonModifierRef.current = false; setRecordingShortcut(true) }}>{recordingShortcut ? '请按下按键…' : '录制便笺快捷键'}</button></label>
             <label className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} />开机启动</label>
             {platform === 'windows'
               ? <div className="settings-view__close-behavior">
