@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-const lineStart=process.platform==='darwin'?'Meta+ArrowLeft':'Home'
 
 test('keeps heading # selectable, copyable, editable and deletable',async({page},info)=>{
  await page.goto('/e2e/rich-heading-fixture.html')
@@ -33,8 +32,12 @@ test('keeps heading # selectable, copyable, editable and deletable',async({page}
 test('Enter at the leading edge keeps an existing heading intact',async({page})=>{
  await page.goto('/e2e/rich-heading-fixture.html')
  const heading=page.locator('h4[data-rich-heading]')
- await heading.click();await page.keyboard.press(lineStart);await page.keyboard.press('Enter')
+ await heading.click({clickCount:3})
+ await page.keyboard.press('ArrowLeft')
+ await expect.poll(()=>page.evaluate(()=>({offset:window.getSelection()?.anchorOffset,inHeading:!!window.getSelection()?.anchorNode?.parentElement?.closest('h4[data-rich-heading]')}))).toEqual({offset:0,inHeading:true})
+ await page.keyboard.press('Enter')
  await expect(heading).toHaveText('#### Self-Attention')
+ await expect(page.locator('.rich-document__content > p').nth(1)).toBeEmpty()
  await expect(page.locator('.rich-document__content > p').filter({hasText:'Self'})).toHaveCount(0)
 })
 test('uses the shortcut field for recording and opens a directory picker',async({page},info)=>{

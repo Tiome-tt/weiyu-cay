@@ -8,7 +8,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import TextAlign from '@tiptap/extension-text-align'
 import StarterKit from '@tiptap/starter-kit'
-import { Plugin } from '@tiptap/pm/state'
+import { Plugin, TextSelection } from '@tiptap/pm/state'
 import type { NoteId } from '../../domain/model'
 import { readImageAsset } from '../content/imageAssetLoader'
 import { pasteTsvAtSelection } from './tablePaste'
@@ -488,6 +488,12 @@ const richHeadingLevelExtension = Extension.create({
         },
         handleKeyDown: (view,event) => {
           const selection=view.state.selection
+          if(event.key === 'Enter' && !view.composing && this.editor.isEditable && selection.empty && selection.$from.parent.type.name === 'heading' && selection.$from.parentOffset === 0) {
+            const before = selection.$from.before()
+            const tr = view.state.tr.insert(before, view.state.schema.nodes.paragraph.create())
+            view.dispatch(tr.setSelection(TextSelection.create(tr.doc, before + 1)).scrollIntoView())
+            return true
+          }
           if(event.key !== 'Backspace' || view.composing || !this.editor.isEditable || !selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
           const node=selection.$from.parent, tr=view.state.tr
           const prefix=node.attrs.sourceMarker ? node.textContent.match(/^#{1,6} ?/)?.[0] ?? '' : ''
