@@ -906,7 +906,8 @@ describe('App', () => {
     act(() => emitFailure({ participant: `temporary-${failedId}` }))
 
     await waitFor(() => expect(show).toHaveBeenCalledWith(failedId))
-    expect(await screen.findByRole('alert')).toHaveTextContent('未能安全保存')
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('已重新打开，请检查后重试'))
+    expect(screen.queryByText('正在重新打开便笺…')).not.toBeInTheDocument()
     expect(screen.queryByText('正在安全保存…')).not.toBeInTheDocument()
   })
 

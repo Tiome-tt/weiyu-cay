@@ -279,7 +279,7 @@ function MainApplication({ services }: { services: AppServices }) {
       setCloseNotice({ status: 'error', message: '未能安全保存全部编辑内容，窗口保持打开，请检查后重试。' })
       return
     }
-    setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，正在重新打开…' })
+    setCloseNotice({ status: 'status', message: '正在重新打开便笺…' })
     void services.temporaryWindows.show(failedSticky).then(() => {
       setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，已重新打开，请检查后重试。' })
     }).catch(() => {

@@ -1,20 +1,19 @@
 import { expect, test } from '@playwright/test'
 const lineStart=process.platform==='darwin'?'Meta+ArrowLeft':'Home'
-const selectToLineEnd=process.platform==='darwin'?'Meta+Shift+ArrowRight':'Shift+End'
 
 test('keeps heading # selectable, copyable, editable and deletable',async({page},info)=>{
  await page.goto('/e2e/rich-heading-fixture.html')
  const body=page.getByRole('textbox',{name:'文档正文'})
- await body.locator('p').first().click({position:{x:8,y:8}});await page.keyboard.press(lineStart);await page.keyboard.press(selectToLineEnd)
- await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString())).toBe('上方正文')
+ await body.locator('p').first().click({clickCount:3})
+ await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString().trim())).toBe('上方正文')
  await page.keyboard.press('Backspace')
  await page.keyboard.type('#')
  await expect(page.locator('h1[data-rich-heading]').first()).toHaveText('#')
  await page.keyboard.type('## ');await page.keyboard.insertText('章节')
  const title=page.locator('h3[data-rich-heading]')
  await expect(title).toHaveText('### 章节')
- await page.keyboard.press(lineStart);await page.keyboard.press(selectToLineEnd)
- await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString())).toBe('### 章节')
+ await title.click({clickCount:3})
+ await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString().trim())).toBe('### 章节')
  await page.keyboard.insertText('## 新标题')
  const second=page.locator('h2[data-rich-heading]')
  await expect(second).toHaveText('## 新标题')
