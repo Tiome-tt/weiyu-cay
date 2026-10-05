@@ -25,7 +25,7 @@ test('keeps settings compact and API actions inline with themed checkbox targets
 
 test('centers compact search and shows matched context',async ({page},info)=>{
  await page.setViewportSize({width:1180,height:760});await page.goto('/')
- await page.keyboard.press('Control+f');const dialog=page.getByRole('dialog',{name:'搜索资料库'})
+ await page.keyboard.press(process.platform==='darwin'?'Meta+f':'Control+f');const dialog=page.getByRole('dialog',{name:'搜索资料库'})
  let box=(await dialog.boundingBox())!
  expect(Math.abs(box.x+box.width/2-590)).toBeLessThan(2)
  expect(Math.abs(box.y+box.height/2-395)).toBeLessThan(2)

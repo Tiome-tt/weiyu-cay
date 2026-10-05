@@ -92,10 +92,10 @@ test('closes a temporary preview after saving and exposes only app context menus
   expect(prevented).toBe(true)
   await page.evaluate(() => {
     document.addEventListener('keydown', (event) => {
-      if (event.ctrlKey && event.key === 'f') document.documentElement.dataset.findPrevented = String(event.defaultPrevented)
+      if ((event.ctrlKey || event.metaKey) && event.key === 'f') document.documentElement.dataset.findPrevented = String(event.defaultPrevented)
     })
   })
-  await body.press('Control+f')
+  await body.press(process.platform==='darwin'?'Meta+f':'Control+f')
   await expect(page.locator('html')).toHaveAttribute('data-find-prevented', 'true')
   await page.getByRole('searchbox', { name: '搜索资料库' }).press('Escape')
   await body.click({ button: 'right' })
@@ -183,7 +183,7 @@ test('stars notes in the collapsed library and puts app actions in the titlebar'
 
 test('opens central folder and note search with Ctrl+F and resizes related notes above the footer', async ({page},testInfo) => {
   await page.goto('/')
-  await page.keyboard.press('Control+f')
+  await page.keyboard.press(process.platform==='darwin'?'Meta+f':'Control+f')
   const search=page.getByRole('searchbox',{name:'搜索资料库'})
   await expect(search).toBeFocused()
   expect(await search.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none')
@@ -202,7 +202,7 @@ test('opens central folder and note search with Ctrl+F and resizes related notes
   await page.mouse.move(box.x+box.width/2,box.y+4);await page.mouse.down();await page.mouse.move(box.x+box.width/2,box.y-56);await page.mouse.up()
   await expect.poll(async()=>Number(await divider.getAttribute('aria-valuenow'))).toBeGreaterThan(before+40)
   await page.screenshot({path:testInfo.outputPath('status-search.png')})
-  await page.keyboard.press('Control+f');await search.fill('认证')
+  await page.keyboard.press(process.platform==='darwin'?'Meta+f':'Control+f');await search.fill('认证')
   await expect(page.getByRole('option',{name:/用户认证/})).toBeVisible()
   await page.screenshot({path:testInfo.outputPath('search-results.png')})
 })

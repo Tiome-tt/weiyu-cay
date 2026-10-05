@@ -1,4 +1,7 @@
 import {test,expect} from '@playwright/test'
+const documentStart=process.platform==='darwin'?'Meta+ArrowUp':'Control+Home'
+const lineStart=process.platform==='darwin'?'Meta+ArrowLeft':'Home'
+const selectToLineEnd=process.platform==='darwin'?'Meta+Shift+ArrowRight':'Shift+End'
 test('records search binding, responds to it, and submits the sidebar query',async({page},info)=>{
  await page.goto('/')
  await page.getByRole('button',{name:'打开设置',exact:true}).click()
@@ -28,10 +31,10 @@ test('shows a block number on hover and paints selected text',async({page},info)
  await block.hover();await expect(page.locator('.rich-document__block-controls')).toHaveClass(/is-visible/)
  await expect(page.locator('.rich-document__block-number')).toHaveText('1')
  await page.getByRole('button',{name:'格式刷',exact:true}).hover();await expect(page.locator('.rich-document__block-controls')).not.toHaveClass(/is-visible/)
- await body.click();await page.keyboard.press('Control+Home');await page.keyboard.press('Home');await page.keyboard.press('Shift+End')
+ await body.click();await page.keyboard.press(documentStart);await page.keyboard.press(lineStart);await page.keyboard.press(selectToLineEnd)
  await page.getByRole('button',{name:'粗体',exact:true}).click()
  await page.getByRole('button',{name:'格式刷',exact:true}).click();await expect(page.getByRole('button',{name:'格式刷',exact:true})).toHaveAttribute('aria-pressed','true')
- await body.locator('p').last().click({position:{x:8,y:8}});await page.keyboard.press('Home');await page.keyboard.press('Shift+End')
+ await body.locator('p').last().click({position:{x:8,y:8}});await page.keyboard.press(lineStart);await page.keyboard.press(selectToLineEnd)
  await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString())).toBe('下方正文')
  await expect(page.getByRole('button',{name:'格式刷',exact:true})).toHaveAttribute('aria-pressed','false')
  await expect(body.locator('p').last().locator('strong')).toBeVisible()

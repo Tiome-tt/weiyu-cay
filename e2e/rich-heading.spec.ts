@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
+const lineStart=process.platform==='darwin'?'Meta+ArrowLeft':'Home'
+const selectToLineEnd=process.platform==='darwin'?'Meta+Shift+ArrowRight':'Shift+End'
 
 test('keeps heading # selectable, copyable, editable and deletable',async({page},info)=>{
  await page.goto('/e2e/rich-heading-fixture.html')
  const body=page.getByRole('textbox',{name:'文档正文'})
- await body.locator('p').first().click({position:{x:8,y:8}});await page.keyboard.press('Home');await page.keyboard.press('Shift+End')
+ await body.locator('p').first().click({position:{x:8,y:8}});await page.keyboard.press(lineStart);await page.keyboard.press(selectToLineEnd)
  await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString())).toBe('上方正文')
  await page.keyboard.press('Backspace')
  await page.keyboard.type('#')
@@ -11,12 +13,12 @@ test('keeps heading # selectable, copyable, editable and deletable',async({page}
  await page.keyboard.type('## ');await page.keyboard.insertText('章节')
  const title=page.locator('h3[data-rich-heading]')
  await expect(title).toHaveText('### 章节')
- await page.keyboard.press('Home');await page.keyboard.press('Shift+End')
+ await page.keyboard.press(lineStart);await page.keyboard.press(selectToLineEnd)
  await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString())).toBe('### 章节')
  await page.keyboard.insertText('## 新标题')
  const second=page.locator('h2[data-rich-heading]')
  await expect(second).toHaveText('## 新标题')
- await second.click({position:{x:8,y:8}});await page.keyboard.press('Home');await expect.poll(()=>page.evaluate(()=>window.getSelection()?.anchorOffset)).toBe(0)
+ await second.click({position:{x:8,y:8}});await page.keyboard.press(lineStart);await expect.poll(()=>page.evaluate(()=>window.getSelection()?.anchorOffset)).toBe(0)
  await page.keyboard.press('Delete');await expect(page.locator('h1[data-rich-heading]').first()).toHaveText('# 新标题')
  await page.keyboard.press('Delete');await expect(page.locator('.rich-document__content > p').filter({hasText:'新标题'})).toBeVisible()
  await page.screenshot({path:info.outputPath('heading-markers.png')})
@@ -25,7 +27,7 @@ test('keeps heading # selectable, copyable, editable and deletable',async({page}
 test('Enter at the leading edge keeps an existing heading intact',async({page})=>{
  await page.goto('/e2e/rich-heading-fixture.html')
  const heading=page.locator('h4[data-rich-heading]')
- await heading.click();await page.keyboard.press('Home');await page.keyboard.press('Enter')
+ await heading.click();await page.keyboard.press(lineStart);await page.keyboard.press('Enter')
  await expect(heading).toHaveText('#### Self-Attention')
  await expect(page.locator('.rich-document__content > p').filter({hasText:'Self'})).toHaveCount(0)
 })

@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
+const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A'
 
 async function tabTo(page: Page, target: Locator, limit = 120) {
   for (let index = 0; index < limit; index += 1) {
@@ -44,7 +45,7 @@ test('completes the primary application flow with keyboard input only', async ({
   await expect(page.getByRole('heading', { name: '用户认证' })).toBeVisible()
 
   await tabTo(page, search)
-  await page.keyboard.press('Control+A')
+  await page.keyboard.press(selectAll)
   await page.keyboard.press('Backspace')
   await tabTo(page, page.locator('[role="treeitem"][tabindex="0"]'))
   await page.keyboard.press('Home')
