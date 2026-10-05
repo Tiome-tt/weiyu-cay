@@ -529,6 +529,7 @@ describe('LibraryLayout', () => {
 
   it('restores a manual collapse as a functional rail and persists only explicit expansion', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-starred-notes': [],
       'library-columns': { folder: 0.25, noteList: 0.3 },
       'library-collapsed': { folder: true, noteList: false },
       'library-outline-collapsed': {},
@@ -548,6 +549,7 @@ describe('LibraryLayout', () => {
 
   it('keeps the temporary and trash rail entries available without an unfiled entry', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-starred-notes': [],
       'library-columns': undefined,
       'library-collapsed': { folder: true, noteList: false },
       'library-outline-collapsed': {},
@@ -564,6 +566,7 @@ describe('LibraryLayout', () => {
 
   it('places the collapsed directory rail after the folder pane', async () => {
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-starred-notes': [],
       'library-columns': undefined,
       'library-collapsed': { folder: false, noteList: true },
       'library-outline-collapsed': {},
@@ -585,6 +588,7 @@ describe('LibraryLayout', () => {
       loadNote: vi.fn().mockResolvedValue(selected),
     })
     const getWindowPreference = vi.fn(async (key: keyof WindowPreferenceMap) => ({
+      'library-starred-notes': [],
       'library-columns': undefined,
       'library-collapsed': { folder: true, noteList: false },
       'library-outline-collapsed': {},

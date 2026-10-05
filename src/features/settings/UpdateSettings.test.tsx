@@ -8,12 +8,12 @@ import { UpdateSettings } from './UpdateSettings'
 describe('UpdateSettings', () => {
   afterEach(cleanup)
 
-  it('explains that development builds have no updater source', () => {
+  it('keeps update copy user facing without development commands', () => {
     const controller: UpdateController = { state: { status: 'idle' }, check: vi.fn(), install: vi.fn(), restart: vi.fn() }
     render(<UpdateSettings controller={controller} />)
 
-    expect(screen.getByText(/pnpm tauri dev/)).toBeVisible()
-    expect(screen.getByText(/正式签名安装版/)).toBeVisible()
+    expect(screen.queryByText(/pnpm tauri dev/)).not.toBeInTheDocument()
+    expect(screen.getByText(/不会在后台自动安装/)).toBeVisible()
   })
 
   it('keeps checking explicit and reports a recoverable check failure', async () => {

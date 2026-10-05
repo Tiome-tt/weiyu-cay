@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteId } from '../../domain/model'
@@ -196,4 +196,24 @@ describe('SearchBox', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: '外部操作' }))
     expect(screen.queryByRole('list', { name: '搜索结果' })).not.toBeInTheDocument()
   })
+})
+
+it('submits the typed query on Enter without requiring arrow selection',()=>{
+ const onSubmit=vi.fn()
+ render(<SearchBox search={fakeSearchPort()} onSelect={vi.fn()} onSubmit={onSubmit}/>)
+ const field=screen.getByRole('searchbox')
+ fireEvent.change(field,{target:{value:'接语'}})
+ fireEvent.keyDown(field,{key:'Enter'})
+ expect(onSubmit).toHaveBeenCalledWith('接语')
+})
+
+it('renders inline library results and opens the first result without a dialog',async()=>{
+ const target=document.createElement('div');document.body.append(target)
+ const onSelect=vi.fn(),onSubmit=vi.fn()
+ render(<SearchBox search={fakeSearchPort()} onSelect={onSelect} onSubmit={onSubmit} resultsContainer={target}/>)
+ fireEvent.change(screen.getByRole('searchbox'),{target:{value:'认证'}})
+ await waitFor(()=>expect(target.querySelector('.library-search-inline')).not.toBeNull())
+ fireEvent.keyDown(screen.getByRole('searchbox'),{key:'Enter'})
+ expect(onSubmit).not.toHaveBeenCalled()
+ target.remove()
 })

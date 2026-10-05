@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import type { AvailableUpdate } from '../../domain/ports'
 import { APP_NAME } from '../../shared/brand'
 
@@ -19,10 +20,10 @@ export function UpdateSettings({ controller }: { controller: UpdateController })
 
   return (
     <div className="update-settings">
-      {state.status === 'idle' && <p>更新只会在你检查时下载信息，不会在后台自动安装。<br />开发版（pnpm tauri dev）未配置更新源，请使用正式签名安装版。</p>}
+      {state.status === 'idle' && <p>更新只会在你检查时下载信息，不会在后台自动安装。</p>}
       {state.status === 'checking' && <p role="status">正在检查更新…</p>}
       {state.status === 'none' && <p role="status">{APP_NAME} 已是最新版本。</p>}
-      {state.status === 'check-error' && <p role="alert">无法检查更新。你的笔记不会受到影响，请稍后重试。</p>}
+      <ErrorNotification error={state.status === 'check-error' ? '无法检查更新。你的笔记不会受到影响，请稍后重试。' : null} />
       {state.status === 'available' && update !== null && (
         <div>
           <p role="status">版本 {update.version} 可以安装。</p>
@@ -33,13 +34,13 @@ export function UpdateSettings({ controller }: { controller: UpdateController })
       {state.status === 'installing' && <p role="status">正在下载并验证更新…</p>}
       {state.status === 'install-error' && update !== null && (
         <div>
-          <p role="alert">更新安装失败。你的笔记没有改变，可以重试。</p>
+          <ErrorNotification error="更新安装失败。你的笔记没有改变，可以重试。" />
           <button type="button" onClick={() => void controller.install()}>重新安装 {update.version}</button>
         </div>
       )}
       {state.status === 'installed' && <div><p role="status">更新已安装，重启后完成。</p><button type="button" onClick={() => void controller.restart()}>重启以完成更新</button></div>}
       {state.status === 'restarting' && <p role="status">正在重新启动{APP_NAME}…</p>}
-      {state.status === 'restart-error' && <div><p role="alert">更新已安装，但重启失败。请重试或手动重新启动{APP_NAME}。</p><button type="button" onClick={() => void controller.restart()}>重新尝试重启</button></div>}
+      {state.status === 'restart-error' && <div><ErrorNotification error={`更新已安装，但重启失败。请重试或手动重新启动${APP_NAME}。`} /><button type="button" onClick={() => void controller.restart()}>重新尝试重启</button></div>}
       {(state.status === 'idle' || state.status === 'none' || state.status === 'check-error') && (
         <button type="button" disabled={busy} onClick={() => void controller.check()}>
           {state.status === 'check-error' ? '重新检查更新' : '检查更新'}

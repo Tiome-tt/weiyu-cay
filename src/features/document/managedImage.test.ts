@@ -67,3 +67,19 @@ describe('managed rich images', () => {
     editor.destroy()
   })
 })
+
+it('loads a newly inserted image while an earlier node is still loading',async()=>{
+ let finish!:()=>void
+ const gate=new Promise<void>(resolve=>{finish=resolve})
+ const nextPath='assets/screenshot-019c0000-0000-7000-8000-000000000010.png'
+ const readImage=vi.fn(async({relativePath}:{relativePath:string})=>{if(relativePath===IMAGE_PATH)await gate;return {mediaType:'image/png',bytes:new Uint8Array([1])}})
+ const element=document.createElement('div')
+ const editor=new Editor({element,extensions:richEditorExtensions({noteId:NOTE_ID,assetReader:{readImage}}),content:{type:'doc',content:[{type:'image',attrs:{src:IMAGE_PATH}}]}})
+ await vi.waitFor(()=>expect(readImage).toHaveBeenCalledOnce())
+ editor.commands.insertContentAt(editor.state.doc.content.size,{type:'image',attrs:{src:nextPath}})
+ finish()
+ await vi.waitFor(()=>expect(URL.createObjectURL).toHaveBeenCalledTimes(2))
+ expect(element.querySelectorAll('img[src="blob:managed-image"]')).toHaveLength(2)
+ expect(editor.getJSON().content?.filter(node=>node.type==='image')).toHaveLength(2)
+ editor.destroy()
+})

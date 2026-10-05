@@ -1,3 +1,5 @@
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { BlockNumbers } from './blockNumbers'
 import { Extension, Mark, Node, mergeAttributes, type Editor, type NodeViewRendererProps } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
@@ -6,9 +8,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import TextAlign from '@tiptap/extension-text-align'
 import StarterKit from '@tiptap/starter-kit'
-import { Fragment } from '@tiptap/pm/model'
-import { Plugin, TextSelection } from '@tiptap/pm/state'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Plugin } from '@tiptap/pm/state'
 import type { NoteId } from '../../domain/model'
 import { readImageAsset } from '../content/imageAssetLoader'
 import { pasteTsvAtSelection } from './tablePaste'
@@ -28,8 +28,6 @@ export interface RichAssetReader {
 
 const CELL_COLORS = new Set(['green', 'yellow', 'blue', 'pink', 'purple', 'gray'])
 const CELL_ALIGNS = new Set(['left', 'center', 'right'])
-// Tiptap StarterKit's TrailingNode extension recognizes this public transaction meta key.
-const SKIP_TRAILING_NODE_META = 'skipTrailingNode'
 
 export const RichFontMark = Mark.create({
   name: 'font',
@@ -417,128 +415,6 @@ function clipboardExtension(): Extension {
   })
 }
 
-export function increaseRichHeadingLevel(editor: Editor): boolean {
-  const { selection } = editor.state
-  if (!selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
-  const heading = selection.$from.parent
-  const level = Number(heading.attrs.level)
-  if (!Number.isInteger(level) || level < 1 || level >= 6) return false
-  editor.view.dispatch(editor.state.tr.setNodeMarkup(selection.$from.before(), editor.state.schema.nodes.heading, { ...heading.attrs, level: level + 1 }))
-  return true
-}
-
-export function decreaseRichHeadingLevel(editor: Editor): boolean {
-  const { selection } = editor.state
-  if (!selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
-  const heading = selection.$from.parent
-  const level = Number(heading.attrs.level)
-  if (!Number.isInteger(level) || level < 1 || level > 6) return false
-  const position = selection.$from.before()
-  const nextType = level > 1 ? editor.state.schema.nodes.heading : editor.state.schema.nodes.paragraph
-  const nextAttrs = level > 1
-    ? { ...heading.attrs, level: level - 1 }
-    : { textAlign: heading.attrs.textAlign ?? null }
-  editor.view.dispatch(editor.state.tr.setNodeMarkup(position, nextType, nextAttrs))
-  return true
-}
-
-/** Convert a Markdown heading marker when the cursor leaves its paragraph. */
-export interface MarkdownHeadingConversionOptions {
-  preserveSelection?: boolean
-  scrollIntoView?: boolean
-  focus?: boolean
-  insertTrailingParagraph?: boolean
-}
-
-/** Convert a Markdown heading marker when the cursor leaves its paragraph. */
-export function convertMarkdownHeadingOnExit(editor: Editor, options: MarkdownHeadingConversionOptions = {}): boolean {
-  const { selection } = editor.state
-  if (!selection.empty) return false
-  const { $from } = selection
-  const paragraph = $from.parent
-  if (paragraph.type.name !== 'paragraph' || $from.parentOffset !== paragraph.content.size) return false
-  return convertMarkdownHeadingAt(editor, $from.before(), options)
-}
-
-export function convertMarkdownHeadingAt(editor: Editor, position: number, options: MarkdownHeadingConversionOptions = {}): boolean {
-  const paragraph = editor.state.doc.nodeAt(position)
-  if (paragraph === null || paragraph.type.name !== 'paragraph') return false
-
-  const match = /^(#{1,6})(?:[ 	]+(.*))?$/.exec(paragraph.textContent)
-  if (!match) return false
-  const headingType = editor.state.schema.nodes.heading
-  const paragraphType = editor.state.schema.nodes.paragraph
-  if (!headingType || !paragraphType) return false
-
-  const level = match[1].length
-  const title = match[2] ?? ''
-  const heading = headingType.create({ ...paragraph.attrs, level }, title ? editor.state.schema.text(title) : undefined)
-  const replacement = options.insertTrailingParagraph === false ? [heading] : [heading, paragraphType.create(paragraph.attrs)]
-  const transaction = editor.state.tr.replaceWith(position, position + paragraph.nodeSize, Fragment.fromArray(replacement))
-  if (options.insertTrailingParagraph === false) transaction.setMeta(SKIP_TRAILING_NODE_META, true)
-  if (options.preserveSelection !== true) {
-    transaction.setSelection(TextSelection.near(transaction.doc.resolve(position + heading.nodeSize + 1)))
-  }
-  const dispatched = options.scrollIntoView === false ? transaction : transaction.scrollIntoView()
-  editor.view.dispatch(dispatched)
-  if (options.focus !== false) editor.view.focus()
-  return true
-}
-export function insertParagraphBeforeHeading(editor: Editor, position?: number): boolean {
-  let headingPosition = position
-  if (headingPosition === undefined) {
-    const { selection } = editor.state
-    if (!selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
-    headingPosition = selection.$from.before()
-  }
-  const heading = editor.state.doc.nodeAt(headingPosition)
-  const paragraphType = editor.state.schema.nodes.paragraph
-  if (heading === null || heading.type.name !== 'heading' || !paragraphType) return false
-  const paragraph = paragraphType.create({ textAlign: heading.attrs.textAlign ?? null })
-  const transaction = editor.state.tr.insert(headingPosition, paragraph)
-  transaction.setSelection(TextSelection.near(transaction.doc.resolve(headingPosition + 1)))
-  editor.view.dispatch(transaction.scrollIntoView())
-  editor.view.focus()
-  return true
-}
-/** Resolve a visible # caret when Enter targets the editor root instead of the heading NodeView. */
-export function headingPositionAtNativeMarkerCaret(editor: Editor): number | undefined {
-  const selection = editor.view.dom.ownerDocument.getSelection()
-  if (!selection?.isCollapsed || selection.anchorNode === null) return undefined
-  const anchor = selection.anchorNode
-  const element = anchor instanceof Element ? anchor : anchor.parentElement
-  const marker = element?.closest('.rich-document__heading-marker')
-  if (!marker || !editor.view.dom.contains(marker)) return undefined
-  const content = marker.parentElement?.querySelector('.rich-document__heading-content')
-  if (!content) return undefined
-  const position = editor.view.posAtDOM(content, 0) - 1
-  return editor.state.doc.nodeAt(position)?.type.name === 'heading' ? position : undefined
-}
-export function syncRichHeadingMarkers(editor: Editor): boolean {
-  const markers = Array.from(editor.view.dom.querySelectorAll<HTMLElement>('.rich-document__heading-marker'))
-  if (markers.length === 0) return false
-  let markerIndex = 0
-  let transaction = editor.state.tr
-  editor.state.doc.descendants((node, position) => {
-    if (node.type.name !== 'heading') return
-    const marker = markers[markerIndex++]
-    if (!marker) return
-    const rawMarker = marker.textContent ?? ''
-    const level = Math.min(6, Math.max(0, Array.from(rawMarker).filter((character) => character === '#').length))
-    const normalizedMarker = '#'.repeat(level)
-    if (rawMarker !== normalizedMarker) marker.textContent = normalizedMarker
-    if (level === Number(node.attrs.level)) return
-    const nextType = level === 0 ? editor.state.schema.nodes.paragraph : editor.state.schema.nodes.heading
-    const nextAttrs = level === 0
-      ? { textAlign: node.attrs.textAlign ?? null }
-      : { ...node.attrs, level }
-    transaction = transaction.setNodeMarkup(position, nextType, nextAttrs)
-  })
-  if (!transaction.docChanged) return false
-  editor.view.dispatch(transaction)
-  return true
-}
-export const RICH_HEADING_NAVIGATION_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Tab'])
 const RichHeading = Node.create({
   name: 'heading',
   group: 'block',
@@ -552,6 +428,7 @@ const RichHeading = Node.create({
   },
   addAttributes() {
     return {
+      sourceMarker: {default:false, rendered:false},
       level: {
         default: 1,
         parseHTML: (element: HTMLElement) => {
@@ -569,200 +446,79 @@ const RichHeading = Node.create({
     const level = Number(node.attrs.level)
     return ['h' + String(Number.isInteger(level) && level >= 1 && level <= 6 ? level : 1), mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0]
   },
-  addNodeView() {
-    return ({ node, editor, getPos }: NodeViewRendererProps) => {
-      const dom = document.createElement('h' + String(node.attrs.level))
-      dom.setAttribute('data-rich-heading', 'true')
-      dom.contentEditable = String(editor.isEditable)
-      dom.style.textAlign = typeof node.attrs.textAlign === 'string' ? node.attrs.textAlign : ''
-      const marker = document.createElement('span')
-      marker.className = 'rich-document__heading-marker'
-      marker.contentEditable = String(editor.isEditable)
-      marker.setAttribute('contenteditable', String(editor.isEditable))
-      marker.spellcheck = false
-      marker.setAttribute('aria-hidden', 'true')
-      const contentDOM = document.createElement('span')
-      contentDOM.className = 'rich-document__heading-content'
-      dom.append(marker, contentDOM)
-
-      const currentPosition = () => typeof getPos === 'function' ? getPos() : undefined
-      const focusNewMarker = (position: number) => {
-        queueMicrotask(() => {
-          if (editor.isDestroyed) return
-          const node = editor.view.nodeDOM(position)
-          const nextMarker = node instanceof HTMLElement ? node.querySelector<HTMLElement>('.rich-document__heading-marker') : null
-          if (nextMarker === null) {
-            editor.chain().focus().setTextSelection(position + 1).run()
-            return
+  addCommands() {
+    return {
+      setHeading: (attributes: { level: 1 | 2 | 3 | 4 | 5 | 6 }) => ({ commands, tr, state, dispatch }) => {
+        if (!this.options.levels.includes(attributes.level)) return false
+        const position = state.selection.$from
+        if (position.parent.type.name === 'heading' && position.parent.attrs.sourceMarker) {
+          const prefix = position.parent.textContent.match(/^#{1,6} ?/)?.[0] ?? ''
+          if (dispatch) {
+            tr.insertText('#'.repeat(attributes.level)+' ',position.start(),position.start()+prefix.length)
+            tr.setNodeMarkup(position.before(),undefined,{...position.parent.attrs,...attributes})
           }
-          nextMarker.focus()
-          const selection = nextMarker.ownerDocument.getSelection()
-          const range = nextMarker.ownerDocument.createRange()
-          range.selectNodeContents(nextMarker)
-          range.collapse(false)
-          selection?.removeAllRanges()
-          selection?.addRange(range)
-        })
-      }
-      const setHeadingLevel = (level: number, keepMarkerCaret: boolean) => {
-        if (!editor.isEditable) return
-        const position = currentPosition()
-        if (position === undefined) return
-        const currentNode = editor.state.doc.nodeAt(position)
-        if (currentNode === null || currentNode.type.name !== 'heading') return
-        if (level === Number(currentNode.attrs.level)) return
-        const nextType = level === 0 ? editor.state.schema.nodes.paragraph : editor.state.schema.nodes.heading
-        const nextAttrs = level === 0
-          ? { textAlign: currentNode.attrs.textAlign ?? null }
-          : { ...currentNode.attrs, level }
-        editor.view.dispatch(editor.state.tr.setNodeMarkup(position, nextType, nextAttrs))
-        if (keepMarkerCaret) focusNewMarker(position)
-      }
-      const syncHeadingLevel = () => {
-        if (!editor.isEditable) return
-        const position = currentPosition()
-        if (position === undefined) return
-        const currentNode = editor.state.doc.nodeAt(position)
-        if (currentNode === null || currentNode.type.name !== 'heading') return
-        const rawMarker = marker.textContent ?? ''
-        const level = Math.min(6, Math.max(0, Array.from(rawMarker).filter((character) => character === '#').length))
-        const extraText = Array.from(rawMarker).filter((character) => character !== '#').join('')
-        const normalizedMarker = '#'.repeat(level)
-        if (rawMarker !== normalizedMarker) marker.textContent = normalizedMarker
-        setHeadingLevel(level, false)
-        if (extraText) editor.chain().focus().setTextSelection(position + 1).insertContent(extraText).run()
-      }
-      const decreaseHeadingLevelAtMarker = (keepMarkerCaret: boolean) => {
-        const position = currentPosition()
-        if (position === undefined) return
-        const currentNode = editor.state.doc.nodeAt(position)
-        if (currentNode === null || currentNode.type.name !== 'heading') return
-        const level = Number(currentNode.attrs.level)
-        if (Number.isInteger(level) && level >= 1 && level <= 6) setHeadingLevel(level - 1, keepMarkerCaret)
-      }
-      const splitHeadingBeforeMarker = () => {
-        if (!editor.isEditable) return
-        const position = currentPosition()
-        if (position === undefined) return
-        insertParagraphBeforeHeading(editor, position)
-      }
-      const handleHeadingKeyDown = (event: KeyboardEvent) => {
-        const targetIsMarker = marker.contains(event.target as globalThis.Node)
-        const nativeSelection = dom.ownerDocument.getSelection()
-        const nativeCaretAtMarker = nativeSelection?.isCollapsed === true && nativeSelection.anchorNode !== null
-          && (marker.contains(nativeSelection.anchorNode)
-            || (nativeSelection.anchorNode === dom && nativeSelection.anchorOffset === 0))
-        const selectionAtHeadingStart = editor.state.selection.empty
-          && editor.state.selection.$from.parent.type.name === 'heading'
-          && editor.state.selection.$from.parentOffset === 0
-        if (event.key === '#' && !event.ctrlKey && !event.metaKey && !event.altKey
-          && (targetIsMarker || nativeCaretAtMarker || selectionAtHeadingStart)) {
-          event.preventDefault()
-          event.stopPropagation()
-          event.stopImmediatePropagation()
-          const position = currentPosition()
-          const level = position === undefined ? 0 : Number(editor.state.doc.nodeAt(position)?.attrs.level)
-          if (level >= 1 && level < 6) setHeadingLevel(level + 1, targetIsMarker || nativeCaretAtMarker)
-          return
-        }
-        if (targetIsMarker && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-          event.preventDefault()
-          event.stopPropagation()
-          event.stopImmediatePropagation()
-          const position = currentPosition()
-          if (position !== undefined) editor.chain().focus().setTextSelection(position + 1).insertContent(event.key).run()
-          return
-        }
-        if (event.key === 'Enter') {
-          if (!targetIsMarker && !nativeCaretAtMarker && !selectionAtHeadingStart) return
-          event.preventDefault()
-          event.stopPropagation()
-          event.stopImmediatePropagation()
-          splitHeadingBeforeMarker()
-          return
-        }
-        if (RICH_HEADING_NAVIGATION_KEYS.has(event.key)) {
-          syncHeadingLevel()
-          return
-        }
-        if (event.key !== 'Backspace' && event.key !== 'Delete') return
-        if (!targetIsMarker && !nativeCaretAtMarker && !selectionAtHeadingStart) return
-        event.preventDefault()
-        event.stopPropagation()
-        event.stopImmediatePropagation()
-        decreaseHeadingLevelAtMarker(targetIsMarker || nativeCaretAtMarker)
-      }
-      const syncHeadingLevelOnFocusOut = () => syncHeadingLevel()
-      marker.textContent = '#'.repeat(Number(node.attrs.level))
-      const focusEditor = (event: MouseEvent) => {
-        syncHeadingLevel()
-        if (!editor.isEditable) return
-        if (marker.contains(event.target as globalThis.Node)) {
-          const position = currentPosition()
-          if (position !== undefined) {
-            editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(editor.state.doc.resolve(position + 1))))
-          }
-          return
-        }
-        editor.view.focus()
-      }
-      marker.addEventListener('input', syncHeadingLevel)
-      dom.addEventListener('keydown', handleHeadingKeyDown, true)
-      dom.addEventListener('mousedown', focusEditor)
-      dom.addEventListener('focusout', syncHeadingLevelOnFocusOut)
-
-
-      return {
-        dom,
-        contentDOM,
-        stopEvent: (event) => marker.contains(event.target as globalThis.Node),
-        ignoreMutation: (mutation) => mutation.target === dom || marker.contains(mutation.target),
-        update: (updatedNode) => {
-          if (updatedNode.type.name !== 'heading') return false
-          const level = Number(updatedNode.attrs.level)
-          if (dom.tagName !== 'H' + String(level)) return false
-          const normalizedMarker = '#'.repeat(Number.isInteger(level) && level >= 1 && level <= 6 ? level : 1)
-          if (marker.textContent !== normalizedMarker) marker.textContent = normalizedMarker
-          dom.contentEditable = String(editor.isEditable)
-          marker.contentEditable = String(editor.isEditable)
-          marker.setAttribute('contenteditable', String(editor.isEditable))
-          dom.style.textAlign = typeof updatedNode.attrs.textAlign === 'string' ? updatedNode.attrs.textAlign : ''
           return true
-        },
-        destroy: () => {
-          marker.removeEventListener('input', syncHeadingLevel)
-          dom.removeEventListener('keydown', handleHeadingKeyDown, true)
-          dom.removeEventListener('focusout', syncHeadingLevelOnFocusOut)
-          dom.removeEventListener('mousedown', focusEditor)
-        },
-      }
+        }
+        return commands.setNode(this.name, attributes)
+      },
+      toggleHeading: (attributes: { level: 1 | 2 | 3 | 4 | 5 | 6 }) => ({ commands }) => {
+        if (!this.options.levels.includes(attributes.level)) return false
+        return commands.toggleNode(this.name, 'paragraph', attributes)
+      },
     }
   },
 })
+/** The source marker is ordinary text in the same content DOM, so native selection,
+ * copy and deletion work across the complete heading. It is editor-only metadata. */
 const richHeadingLevelExtension = Extension.create({
-  name: 'richHeadingLevel',
+  name:'richHeadingLevel', priority:1100,
   addProseMirrorPlugins() {
     return [new Plugin({
       props: {
-        decorations: (state) => {
-          const selection = state.selection
-          if (!selection.empty || selection.$from.parent.type.name !== 'heading') return DecorationSet.empty
-          return DecorationSet.create(state.doc, [
-            Decoration.node(selection.$from.before(), selection.$from.after(), { class: 'rich-document__heading--editing' }),
-          ])
+        decorations: state => {
+          const decorations: Decoration[]=[]
+          state.doc.descendants((node,pos)=>{
+            if(node.type.name!=='heading' || !node.attrs.sourceMarker)return
+            const prefix=node.textContent.match(/^#{1,6} ?/)?.[0]??''
+            if(!prefix)return
+            const active=this.editor.isFocused && state.selection.from<=pos+node.nodeSize && state.selection.to>=pos
+            decorations.push(Decoration.inline(pos+1,pos+1+prefix.length,{class:'rich-document__source-prefix'+(active?'':' is-hidden')}))
+          })
+          return DecorationSet.create(state.doc,decorations)
         },
-        handleKeyDown: (_view, event) => {
-          if (!this.editor.isEditable) return false
-          if (event.key === '#' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-            const changed = increaseRichHeadingLevel(this.editor)
-            if (changed) event.preventDefault()
-            return changed
-          }
-          if (event.key !== 'Backspace' && event.key !== 'Delete') return false
-          const changed = decreaseRichHeadingLevel(this.editor)
-          if (changed) event.preventDefault()
-          return changed
+        handleKeyDown: (view,event) => {
+          const selection=view.state.selection
+          if(event.key !== 'Backspace' || view.composing || !this.editor.isEditable || !selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
+          const node=selection.$from.parent, tr=view.state.tr
+          const prefix=node.attrs.sourceMarker ? node.textContent.match(/^#{1,6} ?/)?.[0] ?? '' : ''
+          if(prefix)tr.delete(selection.from,selection.from+prefix.length)
+          view.dispatch(tr.setNodeMarkup(selection.$from.before(),view.state.schema.nodes.paragraph,{textAlign:node.attrs.textAlign??null}))
+          return true
         },
+        handleTextInput: (view,from,to,text) => {
+          if (!this.editor.isEditable || view.composing || from !== to || text !== '#') return false
+          const position=view.state.doc.resolve(from)
+          if(position.parent.type.name !== 'paragraph' || position.parentOffset !== 0) return false
+          view.dispatch(view.state.tr.insertText(text,from,to).setNodeMarkup(position.before(),view.state.schema.nodes.heading,{...position.parent.attrs,level:1,sourceMarker:true}))
+          return true
+        },
+      },
+      appendTransaction: (transactions,_old,state) => {
+        if(!transactions.some(transaction=>transaction.docChanged)) return null
+        const tr=state.tr
+        state.doc.descendants((node,pos)=>{
+          if(node.type.name !== 'heading') return
+          const prefix=node.textContent.match(/^(#{1,6})(?: |$)/)
+          if(!node.attrs.sourceMarker) {
+            tr.insertText('#'.repeat(Number(node.attrs.level))+' ',tr.mapping.map(pos+1))
+            tr.setNodeMarkup(tr.mapping.map(pos),undefined,{...node.attrs,sourceMarker:true})
+          } else if(!prefix) {
+            // A partially edited marker still determines its level without a separator.
+            const hashes=node.textContent.match(/^(#{1,6})/)
+            if(!hashes || Number(node.attrs.level)!==hashes[1].length) tr.setNodeMarkup(tr.mapping.map(pos),hashes?undefined:state.schema.nodes.paragraph,hashes?{...node.attrs,level:hashes[1].length}:{textAlign:node.attrs.textAlign ?? null})
+          } else if(Number(node.attrs.level)!==prefix[1].length) tr.setNodeMarkup(tr.mapping.map(pos),undefined,{...node.attrs,level:prefix[1].length})
+        })
+        return tr.steps.length ? tr : null
       },
     })]
   },
@@ -781,6 +537,7 @@ export function richEditorExtensions(options: RichEditorExtensionOptions = {}) {
     RichHeading.configure({ levels: [1, 2, 3, 4, 5, 6], HTMLAttributes: { 'data-rich-heading': 'true' } }),
     Highlight.configure({ multicolor: true }),
     richHeadingLevelExtension,
+    BlockNumbers,
     managedImage(options.assetReader, options.noteId),
     TextAlign.configure({ types: ['heading', 'paragraph'], alignments: ['left', 'center', 'right', 'justify'] }),
     TaskList,

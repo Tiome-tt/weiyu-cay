@@ -280,20 +280,19 @@ describe('FolderTree keyboard navigation', () => {
     expect(screen.getByRole('menuitem', { name: '重命名文件夹' })).toBeVisible()
     expect(screen.getByRole('menuitem', { name: '移动文件夹' })).toBeVisible()
     expect(screen.getByRole('menuitem', { name: '删除文件夹' })).toBeVisible()
-    expect(screen.getByRole('menuitem', { name: '添加星标' })).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: '添加星标' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('menuitem', { name: '重命名文件夹' }))
     expect(screen.getByRole('textbox', { name: '重命名文件夹' })).toHaveFocus()
   })
 
-  it('adds a star from the folder context menu', async () => {
+  it('does not offer folder stars from the context menu', async () => {
     const user = userEvent.setup()
     const onToggleStar = vi.fn().mockResolvedValue(undefined)
     render(<FolderTree folders={rows} activeId={folderA} state="ready" onSelect={vi.fn()} onCreate={vi.fn().mockResolvedValue(undefined)} onRename={vi.fn().mockResolvedValue(undefined)} onMove={vi.fn().mockResolvedValue(undefined)} onDelete={vi.fn().mockResolvedValue(undefined)} onToggleStar={onToggleStar} />)
 
     await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
-    await user.click(screen.getByRole('menuitem', { name: '添加星标' }))
-
-    expect(onToggleStar).toHaveBeenCalledWith(folderA, true)
+    expect(screen.queryByRole('menuitem', { name: '添加星标' })).not.toBeInTheDocument()
+    expect(onToggleStar).not.toHaveBeenCalled()
   })
 
   it('renames a folder from its context menu', async () => {

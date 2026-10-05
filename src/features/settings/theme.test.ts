@@ -11,6 +11,7 @@ describe('settings theme', () => {
       fontSize: 16,
       dailyLyrics: true,
       lineHeight: 1.6,
+      searchShortcut: 'CommandOrControl+F',
       shortcut: 'CommandOrControl+Shift+D',
       launchAtStartup: false,
       closeToTray: true,
@@ -18,9 +19,13 @@ describe('settings theme', () => {
       showMenuBarIcon: true,
       defaultEditorMode: 'source',
       autosaveDelayMs: 500,
+      imageSaveQuality: 'webp-q95',
       dataRoot: { mode: 'default' },
       deepseekModel: 'deepseek-flash',
     })
+  })
+  it('defaults older settings to high-quality WebP', () => {
+    expect(normalizeSettings({ ...DEFAULT_APP_SETTINGS, imageSaveQuality: undefined } as unknown as typeof DEFAULT_APP_SETTINGS).imageSaveQuality).toBe('webp-q95')
   })
   it('uses one sticky-note color derived from the forest theme', () => {
     const vars = themeVariables({ ...DEFAULT_APP_SETTINGS, theme: 'forest' })

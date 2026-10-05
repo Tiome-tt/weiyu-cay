@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Icon } from '../../shared/Icon'
+import { ErrorNotification } from '../../shared/notifications'
 import { mergeTags, normalizeTag, TagValidationError } from './query'
 
 interface TagsEditorProps {
@@ -31,6 +32,7 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
 
   const add = (event?: FormEvent) => {
     event?.preventDefault()
+    if (!input.trim()) { setMessage(null); return }
     try {
       const normalized = normalizeTag(input)
       const next = mergeTags(tags, [normalized.display])
@@ -53,6 +55,7 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
       event.preventDefault()
       setInput('')
       setEditing(false)
+      setMessage(null)
       return
     }
     if (event.key !== 'Enter') return
@@ -69,6 +72,7 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
     const closeFromOutside = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
         setEditing(false)
+      setMessage(null)
         setInput('')
       }
     }
@@ -78,9 +82,9 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
 
   return (
     <div ref={rootRef} className="tags-editor" aria-label="笔记标签">
-      <div className="tags-editor__chips">
+      <div className="tags-editor__chips" role={tags.length ? 'list' : undefined} aria-label={tags.length ? '笔记标签' : undefined}>
         {tags.map((tag) => (
-          <span className="tag-chip" key={normalizeTag(tag).normalized}>
+          <span className="tag-chip" role="listitem" key={normalizeTag(tag).normalized}>
             #{tag}
             <button type="button" aria-label={`移除标签 ${tag}`} disabled={busy} onClick={() => void persist(tags.filter((item) => item !== tag))}>
               <Icon name="close" size={12} />
@@ -89,11 +93,12 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
         ))}
       </div>
       {editing && <form className="tags-editor__form" onSubmit={add}>
-        <input ref={inputRef} aria-label="添加标签" value={input} disabled={busy} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} placeholder="输入标签" />
-        <button type="submit" aria-label="确认添加标签" disabled={busy}>✓</button>
+        <input ref={inputRef} aria-label="添加标签" value={input} disabled={busy} onChange={(event) => { setInput(event.target.value); setMessage(null) }} onKeyDown={handleKeyDown} placeholder="输入标签" />
+        <button type="submit" aria-label="确认添加标签" disabled={busy || !input.trim()}>✓</button>
       </form>}
-      <button className="tags-editor__add" type="button" aria-label="添加标签" disabled={busy} onClick={() => setEditing(true)}><Icon name="plus" size={14} /></button>
-      {message && <span className="tags-editor__message" role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</span>}
+      <button className="tags-editor__add" type="button" aria-label="添加标签" disabled={busy} onClick={() => setEditing(true)}><Icon name="plus" size={14} /><span>添加标签</span></button>
+      <ErrorNotification error={message?.kind === 'error' ? message.text : null} />
+      {message?.kind === 'status' && <span className="tags-editor__message" role="status">{message.text}</span>}
     </div>
   )
 }

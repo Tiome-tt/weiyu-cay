@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import userEvent from '@testing-library/user-event'
@@ -15,6 +16,24 @@ describe('AiSummaryWidget', () => {
 
   beforeEach(() => {
     requestSummary.mockReset()
+  })
+
+  it('keeps technical errors out of cache and generation messages', async () => {
+    const cause = new Error('TypeError at private/local/path')
+    const ai = {
+      getCredentialStatus: vi.fn().mockResolvedValue({ configured: true, storage: 'encrypted-file' }),
+      getCachedSummary: vi.fn().mockRejectedValue(cause),
+      summarize: vi.fn().mockRejectedValue(cause),
+      saveDeepSeekApiKey: vi.fn(), clearDeepSeekApiKey: vi.fn(),
+    }
+    render(<AiSummaryWidget noteId="error-note" title="笔记" markdown="正文" ai={ai} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '打开 AI 总结' }))
+    expect(await screen.findByText('无法读取已保存的总结，请关闭面板后重试。')).toBeVisible()
+    expect(screen.queryByText(/TypeError/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '生成总结' }))
+    expect(await screen.findByText('总结生成失败，请检查 API 设置或网络连接。')).toBeVisible()
+    expect(screen.queryByText(/TypeError/)).not.toBeInTheDocument()
   })
 
   it('allows selecting summary text while application chrome stays non-selectable', () => {

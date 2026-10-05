@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ErrorNotification } from '../../shared/notifications'
 
 export type CloseBehaviorChoice = 'hide' | 'exit'
 
@@ -65,7 +66,7 @@ export function CloseBehaviorDialog({ busy, error, onCancel, onChoose, trayAvail
           <span>记住我的选择</span>
         </label>
         {!trayAvailable && <p className="close-behavior-dialog__error" role="alert">系统托盘暂不可用，窗口不会被隐藏。你可以取消或安全退出微屿。</p>}
-        {error && <p className="close-behavior-dialog__error" role="alert">{error}</p>}
+        <ErrorNotification error={error} />
         <footer>
           <button ref={cancelRef} className="close-behavior-dialog__quiet" type="button" disabled={busy} onClick={onCancel}>取消</button>
           <button ref={exitRef} type="button" disabled={busy} onClick={() => onChoose('exit', remember)}>退出微屿</button>

@@ -40,6 +40,22 @@ fn night_theme_round_trips_without_changing_existing_defaults() {
 }
 
 #[test]
+fn image_quality_defaults_for_older_settings_and_round_trips() {
+    let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+    value.as_object_mut().unwrap().remove("imageSaveQuality");
+    let mut loaded: AppSettings = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap()["imageSaveQuality"],
+        "webp-q95"
+    );
+    loaded.image_save_quality = simple_notes_lib::commands::settings::ImageSaveQuality::Original;
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap()["imageSaveQuality"],
+        "original"
+    );
+}
+
+#[test]
 fn sticky_settings_expose_only_shared_appearance_fields() {
     let full = AppSettings::default();
     let sticky = StickySettings::from(&full);
@@ -56,6 +72,7 @@ fn sticky_settings_expose_only_shared_appearance_fields() {
             "bodyFont",
             "codeFont",
             "fontSize",
+            "imageSaveQuality",
             "lineHeight",
             "stickyColorMode",
             "theme",
@@ -761,6 +778,7 @@ fn storage_move_rejects_collision_and_symlink_source_entries() {
         SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
     let collision = canonical_tempdir_path(&parent).join("exists");
     fs::create_dir(&collision).unwrap();
+    fs::write(collision.join("user-file"), b"do not overwrite").unwrap();
     assert!(service.move_storage_root(&collision).is_err());
 
     #[cfg(unix)]
@@ -1525,36 +1543,17 @@ fn restart_opens_the_verified_custom_root_with_complete_bytes() {
     let relocation_path = reopened.root().join(".simple-notes-storage-move.json");
     let relocation: Value = serde_json::from_slice(&fs::read(&relocation_path).unwrap()).unwrap();
     assert_eq!(relocation["phase"], "awaiting_restart");
+    drop(service);
     finalize_reopened_relocation(&reopened).unwrap();
     let relocation: Value = serde_json::from_slice(&fs::read(relocation_path).unwrap()).unwrap();
-    assert_eq!(relocation["phase"], "ready_for_cleanup");
+    assert_eq!(relocation["phase"], "cleaned");
     let info = SettingsService::new(reopened, MemoryStore::default(), FakeSystem::default())
         .get_storage_info()
         .unwrap();
-    let cleanup = info
-        .previous_storage_cleanup
-        .expect("verified reopen should expose exact cleanup candidates");
-    assert_eq!(
-        PathBuf::from(cleanup.root).canonicalize().unwrap(),
-        canonical_tempdir_path(&source).canonicalize().unwrap()
-    );
-    assert!(cleanup
-        .candidates
-        .iter()
-        .any(|candidate| candidate.relative_path == "notes" && candidate.kind == "notes"));
-    assert!(cleanup
-        .candidates
-        .iter()
-        .any(|candidate| candidate.relative_path == "index.sqlite"
-            && candidate.kind == "index-database"));
-    assert!(!cleanup
-        .candidates
-        .iter()
-        .any(|candidate| candidate.relative_path == "settings.json"));
-    assert!(!cleanup
-        .candidates
-        .iter()
-        .any(|candidate| candidate.relative_path == "unknown-durable.bin"));
+    assert!(info.previous_storage_cleanup.is_none());
+    assert!(!source.path().join("notes").exists());
+    assert!(!source.path().join("index.sqlite").exists());
+    assert!(source.path().join("unknown-durable.bin").exists());
 }
 
 #[test]
@@ -1648,4 +1647,87 @@ fn configured_custom_root_rejects_relative_and_link_paths() {
         };
         assert!(open_configured_storage(canonical_tempdir_path(&default_root), &settings).is_err());
     }
+}
+
+#[test]
+fn relocation_accepts_an_empty_selected_directory_and_preserves_changed_source() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
+    fs::write(paths.notes().join("keep.bin"), b"before").unwrap();
+    let destination = canonical_tempdir_path(&parent).join("selected-empty");
+    fs::create_dir(&destination).unwrap();
+    let service =
+        SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
+    service.move_storage_root(&destination).unwrap();
+    drop(service);
+    fs::write(paths.notes().join("keep.bin"), b"changed after copy").unwrap();
+    let reopened = StoragePaths::open(&destination).unwrap();
+    finalize_reopened_relocation(&reopened).unwrap();
+    assert!(SettingsService::new(
+        reopened.clone(),
+        MemoryStore::default(),
+        FakeSystem::default()
+    )
+    .get_storage_info()
+    .unwrap()
+    .previous_storage_cleanup
+    .is_some());
+    assert_eq!(
+        fs::read(paths.notes().join("keep.bin")).unwrap(),
+        b"changed after copy"
+    );
+    assert_eq!(
+        fs::read(reopened.notes().join("keep.bin")).unwrap(),
+        b"before"
+    );
+}
+
+#[test]
+fn successful_reopen_removes_an_empty_previous_custom_root() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let previous = canonical_tempdir_path(&source);
+    let paths = StoragePaths::open(&previous).unwrap();
+    fs::write(paths.notes().join("durable.bin"), b"saved").unwrap();
+    let destination = canonical_tempdir_path(&parent).join("moved");
+    let service = SettingsService::new(paths, MemoryStore::default(), FakeSystem::default());
+    service.move_storage_root(&destination).unwrap();
+    drop(service);
+    let reopened = StoragePaths::open(&destination).unwrap();
+    finalize_reopened_relocation(&reopened).unwrap();
+    assert!(!previous.exists());
+    assert_eq!(
+        fs::read(reopened.notes().join("durable.bin")).unwrap(),
+        b"saved"
+    );
+    finalize_reopened_relocation(&reopened).unwrap();
+}
+
+#[test]
+fn completed_cleanup_metadata_failure_does_not_block_the_verified_library() {
+    let source = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(canonical_tempdir_path(&source)).unwrap();
+    fs::write(paths.notes().join("retained.bin"), b"saved").unwrap();
+    let destination = canonical_tempdir_path(&parent).join("verified");
+    let service =
+        SettingsService::new(paths.clone(), MemoryStore::default(), FakeSystem::default());
+    service.move_storage_root(&destination).unwrap();
+    drop(service);
+    let reopened = StoragePaths::open(&destination).unwrap();
+    let marker_path = destination.join(".simple-notes-storage-move.json");
+    let mut marker: Value = serde_json::from_slice(&fs::read(&marker_path).unwrap()).unwrap();
+    marker["phase"] = Value::String("cleaned".to_owned());
+    marker["source"] = Value::String("..".to_owned());
+    fs::write(marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
+    finalize_reopened_relocation(&reopened).unwrap();
+    assert_eq!(
+        fs::read(paths.notes().join("retained.bin")).unwrap(),
+        b"saved"
+    );
+    assert_eq!(
+        fs::read(reopened.notes().join("retained.bin")).unwrap(),
+        b"saved"
+    );
 }

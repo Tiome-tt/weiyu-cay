@@ -1,3 +1,5 @@
+import { ErrorNotification } from './notifications'
+
 export type StatusNoticeState =
   | { status: 'idle' }
   | { status: 'status' | 'success'; message: string }
@@ -11,14 +13,11 @@ interface StatusNoticeProps {
 export function StatusNotice({ state, className }: StatusNoticeProps) {
   if (state.status === 'idle') return null
   if (state.status === 'error') {
+    if (!state.retry) return <ErrorNotification error={state.message} />
     return (
-      <span className={className} role="alert">
-        <span>{state.message}</span>
-        {state.retry && (
-          <button type="button" aria-label={state.retryLabel ?? '重试保存'} disabled={state.busy} onClick={state.retry}>
-            重试
-          </button>
-        )}
+      <span className={className}>
+        <ErrorNotification error={state.message} />
+        <button type="button" aria-label={state.retryLabel ?? '重试保存'} disabled={state.busy} onClick={state.retry}>重试</button>
       </span>
     )
   }

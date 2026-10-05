@@ -3,10 +3,11 @@ import {Compartment,EditorState} from '@codemirror/state'
 import {EditorView,keymap} from '@codemirror/view'
 import {defaultKeymap,history,historyKeymap} from '@codemirror/commands'
 export interface PlainTextEditorHandle { commitComposition():Promise<void>; focus():void }
-export const PlainTextEditor=forwardRef<PlainTextEditorHandle,{value:string;onChange(value:string):void;editable?:boolean}>(function PlainTextEditor({value,onChange,editable=true},ref){
+export const PlainTextEditor=forwardRef<PlainTextEditorHandle,{value:string;onChange(value:string):void;onSelectionChange?(text:string):void;editable?:boolean}>(function PlainTextEditor({value,onChange,onSelectionChange,editable=true},ref){
  const host=useRef<HTMLDivElement>(null)
  const view=useRef<EditorView|null>(null)
  const notify=useRef(onChange);notify.current=onChange
+ const selection=useRef(onSelectionChange);selection.current=onSelectionChange
  const initial=useRef(value)
  const readonly=useRef(new Compartment())
  useEffect(()=>{
@@ -14,7 +15,7 @@ export const PlainTextEditor=forwardRef<PlainTextEditorHandle,{value:string;onCh
      history(),keymap.of([...defaultKeymap,...historyKeymap]),EditorView.lineWrapping,
      EditorView.contentAttributes.of({'aria-label':'纯文本正文',role:'textbox','aria-multiline':'true'}),
      readonly.current.of([EditorState.readOnly.of(!editable),EditorView.editable.of(editable)]),
-     EditorView.updateListener.of(update=>{if(update.docChanged)notify.current(update.state.doc.toString())}),
+     EditorView.updateListener.of(update=>{if(update.docChanged)notify.current(update.state.doc.toString());if(update.docChanged||update.selectionSet)selection.current?.(update.state.selection.ranges.map(range=>update.state.doc.sliceString(range.from,range.to)).join("\n"))}),
      EditorView.theme({'&':{height:'100%',fontFamily:'var(--body-font)',fontSize:'var(--note-font-size)',backgroundColor:'var(--color-surface)',color:'var(--color-text)'},'.cm-content':{padding:'24px',minHeight:'100%'},'.cm-scroller':{overflow:'auto',fontFamily:'inherit'},'&.cm-focused':{outline:'none'}}),
    ]})})
    view.current=editor

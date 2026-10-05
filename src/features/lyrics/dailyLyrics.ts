@@ -5,9 +5,14 @@ export interface DailyLyricEntry {
 }
 
 export const MAX_DAILY_LYRIC_LENGTH = 32
+export const MAX_DAILY_LYRIC_DISPLAY_LENGTH = 48
+
+export function dailyLyricDisplayText(entry: DailyLyricEntry): string {
+  return `“${entry.text}” —— ${entry.artist}《${entry.title}》`
+}
 
 function usableDailyLyrics(entries: readonly DailyLyricEntry[]): readonly DailyLyricEntry[] {
-  return entries.filter((entry) => entry.text.length <= MAX_DAILY_LYRIC_LENGTH)
+  return entries.filter((entry) => entry.text.length <= MAX_DAILY_LYRIC_LENGTH && dailyLyricDisplayText(entry).length <= MAX_DAILY_LYRIC_DISPLAY_LENGTH)
 }
 
 const CURATED_DAILY_LYRIC_LIBRARY: readonly DailyLyricEntry[] = [
@@ -40,12 +45,14 @@ export function localDateKey(date: Date = new Date()): string {
   return year + '-' + month + '-' + day
 }
 
-export function dailyLyricForDate(date: Date | string = new Date()): DailyLyricEntry {
+export function dailyLyricForDate(date: Date | string = new Date(), displayBudget = MAX_DAILY_LYRIC_DISPLAY_LENGTH): DailyLyricEntry {
   const key = typeof date === 'string' ? date : localDateKey(date)
   let hash = 2166136261
   for (const character of key) {
     hash ^= character.charCodeAt(0)
     hash = Math.imul(hash, 16777619)
   }
-  return DAILY_LYRIC_LIBRARY[(hash >>> 0) % DAILY_LYRIC_LIBRARY.length]
+  const fitting = DAILY_LYRIC_LIBRARY.filter((entry) => dailyLyricDisplayText(entry).length <= displayBudget)
+  const library = fitting.length > 0 ? fitting : CURATED_DAILY_LYRIC_LIBRARY
+  return library[(hash >>> 0) % library.length]
 }

@@ -23,6 +23,37 @@ function deferred<T>() {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('TemporaryInbox', () => {
+  it('closes a capture on a second click without an active card highlight or AI entry', async () => {
+    const capture = twoCaptures()[0]
+    const user = userEvent.setup()
+    render(<TemporaryInbox temporary={fakeTemporaryPort([capture])} folders={folderRows} />)
+    const trigger = await screen.findByRole('button', { name: /发布前检查/ })
+    await user.click(trigger)
+    expect(await screen.findByRole('textbox', { name: 'Markdown source' })).toBeVisible()
+    expect(trigger.closest('li')).toHaveClass('is-active')
+    expect(document.querySelector('.ai-summary-widget')).toBeNull()
+    await user.click(trigger)
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Markdown source' })).not.toBeInTheDocument())
+    expect(trigger).not.toHaveAttribute('aria-current')
+    await user.click(trigger)
+    expect(await screen.findByRole('textbox', { name: 'Markdown source' })).toHaveValue('发布前检查')
+  })
+
+  it('retains unsaved capture text when a second-click close cannot save', async () => {
+    const capture = twoCaptures()[0]
+    const user = userEvent.setup()
+    const save = vi.fn().mockRejectedValue(new Error('disk full'))
+    render(<TemporaryInbox temporary={{ ...fakeTemporaryPort([capture]), save }} folders={folderRows} />)
+    const trigger = await screen.findByRole('button', { name: /发布前检查/ })
+    await user.click(trigger)
+    const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))!
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: '未保存内容' } }))
+    await user.click(trigger)
+    expect(await screen.findByText('当前临时捕捉无法保存。请重试保存后再切换。')).toBeVisible()
+    expect(editor.state.doc.toString()).toBe('未保存内容')
+    expect(trigger).toHaveAttribute('aria-current', 'true')
+  })
+
   it('opens a temporary capture in the document editor', async () => {
     const capture = twoCaptures()[0]
     const temporary = fakeTemporaryPort([capture])

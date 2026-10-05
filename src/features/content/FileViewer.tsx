@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
 import type { FilePort } from '../../domain/ports'
@@ -110,7 +111,7 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
     {officeLabel&&<p className={`file-viewer__hint${file.size===0?' file-viewer__hint--warning':''}`}>{file.size===0?`文件内容为空，无法直接用系统应用打开；可以先转换为可编辑的${officeLabel}笔记。`:`这是一个完整的 ${officeLabel} 文件。微屿保留原始文件内容，打开或编辑请使用系统应用；修改后可重新导入以更新笔记。`}</p>}
     {file.size === 0 && !officeLabel && <p className="file-viewer__hint file-viewer__hint--warning">文件内容为空，转换后会创建一个空白的可编辑文档。</p>}
     {canOpen&&!officeLabel&&<p className="file-viewer__hint">打开的是独立副本，外部修改不会自动同步；修改后可重新导入。</p>}
-    {error&&<p role="alert">{error}<button type="button" onClick={()=>setAttempt(n=>n+1)}>重试</button></p>}
+    {error&&<><ErrorNotification error={error} /><button type="button" onClick={()=>setAttempt(n=>n+1)}>重试加载文件</button></>}
     {imageUrl&&<img className="file-viewer__image" src={imageUrl} alt={file.originalName}/>}
     {data?.mediaType==='application/pdf'&&<Suspense fallback={<p role="status">正在打开 PDF…</p>}><PdfViewer bytes={data.bytes} cacheKey={file ? previewCacheKey(document, file) : undefined} onDocumentError={()=>{
       if (!files?.readFileBytes || forceStructuredRead || !file) return

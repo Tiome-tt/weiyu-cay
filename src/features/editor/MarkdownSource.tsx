@@ -28,6 +28,7 @@ const pasteTokenAnnotation = Annotation.define<symbol>()
 
 interface MarkdownSourceProps {
   markdown: string
+  onSelectionChange?(text: string): void
   onChange(markdown: string): void
   noteId?: NoteId
   assets?: AssetPort
@@ -96,6 +97,7 @@ function editorPosAtCoords(view: EditorView, coords: { x: number; y: number }) {
 export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourceProps>(function MarkdownSource({
   markdown,
   onChange,
+  onSelectionChange,
   noteId,
   assets,
   assetReader,
@@ -113,6 +115,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 }: MarkdownSourceProps, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const selectionRef = useRef(onSelectionChange)
+  selectionRef.current = onSelectionChange
   const onChangeRef = useRef(onChange)
   const onScrollRef = useRef(onScroll)
   const onScrollElementRef = useRef(onScrollElement)
@@ -138,6 +142,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const contextMenuAnchorRef = useRef<ContextMenuAnchor | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [tableDialog, setTableDialog] = useState<TableDialogState | null>(null)
+  const [hoverLine,setHoverLine]=useState({number:1,from:0,top:12,left:4,visible:false})
   const [tableRows, setTableRows] = useState(3)
   const [tableColumns, setTableColumns] = useState(3)
   const [surfaceControls, setSurfaceControls] = useState({
@@ -428,6 +433,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           return transaction
         }),
         EditorView.updateListener.of((update) => {
+          if (update.selectionSet || update.docChanged || update.focusChanged) selectionRef.current?.(update.state.selection.ranges.map(range => update.state.doc.sliceString(range.from, range.to)).join("\n"))
           if (update.docChanged) {
             const anchor = contextMenuAnchorRef.current
             if (anchor !== null) anchor.position = update.changes.mapPos(anchor.position, 1)
@@ -611,7 +617,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     const view = viewRef.current
     if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
     contextViewRef.current = view
-    const position = view.state.selection.main.head
+    const position = hoverLine.visible ? hoverLine.from : view.state.selection.main.head
+    if(hoverLine.visible)view.dispatch({selection:{anchor:position}})
     const anchorBounds = editorCoordsAtPos(view, position)
     const handleBounds = handle.getBoundingClientRect()
     if (anchorBounds === null) {
@@ -670,14 +677,23 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   }, [markdown])
 
   return (
-    <div className="markdown-source" ref={hostRef}>
+    <div className="markdown-source" ref={hostRef} onMouseMove={event=>{
+      const view=viewRef.current
+      if(!view || event.target instanceof Element && event.target.closest('.markdown-block-handle,.markdown-context-menu'))return
+      let position: number | null
+      try { position=view.posAtCoords({x:event.clientX,y:event.clientY}) } catch { return }
+      if(position===null)return
+      const line=view.state.doc.lineAt(position),coords=view.coordsAtPos(line.from),bounds=event.currentTarget.getBoundingClientRect()
+      if(coords)setHoverLine(previous=>previous.number===line.number&&previous.visible?previous:{number:line.number,from:line.from,top:Math.max(0,coords.top-bounds.top),left:Math.max(4,coords.left-bounds.left-60),visible:true})
+    }} onMouseLeave={()=>setHoverLine(previous=>({...previous,visible:false}))}>
+      <span aria-hidden="true" className={`markdown-line-number${hoverLine.visible?' is-visible':''}`} style={{top:hoverLine.top,left:hoverLine.left}}>{hoverLine.number}</span>
       {!readOnly && showBlockHandle && !surfaceControls.blockProtected && (
         <button
           type="button"
           className="markdown-block-handle"
           aria-label="添加内容块"
           title="添加内容块"
-          style={{ top: surfaceControls.blockTop }}
+          style={{ top: hoverLine.visible ? hoverLine.top : surfaceControls.blockTop, ...(hoverLine.visible ? {left:hoverLine.left+28,transform:'none'} : {}) }}
           onPointerDown={(event) => event.preventDefault()}
           onClick={(event) => openInsertionMenu(event.currentTarget)}
         >

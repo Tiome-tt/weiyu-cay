@@ -174,6 +174,17 @@ fn spawn_worker(
 }
 
 #[tauri::command]
+pub fn set_capture_shortcut_recording(
+    window: tauri::WebviewWindow,
+    state: State<'_, CaptureShortcutState>,
+    recording: bool,
+) -> Result<(), ShortcutError> {
+    authorize_main(window.label())
+        .map_err(|_| ShortcutError::validation("shortcut management requires the main window"))?;
+    state.service.set_recording(recording)
+}
+
+#[tauri::command]
 pub fn get_capture_shortcut(
     window: tauri::WebviewWindow,
     state: State<'_, CaptureShortcutState>,

@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import type { NewNoteFormat } from '../../domain/content'
 import { useEffect, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
@@ -140,7 +141,7 @@ export function CreateNotePopover({
           />
         </label>
         {busy && <p role="status">正在创建笔记…</p>}
-        {status === 'error' && <p role="alert">无法新建笔记，请重试。</p>}
+        <ErrorNotification error={status === 'error' ? '无法新建笔记，请重试。' : null} />
         <div className="create-note-popover__actions">
           <button type="button" onClick={close}>取消</button>
           <button

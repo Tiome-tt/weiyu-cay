@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { AssetPort, ImageReadPort, SystemPort, TemporaryPort, TemporaryWindowPort } from '../../domain/ports'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
@@ -138,6 +139,14 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       }
       if (request !== documentRequestRef.current || busyRef.current !== null) return
       setError(null)
+      // Closing uses the same save barrier as switching, including pending image writes.
+      if (activeIdRef.current === noteId) {
+        activeIdRef.current = null
+        setActiveId(null)
+        setDocument(null)
+        setDocumentState('ready')
+        return
+      }
       activeIdRef.current = noteId
       setActiveId(noteId)
       setDocument(listedSnapshot)
@@ -295,9 +304,9 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void deleteSelected()}>{busy === 'delete' ? '正在删除…' : '删除所选'}</button>
         {deleteOperationId !== null && <button type="button" disabled={busy !== null} onClick={() => void undoDelete()}>{busy === 'undo' ? '正在撤销…' : '撤销删除'}</button>}
       </div>
-      {error && <p role="alert" className="library-status library-status--error">{error}</p>}
+      <ErrorNotification error={error} />
       {state === 'loading' && <p role="status" className="library-status">正在加载临时捕捉…</p>}
-      {state === 'error' && <p role="alert" className="library-status library-status--error">无法加载临时捕捉。</p>}
+      <ErrorNotification error={state === 'error' ? '无法加载临时捕捉。' : null} />
       {state === 'ready' && visibleItems.length === 0 && <p className="library-status">临时便笺为空。</p>}
       {state === 'ready' && visibleItems.length > 0 && (
         <ul className="temporary-inbox__list" aria-label="临时捕捉列表">
@@ -334,7 +343,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       )}
       <div className="temporary-inbox__editor" aria-label="临时捕捉编辑器">
         {documentState === 'loading' && <p className="content-placeholder">正在打开临时捕捉…</p>}
-        {documentState === 'error' && <p role="alert" className="content-placeholder content-placeholder--error">无法打开临时捕捉。</p>}
+        <ErrorNotification error={documentState === 'error' ? '无法打开临时捕捉。' : null} />
         {document && <EditorPane ref={editorRef} key={`${document.id}:${document.revision}`} document={document} notes={temporaryNotes} assets={assets} assetReader={assetReader} external={external} autosaveDelayMs={autosaveDelayMs} onDocumentAdopt={(authoritative) => {
           setDocument(authoritative)
           setItems((current) => current.map((item) => item.id === authoritative.id ? authoritative : item))

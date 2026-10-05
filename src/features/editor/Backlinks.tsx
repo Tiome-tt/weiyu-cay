@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useEffect, useState } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { LinkPort } from '../../domain/ports'
@@ -48,7 +49,7 @@ export function Backlinks({ noteId, links, onNavigate, refreshToken = 0 }: Backl
         引用此笔记{count === null ? '' : ` (${count})`}
       </button>
       {expanded && state.status === 'loading' && <p role="status">正在加载引用…</p>}
-      {expanded && state.status === 'error' && <p role="alert">无法加载引用。</p>}
+      <ErrorNotification error={expanded && state.status === "error" ? "无法加载引用。" : null} />
       {expanded && state.status === 'ready' && state.items.length === 0 && <p>暂无引用</p>}
       {expanded && state.status === 'ready' && state.items.length > 0 && (
         <ul className="backlinks__list">

@@ -3,6 +3,7 @@ import {act,cleanup,render,screen} from '@testing-library/react'
 import {afterEach,expect,it,vi} from 'vitest'
 import {createRef} from 'react'
 import {note,fakeNotePort} from '../../test/fakes'
+import type {NoteContent} from '../../domain/content'
 import type {EditorPaneHandle} from '../editor/EditorPane'
 import {TypedEditorPane} from './TypedEditorPane'
 const exportMock = vi.hoisted(() => vi.fn(async () => new Uint8Array([80,75])))
@@ -54,4 +55,15 @@ it('does not reload the editor while PDF export is waiting for the file save', a
  await act(async()=>{await exportPromise})
  expect(notes.loadNote).not.toHaveBeenCalled()
  expect(adopted).not.toHaveBeenCalled()
+})
+
+it.each<[string, NoteContent, string]>([
+ ['text',{type:'text',text:'微屿\n计划'},'2 行 · 4 字'],
+ ['document',{type:'document',document:{schemaVersion:1,root:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'微屿'}]}]}}},'1 行 · 2 字'],
+ ['file',{type:'file',file:{storageName:'managed.bin',originalName:'文件名不计字数.bin',mediaType:'application/octet-stream',size:4,sha256:'0'.repeat(64)}},'— 行 · — 字'],
+])('shows bottom counters for %s entries',(_kind,content,expected)=>{
+ render(<TypedEditorPane document={{...note(''),content}} notes={fakeNotePort()}/>)
+ expect(screen.getByLabelText('笔记状态栏')).toHaveTextContent(expected)
+ expect(screen.getByLabelText('笔记状态栏').querySelector('time')).toHaveAttribute('dateTime')
+ expect(screen.getByRole('status',{name:'保存状态'})).toHaveTextContent('已保存')
 })

@@ -923,3 +923,32 @@ fn crc32(bytes: &[u8]) -> u32 {
     }
     !crc
 }
+
+#[test]
+fn saves_smaller_png_without_changing_decoded_pixels() {
+    use image::{
+        codecs::png::{CompressionType, FilterType, PngEncoder},
+        ImageEncoder,
+    };
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    let mut original = Vec::new();
+    let pixels = vec![127; 256 * 256 * 4];
+    PngEncoder::new_with_quality(&mut original, CompressionType::Fast, FilterType::NoFilter)
+        .write_image(&pixels, 256, 256, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    let saved = save_image_to(
+        &store.paths,
+        input(FORMAL_ID, "image/png", original.clone()),
+    )
+    .unwrap();
+    let loaded = read_image_asset_from(&store.paths, id(FORMAL_ID), &saved.relative_path).unwrap();
+    assert!(loaded.bytes.len() < original.len());
+    assert_eq!(
+        image::load_from_memory(&loaded.bytes)
+            .unwrap()
+            .to_rgba8()
+            .into_raw(),
+        pixels
+    );
+}

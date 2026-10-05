@@ -17,6 +17,7 @@
 }
 
 .main-window .window-titlebar {
+  position: relative;
   display: flex;
   align-items: stretch;
   min-width: 0;
@@ -26,6 +27,8 @@
 }
 
 .main-window .window-drag-region {
+  position: absolute;
+  inset: 0 132px;
   flex: 1;
   min-width: 24px;
   display: flex;
@@ -36,9 +39,12 @@
 }
 .main-window .daily-lyric {
   display: inline-flex;
-  max-width: min(68%, 680px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  justify-content: center;
   align-items: baseline;
-  gap: 8px;
+  gap: 0;
   min-width: 0;
   padding: 2px 12px;
   color: var(--color-muted);
@@ -60,15 +66,20 @@
   flex: 0 0 auto;
   overflow: hidden;
   color: var(--color-muted);
-  font-size: calc(.88 * var(--app-font-size));
+  font-size: inherit;
   font-style: normal;
+  margin-left: .5em;
   text-overflow: ellipsis;
 }
 
 .main-window .window-controls {
+  position: relative;
+  margin-left: auto;
   display: flex;
   align-items: stretch;
 }
+
+.main-window .window-chrome--macos .window-controls { margin-left: 0; }
 
 .main-window .window-control {
   display: grid;
@@ -507,6 +518,10 @@
   transition: background-color var(--motion-fast) ease;
 }
 
+.main-window .split-pane__divider { flex: 0 0 1px; width: 1px; background: transparent; }
+.main-window .split-pane__divider::before { position: absolute; inset: 0 -5px; content: ''; }
+.main-window .split-pane__divider::after { inset: 0; background: var(--color-border-soft); }
+
 .main-window .editor-split-divider::after { background: var(--color-border-soft); }
 .main-window .split-pane__divider:hover::after,
 .main-window .split-pane__divider:focus-visible::after,
@@ -520,7 +535,7 @@
   position: relative;
   height: 100%;
   border: 0;
-  border-right: 1px solid var(--color-border-soft);
+  border-right: 0;
 }
 
 .main-window .library-pane--folders { background: var(--color-panel-warm); }
@@ -2355,3 +2370,44 @@
   user-select: text;
   -webkit-user-select: text;
 }
+/* A single titlebar leaves the full height below it for notes. */
+.main-window .app-workspace { grid-template-rows: minmax(0, 1fr); }
+.main-window .window-titlebar__brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; font-size: .78em; }
+.main-window .window-titlebar__actions { display: flex; align-items: center; margin-left: auto; }
+.main-window .window-titlebar__actions + .window-controls { margin-left: 0; }
+.main-window .window-titlebar .global-toolbar--compact { display: flex; padding: 0 5px; gap: 0; height: 100%; background: transparent; border: 0; }
+.main-window .window-titlebar .global-toolbar__icon-button { width: 30px; height: 26px; }
+.main-window .window-titlebar .global-toolbar__save { font-size: .65em; }
+.main-window .window-drag-region { inset: 0 200px; }
+.main-window .window-chrome--macos .window-titlebar__actions { margin-left: auto; }
+.main-window .library-rail__expand { order: -1; margin-top: 0; margin-bottom: 8px; }
+.main-window .library-sidebar-search { padding: 0 8px 12px; }
+.main-window .library-sidebar-search input { padding: 6px 9px; font-size: .76em; }
+.main-window .library-folder-pane-stack { display: flex; flex-direction: column; }
+.main-window .library-folder-pane-stack > .folder-tree { flex: 1; min-height: 0; }
+.main-window .library-search-overlay { position: fixed; z-index: 45; width: min(560px, calc(100vw - 24px)); }
+.main-window .library-search-overlay .search-results { position: static; width: 100%; box-sizing: border-box; transform: none; }
+
+.main-window .daily-lyric { font-size: clamp(12px, calc(.9 * var(--app-font-size)), 16px); }
+
+/* Title and tags form one compact, discoverable heading across note types. */
+.main-window .editor-document-heading { padding-top: 20px; padding-bottom: 12px; }
+.main-window .editor-document-heading__meta { margin-top: 8px; }
+.main-window .tags-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.main-window .tags-editor__chips { display: flex; flex-wrap: wrap; flex: 0 1 auto; max-width: none; gap: 5px; overflow: visible; }
+.main-window .tags-editor__chips:empty { display: none; }
+.main-window .tags-editor .tags-editor__add { display: inline-flex; align-items: center; gap: 4px; width: auto; min-height: 25px; height: 25px; padding: 3px 8px; opacity: 1; color: var(--color-muted); background: transparent; border: 1px dashed var(--color-border); border-radius: 6px; font: inherit; font-size: calc(.72 * var(--app-font-size)); cursor: pointer; }
+.main-window .tags-editor .tags-editor__add:hover { color: var(--color-accent-strong); background: var(--color-accent-soft); }
+.main-window .tags-editor__form { display: inline-flex; align-items: center; }
+.main-window .tags-editor__form input { width: 120px; height: 27px; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-panel-warm); font-size: calc(.76 * var(--app-font-size)); }
+.main-window .tags-editor__form button:disabled { opacity: .4; cursor: default; }
+.main-window .tags-editor__message { position: static; padding: 0; max-width: 260px; background: transparent; box-shadow: none; }
+.main-window .library-sidebar-search .library-search__field { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 8px; color: var(--color-muted); background: color-mix(in srgb, var(--color-surface) 45%, var(--color-panel)); border: 1px solid var(--color-border-soft); border-radius: 7px; }
+.main-window .library-sidebar-search .library-search__field:focus-within { border-color: var(--color-accent-border); }
+.main-window .library-sidebar-search .library-search__field svg { flex: 0 0 auto; }
+.main-window .library-sidebar-search .library-search__field input { flex: 1; width: 0; min-width: 0; height: 20px; min-height: 0; padding: 2px 0; background: transparent; border: 0; border-radius: 0; font-size: calc(.72 * var(--app-font-size)); }
+.main-window .library-sidebar-search .library-search__field input:focus-visible { outline: none; box-shadow: none; }
+.main-window .library-search__field kbd { flex: 0 0 auto; color: var(--color-muted); font: .65em/1.2 var(--code-font); opacity: .8; }
+
+.main-window .library-sidebar-search .library-search__field { padding: 7px 8px; border-radius: 8px; background: color-mix(in srgb,var(--color-panel-warm) 75%,var(--color-surface)); }
+.main-window .library-search__field kbd { padding: 2px 3px; border: 1px solid var(--color-border-soft); border-radius: 4px; font-size: .62em; }

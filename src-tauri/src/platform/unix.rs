@@ -877,6 +877,20 @@ impl SafeDirectory {
         }
     }
 
+    pub(crate) fn remove_empty_child(&self, name: &str) -> Result<(), CommandError> {
+        let child = self.open_child(name, false)?;
+        if !child.entry_names()?.is_empty() {
+            return Err(CommandError::conflict("directory is not empty"));
+        }
+        child.ensure_path_identity()?;
+        unlinkat(&self.fd, name, AtFlags::REMOVEDIR).map_err(|error| {
+            CommandError::io(format!(
+                "could not remove empty contained directory: {error}"
+            ))
+        })?;
+        self.sync()
+    }
+
     pub fn remove_checked(&self, name: &str) -> Result<bool, CommandError> {
         if !self.regular_file_exists(name)? {
             return Ok(false);
@@ -1309,4 +1323,11 @@ mod tests {
             b"replacement"
         );
     }
+}
+
+pub fn available_storage_bytes(path: &Path) -> Result<u64, CommandError> {
+    let info = rustix::fs::statvfs(path).map_err(|error| {
+        CommandError::io(format!("could not inspect available disk space: {error}"))
+    })?;
+    Ok(info.f_bavail.saturating_mul(info.f_frsize))
 }

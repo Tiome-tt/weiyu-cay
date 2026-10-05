@@ -1,6 +1,6 @@
 import { Editor, type JSONContent } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { convertMarkdownHeadingAt, decreaseRichHeadingLevel, pasteTsvAtSelection, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, toggleYellowHighlight } from './extensions'
+import { pasteTsvAtSelection, richEditorExtensions, setRichFontAttribute, splitBlockAfterSelectedHighlight, toggleYellowHighlight } from './extensions'
 
 const editors: Editor[] = []
 function createEditor(content?: object) {
@@ -11,111 +11,25 @@ function createEditor(content?: object) {
 afterEach(() => editors.splice(0).forEach((editor) => editor.destroy()))
 
 describe('rich editor commands', () => {
-  it('converts a heading after a pointer selection without stealing the selection', () => {
-    const editor = createEditor({
-      type: 'doc',
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: '#### 待转换' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: '目标位置' }] },
-      ],
-    })
-    const firstParagraph = editor.state.doc.child(0)
-    const targetPosition = firstParagraph.nodeSize + 1
-    editor.commands.setTextSelection(targetPosition)
-    expect(convertMarkdownHeadingAt(editor, 0, { preserveSelection: true, scrollIntoView: false, focus: false })).toBe(true)
-    expect(editor.state.selection.$from.parent.textContent).toBe('目标位置')
-    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', content: [{ text: '待转换' }] })
+  it('formats instantly while preserving selectable marker text and tracks deletions',()=>{
+    const editor=createEditor()
+    const type=(text:string)=>{
+      const handled=editor.view.someProp('handleTextInput', fn=>fn(editor.view,editor.state.selection.from,editor.state.selection.to,text,()=>editor.state.tr.insertText(text)))
+      if(!handled)editor.commands.insertContent(text)
+    }
+    type('#');type('#');type(' ');type('章节')
+    expect(editor.getJSON().content?.[0]).toMatchObject({type:'heading',attrs:{level:2},content:[{text:'## 章节'}]})
+    editor.commands.setTextSelection({from:1,to:4})
+    editor.commands.deleteSelection()
+    expect(editor.getJSON().content?.[0]).toMatchObject({type:'paragraph',content:[{text:'章节'}]})
+    expect(editor.commands.undo()).toBe(true)
+
   })
-
-  it('does not append a paragraph when pointer conversion preserves the clicked selection', () => {
-    const editor = createEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '### 标题' }] }] })
-    editor.commands.setTextSelection(5)
-    expect(convertMarkdownHeadingAt(editor, 0, { preserveSelection: true, scrollIntoView: false, focus: false, insertTrailingParagraph: false })).toBe(true)
-    expect(editor.getJSON().content).toHaveLength(1)
-  })
-
-  it('lowers a heading when its leading Markdown marker is deleted', () => {
-    const editor = createEditor({
-      type: 'doc',
-      content: [{ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: '章节' }] }],
-    })
+  it('returns a heading to a paragraph on Backspace without deleting its text',()=>{
+    const editor=createEditor({type:'doc',content:[{type:'heading',attrs:{level:3,sourceMarker:true},content:[{type:'text',text:'### 章节'}]}]})
     editor.commands.setTextSelection(1)
-    expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('###')
-
-    expect(decreaseRichHeadingLevel(editor)).toBe(true)
-    expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('##')
-    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 2 } })
-
-    editor.commands.setTextSelection(1)
-    expect(decreaseRichHeadingLevel(editor)).toBe(true)
-    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 1 } })
-
-    editor.commands.setTextSelection(1)
-    expect(decreaseRichHeadingLevel(editor)).toBe(true)
-    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'paragraph' })
-  })
-  it('lowers a heading when Backspace starts in the rendered heading content', () => {
-    const editor = createEditor({
-      type: 'doc',
-      content: [{ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: '章节' }] }],
-    })
-    editor.commands.setTextSelection(1)
-    const heading = editor.view.dom.querySelector('.rich-document__heading-content')?.parentElement
-    if (!(heading instanceof HTMLElement)) throw new Error('heading NodeView not found')
-    const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
-    heading.dispatchEvent(event)
-
-    expect(event.defaultPrevented).toBe(true)
-    expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'heading', attrs: { level: 2 } })
-    expect(editor.view.dom.querySelector('.rich-document__heading-marker')?.textContent).toBe('##')
-  })
-  it('inserts a paragraph before a heading when Enter is pressed on its marker', () => {
-    const editor = createEditor({
-      type: 'doc',
-      content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: '高效微调算法（PEFT）' }] }],
-    })
-    editor.commands.setTextSelection(1)
-    const marker = editor.view.dom.querySelector('.rich-document__heading-marker')
-    if (!(marker instanceof HTMLElement)) throw new Error('heading marker not found')
-    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-    marker.dispatchEvent(event)
-
-    expect(event.defaultPrevented).toBe(true)
-    const blocks = editor.getJSON().content ?? []
-    expect(blocks[0]).toMatchObject({ type: 'paragraph' })
-    expect(blocks[1]).toMatchObject({
-      type: 'heading',
-      attrs: { level: 4 },
-      content: [{ type: 'text', text: '高效微调算法（PEFT）' }],
-    })
-  })
-  it('uses the native marker caret when the editor selection is stale inside the title', () => {
-    const editor = createEditor({
-      type: 'doc',
-      content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: 'Self-Attention' }] }],
-    })
-    document.body.append(editor.view.dom)
-    editor.commands.setTextSelection(5)
-    const heading = editor.view.dom.querySelector('[data-rich-heading]')
-    const marker = heading?.querySelector('.rich-document__heading-marker')
-    const content = heading?.querySelector('.rich-document__heading-content')
-    if (!(marker instanceof HTMLElement) || !(content instanceof HTMLElement) || !marker.firstChild) throw new Error('heading NodeView not found')
-    const range = document.createRange()
-    range.setStart(marker.firstChild, 0)
-    range.collapse(true)
-    window.getSelection()?.removeAllRanges()
-    window.getSelection()?.addRange(range)
-    expect(window.getSelection()?.anchorNode).toBe(marker.firstChild)
-    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-    content.dispatchEvent(event)
-
-    expect(event.defaultPrevented).toBe(true)
-    expect(editor.getJSON().content?.slice(0, 2)).toMatchObject([
-      { type: 'paragraph' },
-      { type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: 'Self-Attention' }] },
-    ])
-    window.getSelection()?.removeAllRanges()
-    editor.view.dom.remove()
+    editor.view.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true}))
+    expect(editor.getJSON().content?.[0]).toMatchObject({type:'paragraph',content:[{text:'章节'}]})
   })
   it('does not carry a selection highlight into the next paragraph', () => {
     const editor = createEditor({

@@ -133,6 +133,7 @@ pub fn run() {
             commands::temporary::show_temporary_window,
             commands::temporary::hide_temporary_window,
             commands::temporary::set_temporary_always_on_top,
+            commands::shortcuts::set_capture_shortcut_recording,
             commands::shortcuts::get_capture_shortcut,
             commands::shortcuts::rebind_capture_shortcut,
             commands::settings::load_settings,

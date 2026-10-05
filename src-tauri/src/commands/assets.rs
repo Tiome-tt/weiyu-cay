@@ -306,6 +306,12 @@ where
 {
     let validated = validate_image(&input.media_type, &input.bytes)?;
     let owner = NoteRepository::new(paths.clone()).load_locked(input.note_id, guard)?;
+    let optimized = if input.media_type == "image/png" {
+        super::image_optimization::optimize_png(&input.bytes)
+    } else {
+        None
+    };
+    let stored_bytes = optimized.as_deref().unwrap_or(&input.bytes);
     let collection = match owner.kind {
         NoteKind::Formal => "notes",
         NoteKind::Temporary => "temporary",
@@ -328,7 +334,7 @@ where
                 Err(inspect_error) => return Err(inspect_error),
             },
         };
-        write(&mut file, &input.bytes)?;
+        write(&mut file, stored_bytes)?;
         before_publish(&directory, &staging, &filename);
         match directory.publish_new(&staging, &filename, &file)? {
             NewFilePublishState::Published => {}

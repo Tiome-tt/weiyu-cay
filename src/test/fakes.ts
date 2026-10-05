@@ -75,6 +75,7 @@ export const fakeSettingsPort = (overrides: Partial<SettingsPort> = {}): Setting
   moveStorageRoot: vi.fn().mockResolvedValue(undefined),
   restartApplication: vi.fn().mockResolvedValue(undefined),
   onChanged: vi.fn().mockResolvedValue(() => undefined),
+  setShortcutRecording: vi.fn().mockResolvedValue(undefined),
   getShortcutStatus: vi.fn().mockResolvedValue({ current: DEFAULT_APP_SETTINGS.shortcut, registration: { state: 'active' }, acceptingTriggers: true, startupError: null }),
   ...overrides,
 })

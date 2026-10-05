@@ -25,7 +25,7 @@ describe('GlobalToolbar', () => {
     expect(within(toolbar).getByTestId('global-toolbar-brand')).toBeVisible()
     expect(within(toolbar).getByTestId('global-toolbar-search')).toBeVisible()
     expect(within(toolbar).getByTestId('global-toolbar-actions')).toBeVisible()
-    expect(screen.getByRole('searchbox', { name: '搜索笔记' })).toHaveAttribute('placeholder', '搜索标题、正文或 #标签')
+    expect(screen.getByRole('searchbox', { name: '搜索笔记' })).toHaveAttribute('placeholder', '搜索笔记')
     expect(screen.queryByRole('button', { name: '新建笔记' })).not.toBeInTheDocument()
     expect(screen.getByRole('status', { name: '保存状态' })).toHaveTextContent('已保存')
   })

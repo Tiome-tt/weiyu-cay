@@ -6,6 +6,7 @@ import type { Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../
 import type { AiPort, AiSummaryProgress, AppNavigationAction, AppNavigationPort, AppSettings, AssetPort, ExportDestinationPicker, ExportPort, ExportReport, FolderPort, ImageReadPort, LifecycleFailure, LifecycleParticipantPort, LifecycleRequest, LinkPort, MainCloseChoiceRequest, RecoveryPort, SearchPort, SettingsPort, StartupGuidePort, StartupRecoveryReport, StickySettings, StickySettingsPort, StorageInfo, SystemPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState, TrayActionFailure, TrashEntry, TrashFolderEntry, TrashPort, UpdatePort, WindowChromePort, WindowPreferenceMap } from '../../domain/ports'
 import type { LibraryNotePort } from '../../features/library/useLibrary'
 import { TauriClient } from './client'
+import { prepareImageForStorage } from './imageSaveQuality'
 
 class TauriNotePort implements LibraryNotePort {
   constructor(private readonly client: TauriClient) {}
@@ -258,9 +259,11 @@ class TauriStartupGuidePort implements StartupGuidePort {
 class TauriAssetPort implements AssetPort {
   constructor(private readonly client: TauriClient) {}
 
-  saveImage(input: Parameters<AssetPort['saveImage']>[0]) {
+  async saveImage(input: Parameters<AssetPort['saveImage']>[0]) {
+    const settings = await this.client.invoke<StickySettings>('load_sticky_settings')
+    const prepared = await prepareImageForStorage(input, settings.imageSaveQuality)
     return this.client.invoke<Awaited<ReturnType<AssetPort['saveImage']>>>('save_image', {
-      input: { ...input, bytes: Array.from(input.bytes) },
+      input: { ...prepared, bytes: Array.from(prepared.bytes) },
     })
   }
 
@@ -507,6 +510,11 @@ class TauriSettingsPort implements SettingsPort {
     return this.client.invoke<StorageInfo>('get_storage_info')
   }
 
+  async chooseStorageDirectory(): Promise<string | null> {
+    const selected = await open({directory:true,multiple:false,title:'选择数据目录'})
+    return typeof selected === 'string' ? selected : null
+  }
+
   moveStorageRoot(destination: string) {
     return this.client.invoke<void>('move_storage_root', { destination })
   }
@@ -517,6 +525,10 @@ class TauriSettingsPort implements SettingsPort {
 
   onChanged(handler: (settings: AppSettings) => void) {
     return getCurrentWebviewWindow().listen<AppSettings>('settings-updated', (event) => handler(event.payload))
+  }
+
+  setShortcutRecording(recording: boolean) {
+    return this.client.invoke<void>('set_capture_shortcut_recording', { recording })
   }
 
   getShortcutStatus() {

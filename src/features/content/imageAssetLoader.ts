@@ -77,11 +77,10 @@ async function readImagePaths(
 }
 
 async function flushBatch(reader: BatchImageReadPort, batch: PendingBatch, batchKey: string): Promise<void> {
-  const paths = [...batch.requests.keys()]
   const cache = readerCache(reader)
   try {
-    for (let index = 0; index < paths.length; index += MAX_IMAGE_BATCH_SIZE) {
-      const chunk = paths.slice(index, index + MAX_IMAGE_BATCH_SIZE)
+    while (batch.requests.size > 0) {
+      const chunk = [...batch.requests.keys()].slice(0, MAX_IMAGE_BATCH_SIZE)
       try {
         const loaded = await readImagePaths(reader, batch.noteId, chunk)
         const loadedByPath = new Map(loaded.map((image) => [image.relativePath, image]))
@@ -101,7 +100,8 @@ async function flushBatch(reader: BatchImageReadPort, batch: PendingBatch, batch
           for (const request of batch.requests.get(relativePath) ?? []) request.reject(error)
         }
       }
-      if (index + MAX_IMAGE_BATCH_SIZE < paths.length) await yieldToBrowser()
+      for (const path of chunk) batch.requests.delete(path)
+      if (batch.requests.size > 0) await yieldToBrowser()
     }
   } finally {
     pendingByReader.get(reader)?.delete(batchKey)

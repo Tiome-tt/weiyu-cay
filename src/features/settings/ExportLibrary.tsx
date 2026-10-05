@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ExportPort, ExportReport } from '../../domain/ports'
 
@@ -87,12 +88,12 @@ export function ExportLibrary({ exporter, chooseDestination, controller }: Expor
 
   return (
     <div className="settings-export">
-      <p>选择一个父文件夹。新的便携式导出文件夹将包含正式 Markdown 笔记、附件和恢复清单。</p>
+      <p>导出全部正式笔记、附件和恢复清单到所选文件夹，原笔记保持完整。</p>
       <button type="button" disabled={busy} onClick={() => void startExport()}>
         {busy ? '正在导出资料库…' : '导出完整资料库'}
       </button>
       {status && <p role="status">{status}</p>}
-      {error && <p role="alert">{error}</p>}
+      <ErrorNotification error={error} />
       {report !== null && report.renamedPaths.length > 0 && (
         <p>为保证可移植性，已重命名 {report.renamedPaths.length} 个路径。</p>
       )}
@@ -110,5 +111,5 @@ function reportSummary(report: ExportReport) {
   const counts = report.failed.length === 0
     ? `${completed}。`
     : `${completed}，但有 ${report.failed.length} 项失败。`
-  return report.outputRoot === null ? counts : `${counts} 输出位置：${report.outputRoot}。`
+  return report.outputRoot === null ? counts : `${counts} 输出位置：${report.outputRoot.replace(/^\\\\\?\\/u, '')}。`
 }

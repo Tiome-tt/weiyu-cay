@@ -1,10 +1,11 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { emptyRichDocument } from '../../domain/content'
 import { chooseTablePickerSide, RichDocumentEditor, nextRichDocumentZoom, type RichDocumentEditorHandle } from './RichDocumentEditor'
+import { NotificationProvider } from '../../shared/notifications'
 
 beforeAll(() => {
  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => document.querySelector('.tiptap') })
@@ -14,6 +15,38 @@ beforeAll(() => {
 afterEach(cleanup)
 
 describe('RichDocumentEditor', () => {
+  it('shows an invalid link error as a bottom-right notification without shifting the toolbar', async () => {
+    render(<NotificationProvider><RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} /></NotificationProvider>)
+    fireEvent.contextMenu(screen.getByRole('textbox', { name: '文档正文' }), { clientX: 20, clientY: 30 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '超链接' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: '插入超链接' })).getByRole('button', { name: '插入' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('请输入完整的 http 或 https 链接。')
+    expect(screen.getByRole('alert')).toHaveClass('notification-center__item')
+    expect(document.querySelector('.rich-document__error')).not.toBeInTheDocument()
+  })
+  it('sets each heading level from the toolbar and returns to a paragraph', async () => {
+    const onChange = vi.fn()
+    render(<RichDocumentEditor value={{ schemaVersion: 1, root: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '保留正文' }] }] } }} onChange={onChange} />)
+    const body = screen.getByRole('textbox', { name: '文档正文' })
+    fireEvent.focus(body)
+    const style = screen.getByRole('button', { name: '段落样式' })
+    expect(style).toHaveTextContent('H')
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      fireEvent.click(style)
+      fireEvent.click(screen.getByRole('menuitemradio', { name: '标题 ' + level }))
+      await waitFor(() => expect(body.querySelector('h' + level)).toHaveTextContent('保留正文'))
+      fireEvent.click(style)
+      expect(screen.getByRole('menuitemradio', { name: '标题 ' + level })).toHaveAttribute('aria-checked', 'true')
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    }
+    fireEvent.click(style)
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '正文' }))
+    await waitFor(() => expect(body.querySelector('p')).toHaveTextContent('保留正文'))
+    expect(style).toHaveTextContent('H')
+    expect(onChange).toHaveBeenCalled()
+  })
+
   it('chooses the side with enough viewport space for the table picker', () => {
     expect(chooseTablePickerSide({ triggerLeft: 900, triggerRight: 950, pickerWidth: 180, viewportWidth: 1024 })).toBe('left')
     expect(chooseTablePickerSide({ triggerLeft: 500, triggerRight: 550, pickerWidth: 180, viewportWidth: 1024 })).toBe('right')
@@ -38,9 +71,9 @@ describe('RichDocumentEditor', () => {
     expect(screen.getByRole('button', { name: '居中对齐' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '右对齐' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '两端对齐' })).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: '字体' })).toBeInTheDocument()
-    expect(screen.getByRole('spinbutton', { name: '字号' })).toHaveAttribute('inputmode', 'numeric')
-    expect(screen.getByRole('combobox', { name: '字号选项' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '字体' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '字号' })).toHaveAttribute('inputmode', 'numeric')
+    expect(screen.getByRole('button', { name: '字号选项' })).toBeInTheDocument()
   })
   it('collapses and expands the rich-document formatting toolbar', async () => {
     render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
@@ -62,10 +95,10 @@ describe('RichDocumentEditor', () => {
     const editor = screen.getByRole('textbox', { name: '文档正文' })
     await user.click(editor)
     await user.type(editor, 'X')
-    const input = screen.getByRole('spinbutton', { name: '字号' })
+    const input = screen.getByRole('textbox', { name: '字号' })
     await user.clear(input)
     await user.type(input, '18')
-    fireEvent.blur(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(editor).toHaveFocus())
     await user.keyboard('Y')
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -82,247 +115,23 @@ describe('RichDocumentEditor', () => {
     const highlight = screen.getByRole('button', { name: '高亮' })
     expect(highlight).toHaveAttribute('title', '高亮')
     expect(highlight).not.toHaveTextContent('高亮')
-    const font = screen.getByRole('combobox', { name: '字体' })
+    const font = screen.getByRole('button', { name: '字体' })
     expect(font).not.toHaveAttribute('title')
     expect(font).toHaveTextContent('默认字体')
     const size = screen.getByRole('group', { name: '字号' })
-    expect(size.querySelectorAll('input, select')).toHaveLength(2)
+    expect(size.querySelectorAll('input, button')).toHaveLength(2)
     const insert = screen.getByRole('button', { name: '插入' })
     expect(insert).toHaveAttribute('title', '插入')
     expect(insert.querySelector('svg')).not.toBeNull()
     await userEvent.setup().click(insert)
     expect(screen.getByRole('menuitem', { name: '有序列表' })).toBeInTheDocument()
   })
-  it('keeps rich-document headings directly editable like Markdown headings', async () => {
-    const value = {
-      schemaVersion: 1 as const,
-      root: {
-        type: 'doc' as const,
-        content: [{
-          type: 'heading' as const,
-          attrs: { level: 2 },
-          content: [{ type: 'text' as const, text: '旧标题' }],
-        }],
-      },
-    }
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={value} onChange={onChange} />)
-    const user = userEvent.setup()
-    let heading = screen.getByRole('heading', { name: '旧标题', level: 2 })
-    const editor = screen.getByRole('textbox', { name: '文档正文' })
-    expect(heading).toHaveAttribute('data-rich-heading', 'true')
-    expect(heading.querySelector('.rich-document__heading-marker')).toHaveTextContent('##')
-    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
-    expect(marker).toHaveAttribute('contenteditable', 'true')
-    marker.textContent = '#'
-    fireEvent.input(marker)
-    heading = screen.getByRole('heading', { name: '旧标题', level: 1 })
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      root: expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ type: 'heading', attrs: expect.objectContaining({ level: 1 }) })]) }),
-    }))
-    await user.click(heading)
-    expect(heading).toHaveClass('rich-document__heading--editing')
-    expect(editor).toHaveFocus()
-    expect(editor).toHaveAttribute('contenteditable', 'true')
-  })
-  it('lets typing at the start of a heading prepend title text instead of editing the marker', async () => {
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={{
-      schemaVersion: 1,
-      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '旧标题' }] }] },
-    }} onChange={onChange} />)
-    const heading = screen.getByRole('heading', { name: '旧标题', level: 2 })
-    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
-    await userEvent.setup().click(marker)
-    await userEvent.setup().keyboard('新')
-    expect(screen.getByRole('heading', { name: '新旧标题', level: 2 })).toBeInTheDocument()
-  })
-  it('lets the marker gain focus and add a # without putting it in the title', async () => {
-    render(<RichDocumentEditor value={{
-      schemaVersion: 1,
-      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '针对问题' }] }] },
-    }} onChange={vi.fn()} />)
-    const marker = screen.getByRole('heading', { name: '针对问题', level: 2 }).querySelector('.rich-document__heading-marker') as HTMLElement
-    await userEvent.setup().click(marker)
-    expect(marker).toHaveFocus()
-    await userEvent.setup().keyboard('#')
-    expect(screen.getByRole('heading', { name: '针对问题', level: 3 })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '针对问题', level: 3 }).querySelector('.rich-document__heading-marker')).toHaveTextContent('###')
-  })
-
-  it('treats # typed at the title start as a heading-level change', async () => {
-    render(<RichDocumentEditor value={{
-      schemaVersion: 1,
-      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '针对问题' }] }] },
-    }} onChange={vi.fn()} />)
-    const marker = screen.getByRole('heading', { name: '针对问题', level: 2 }).querySelector('.rich-document__heading-marker') as HTMLElement
-    fireEvent.mouseDown(marker)
-    screen.getByRole('textbox', { name: '文档正文' }).focus()
-    await userEvent.setup().keyboard('#')
-    expect(screen.getByRole('heading', { name: '针对问题', level: 3 })).toBeInTheDocument()
-  })
-  it('converts Markdown heading markers when Enter is pressed', async () => {
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={emptyRichDocument()} onChange={onChange} />)
-    const user = userEvent.setup()
-    const editor = screen.getByRole('textbox', { name: '文档正文' })
-
-    await user.click(editor)
-    await user.type(editor, '#### RLHF')
-    await user.keyboard('{Enter}')
-
-    expect(screen.getByRole('heading', { name: 'RLHF', level: 4 })).toBeInTheDocument()
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      root: expect.objectContaining({
-        content: expect.arrayContaining([
-          expect.objectContaining({ type: 'heading', attrs: expect.objectContaining({ level: 4 }), content: [expect.objectContaining({ text: 'RLHF' })] }),
-        ]),
-      }),
-    }))
-  })
-  it('keeps the full heading when Enter is pressed at its leading edge', () => {
-    render(<RichDocumentEditor value={{
-      schemaVersion: 1,
-      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: '高效微调算法（PEFT）' }] }] },
-    }} onChange={vi.fn()} />)
-    const heading = screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })
-    fireEvent.keyDown(heading.querySelector('.rich-document__heading-content') as HTMLElement, { key: 'Enter' })
-
-    expect(screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })).toBeInTheDocument()
-    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(1)
-  })
-  it('keeps the heading intact after clicking its leading marker and pressing Enter', () => {
-    render(<RichDocumentEditor value={{
-      schemaVersion: 1,
-      root: { type: 'doc', content: [{ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: '高效微调算法（PEFT）' }] }] },
-    }} onChange={vi.fn()} />)
-    const heading = screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })
-    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
-    const content = heading.querySelector('.rich-document__heading-content') as HTMLElement
-    fireEvent.mouseDown(marker)
-    fireEvent.keyDown(content, { key: 'Enter' })
-
-    expect(screen.getByRole('heading', { name: '高效微调算法（PEFT）', level: 4 })).toBeInTheDocument()
-    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(1)
-  })
-  it('converts a marker-only line into an empty level-one heading', async () => {
-    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
-    const user = userEvent.setup()
-    const editor = screen.getByRole('textbox', { name: '文档正文' })
-
-    await user.click(editor)
-    await user.type(editor, '#')
-    await user.keyboard('{Enter}')
-
-    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(editor.querySelector('p')).toBeInTheDocument()
-  })
-  it('converts Markdown headings when navigation leaves the paragraph', async () => {
-    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
-    const user = userEvent.setup()
-    const editor = screen.getByRole('textbox', { name: '文档正文' })
-
-    await user.click(editor)
-    await user.type(editor, '## 算法')
-    await user.keyboard('{ArrowDown}')
-
-    expect(screen.getByRole('heading', { name: '算法', level: 2 })).toBeInTheDocument()
-  })
-  it('keeps escaped heading markers as plain text', async () => {
-    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)
-    const user = userEvent.setup()
-    const editor = screen.getByRole('textbox', { name: '文档正文' })
-
-    await user.click(editor)
-    await user.type(editor, '\\# 普通文字')
-    await user.keyboard('{ArrowDown}')
-
-    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
-    expect(editor).toHaveTextContent('\\# 普通文字')
-  })
-  it('converts Markdown headings before a mouse click leaves the line', async () => {
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={emptyRichDocument()} onChange={onChange} />)
-    const user = userEvent.setup()
-    const editor = screen.getByRole('textbox', { name: '文档正文' })
-
-    await user.click(editor)
-    await user.type(editor, '### 鼠标离开')
-    fireEvent.mouseDown(editor)
-    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
-
-    expect(screen.getByRole('heading', { name: '鼠标离开', level: 3 })).toBeInTheDocument()
-    const latest = onChange.mock.calls[onChange.mock.calls.length - 1]?.[0] as { root?: { content?: unknown[] } } | undefined
-    expect(latest?.root?.content).toHaveLength(1)
-    expect(editor.querySelector('p')).not.toBeInTheDocument()
-  })
-  it('persists a heading level change made by deleting a marker', () => {
-    const value = {
-      schemaVersion: 1 as const,
-      root: {
-        type: 'doc' as const,
-        content: [{
-          type: 'heading' as const,
-          attrs: { level: 3 },
-          content: [{ type: 'text' as const, text: '可降级标题' }],
-        }],
-      },
-    }
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={value} onChange={onChange} />)
-
-    const heading = screen.getByRole('heading', { name: '可降级标题', level: 3 })
-    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
-    marker.textContent = '##'
-    fireEvent.keyDown(marker, { key: 'Backspace' })
-
-    expect(screen.getByRole('heading', { name: '可降级标题', level: 2 })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '可降级标题', level: 2 }).querySelector('.rich-document__heading-marker')).toHaveTextContent('##')
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      root: expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ type: 'heading', attrs: expect.objectContaining({ level: 2 }) })]) }),
-    }))
-  })
-  it('persists a marker change before leaving the heading', () => {
-    const value = {
-      schemaVersion: 1 as const,
-      root: {
-        type: 'doc' as const,
-        content: [{ type: 'heading' as const, attrs: { level: 3 }, content: [{ type: 'text' as const, text: '失焦同步' }] }, { type: 'paragraph' as const, content: [{ type: 'text' as const, text: '其他内容' }] }],
-      },
-    }
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={value} onChange={onChange} />)
-
-    const heading = screen.getByRole('heading', { name: '失焦同步', level: 3 })
-    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
-    marker.textContent = '##'
-    fireEvent.mouseDown(screen.getByText('其他内容'))
-
-    expect(screen.getByRole('heading', { name: '失焦同步', level: 2 })).toBeInTheDocument()
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      root: expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ type: 'heading', attrs: expect.objectContaining({ level: 2 }) })]) }),
-    }))
-  })
-  it('persists a marker change before keyboard navigation leaves the heading', () => {
-    const value = {
-      schemaVersion: 1 as const,
-      root: {
-        type: 'doc' as const,
-        content: [{ type: 'heading' as const, attrs: { level: 3 }, content: [{ type: 'text' as const, text: '方向键同步' }] }, { type: 'paragraph' as const, content: [{ type: 'text' as const, text: '下一段' }] }],
-      },
-    }
-    const onChange = vi.fn()
-    render(<RichDocumentEditor value={value} onChange={onChange} />)
-
-    const heading = screen.getByRole('heading', { name: '方向键同步', level: 3 })
-    const marker = heading.querySelector('.rich-document__heading-marker') as HTMLElement
-    marker.textContent = '##'
-    fireEvent.keyDown(heading.querySelector('.rich-document__heading-content') as HTMLElement, { key: 'ArrowDown' })
-
-    expect(screen.getByRole('heading', { name: '方向键同步', level: 2 })).toBeInTheDocument()
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      root: expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ type: 'heading', attrs: expect.objectContaining({ level: 2 }) })]) }),
-    }))
+  it('renders headings as one editable content region without a marker', () => {
+    render(<RichDocumentEditor value={{schemaVersion:1,root:{type:'doc',content:[{type:'heading',attrs:{level:2},content:[{type:'text',text:'旧标题'}]}]}}} onChange={vi.fn()}/>)
+    const heading=screen.getByRole('heading',{level:2})
+    expect(heading).toHaveAttribute('data-rich-heading','true')
+    expect(heading.querySelector('.rich-document__source-prefix')).toHaveClass('is-hidden')
+    expect(heading.querySelector('.rich-document__heading-marker')).toBeNull()
   })
   it('edits a document and emits the versioned app schema', async () => {
     const onChange = vi.fn()
@@ -524,4 +333,22 @@ describe('RichDocumentEditor', () => {
     expect(JSON.stringify(onChange.mock.calls)).toContain('\\frac{a}{b}')
     expect(document.querySelector('[data-rich-math="inline"]')).not.toBeNull()
   })
+})
+
+it('retains both concurrently pasted images after writes complete out of order',async()=>{
+ const pending:Array<(value:{relativePath:string;width:number;height:number})=>void>=[]
+ const saveImage=vi.fn(()=>new Promise<{relativePath:string;width:number;height:number}>(resolve=>pending.push(resolve)))
+ const onChange=vi.fn(),handle=createRef<RichDocumentEditorHandle>()
+ render(<RichDocumentEditor ref={handle} noteId={'019c0000-0000-7000-8000-000000000001' as import('../../domain/model').NoteId} value={emptyRichDocument()} onChange={onChange} assets={{saveImage}}/>)
+ const body=screen.getByRole('textbox',{name:'文档正文'})
+ const file={type:'image/png',name:'image.png',arrayBuffer:async()=>new Uint8Array([1]).buffer}
+ fireEvent.focus(body)
+ fireEvent.paste(body,{clipboardData:{files:[file],types:['Files'],getData:()=>''}})
+ fireEvent.focus(body)
+ fireEvent.paste(body,{clipboardData:{files:[file],types:['Files'],getData:()=>''}})
+ await waitFor(()=>expect(saveImage).toHaveBeenCalledTimes(2))
+ await act(async()=>{pending[1]({relativePath:'assets/screenshot-019c0000-0000-7000-8000-000000000002.png',width:2,height:2})})
+ await act(async()=>{pending[0]({relativePath:'assets/screenshot-019c0000-0000-7000-8000-000000000003.png',width:2,height:2});await handle.current?.commitComposition()})
+ expect(body.querySelectorAll('img')).toHaveLength(2)
+ expect(onChange.mock.lastCall?.[0].root.content.filter((node:{type:string})=>node.type==='image')).toHaveLength(2)
 })

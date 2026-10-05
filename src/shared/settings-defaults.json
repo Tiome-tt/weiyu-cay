@@ -6,6 +6,7 @@
   "fontSize": 16.0,
   "dailyLyrics": true,
   "lineHeight": 1.6,
+  "searchShortcut": "CommandOrControl+F",
   "shortcut": "CommandOrControl+Shift+D",
   "launchAtStartup": false,
   "closeToTray": true,
@@ -13,6 +14,7 @@
   "showMenuBarIcon": true,
   "defaultEditorMode": "source",
   "autosaveDelayMs": 500,
+  "imageSaveQuality": "webp-q95",
   "dataRoot": { "mode": "default" },
   "deepseekModel": "deepseek-flash"
 }

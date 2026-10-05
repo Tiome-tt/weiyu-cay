@@ -9,6 +9,14 @@ import { AppChrome } from './AppChrome'
 describe('AppChrome', () => {
   afterEach(cleanup)
 
+  it('keeps titlebar actions outside drag gestures and blocks them during modal lifecycle choices', () => {
+    const rendered = render(<AppChrome windowChrome={fakeWindowChromePort()} actions={<button>Settings action</button>} actionsDisabled><p>workspace</p></AppChrome>)
+    expect(screen.getByText('Settings action').closest('.window-titlebar__actions')).toHaveAttribute('inert')
+    rendered.rerender(<AppChrome windowChrome={fakeWindowChromePort()} actions={<button>Settings action</button>}><p>workspace</p></AppChrome>)
+    expect(screen.getByRole('button', { name: 'Settings action' }).closest('.window-titlebar__actions')).not.toHaveAttribute('inert')
+    expect(screen.getByText('微屿').closest('.window-titlebar__brand')).toHaveAttribute('data-tauri-drag-region')
+  })
+
   it('leaves drag gestures to the Tauri region and routes labelled controls through the port', async () => {
     const chrome = fakeWindowChromePort()
     const user = userEvent.setup()

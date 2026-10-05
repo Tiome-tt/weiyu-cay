@@ -13,6 +13,7 @@ export const DEFAULT_STICKY_SETTINGS: Readonly<StickySettings> = {
   fontSize: DEFAULT_APP_SETTINGS.fontSize,
   lineHeight: DEFAULT_APP_SETTINGS.lineHeight,
   autosaveDelayMs: DEFAULT_APP_SETTINGS.autosaveDelayMs,
+  imageSaveQuality: DEFAULT_APP_SETTINGS.imageSaveQuality,
 }
 
 const palettes = {
@@ -151,11 +152,13 @@ export type ThemeVariables = Record<string, string>
 export function normalizeSettings(value: AppSettings): AppSettings {
   return {
     ...value,
+    searchShortcut: value.searchShortcut || "CommandOrControl+F",
     closeToTray: typeof value.closeToTray === 'boolean' ? value.closeToTray : true,
     closeBehaviorConfirmed: typeof value.closeBehaviorConfirmed === 'boolean' ? value.closeBehaviorConfirmed : false,
     dailyLyrics: value.dailyLyrics !== false,
     showMenuBarIcon: typeof value.showMenuBarIcon === 'boolean' ? value.showMenuBarIcon : true,
     deepseekModel: value.deepseekModel === 'deepseek-v4-pro' ? value.deepseekModel : 'deepseek-flash',
+    imageSaveQuality: value.imageSaveQuality === 'webp-q85' || value.imageSaveQuality === 'original' ? value.imageSaveQuality : 'webp-q95',
     bodyFont: normalizeBodyFont(value.bodyFont),
     stickyColorMode: 'follow-theme',
     fontSize: clamp(value.fontSize, 12, 28),
@@ -167,6 +170,7 @@ export function normalizeSettings(value: AppSettings): AppSettings {
 export function normalizeStickySettings(value: StickySettings): StickySettings {
   return {
     ...value,
+    imageSaveQuality: value.imageSaveQuality === 'webp-q85' || value.imageSaveQuality === 'original' ? value.imageSaveQuality : 'webp-q95',
     bodyFont: normalizeBodyFont(value.bodyFont),
     stickyColorMode: 'follow-theme',
     fontSize: clamp(value.fontSize, 12, 28),

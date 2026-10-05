@@ -375,26 +375,29 @@ fn normalize_text_query(input: &str) -> Result<String, CommandError> {
 }
 
 fn excerpt(plain_text: &str, query: &str, maximum: usize) -> String {
-    if plain_text.chars().nth(maximum).is_none() {
-        return plain_text.to_owned();
+    let mut matches = Vec::new();
+    for sentence in plain_text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n']) {
+        let sentence = sentence.trim();
+        if let Some(position) = find_match_character(sentence, query) {
+            let characters: Vec<_> = sentence.chars().collect();
+            let limit = maximum.saturating_sub(2).max(query.chars().count());
+            let start = position.saturating_sub(limit / 3);
+            let end = (start + limit).min(characters.len());
+            let mut snippet = String::new();
+            if start > 0 {
+                snippet.push('…');
+            }
+            snippet.extend(characters[start..end].iter());
+            if end < characters.len() {
+                snippet.push('…');
+            }
+            matches.push(snippet);
+            if matches.len() == 3 {
+                break;
+            }
+        }
     }
-    let characters = plain_text.chars().collect::<Vec<_>>();
-    let content_limit = maximum.saturating_sub(2).max(1);
-    let match_character = find_match_character(plain_text, query).unwrap_or(0);
-    let query_length = query.chars().count().min(content_limit);
-    let start = match_character
-        .saturating_sub((content_limit.saturating_sub(query_length)) / 2)
-        .min(characters.len().saturating_sub(content_limit));
-    let end = (start + content_limit).min(characters.len());
-    let mut result = String::new();
-    if start > 0 {
-        result.push('…');
-    }
-    result.extend(characters[start..end].iter());
-    if end < characters.len() {
-        result.push('…');
-    }
-    result
+    matches.join(" … ")
 }
 
 fn find_match_character(text: &str, query: &str) -> Option<usize> {
@@ -564,6 +567,18 @@ mod tests {
         let result = excerpt(&text, "匹配词", EXCERPT_LENGTH);
         assert!(result.starts_with('…'));
         assert!(result.ends_with('…'));
-        assert!(result.chars().count() <= EXCERPT_LENGTH + 2);
+        assert!(result.chars().count() <= EXCERPT_LENGTH);
+    }
+}
+
+#[cfg(test)]
+mod sentence_excerpts {
+    #[test]
+    fn only_three_matching_sentences_are_returned() {
+        assert_eq!(
+            super::excerpt("无关。接语一。无关。接语二！接语三？接语四。", "接语", 160),
+            "接语一。 … 接语二！ … 接语三？"
+        );
+        assert_eq!(super::excerpt("无关。", "接语", 160), "");
     }
 }
