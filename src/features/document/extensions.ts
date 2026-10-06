@@ -488,17 +488,27 @@ const richHeadingLevelExtension = Extension.create({
         },
         handleKeyDown: (view,event) => {
           const selection=view.state.selection
-          if(event.key === 'Enter' && !view.composing && this.editor.isEditable && selection.empty && selection.$from.parent.type.name === 'heading' && selection.$from.parentOffset === 0) {
-            const before = selection.$from.before()
+          const nativeSelection = view.dom.ownerDocument.getSelection()
+          let cursor = selection.$from
+          let isCollapsed = selection.empty
+          if(nativeSelection?.anchorNode && view.dom.contains(nativeSelection.anchorNode)) {
+            isCollapsed = nativeSelection.isCollapsed
+            if(isCollapsed) {
+              try { cursor = view.state.doc.resolve(view.posAtDOM(nativeSelection.anchorNode, nativeSelection.anchorOffset)) }
+              catch { return false }
+            }
+          }
+          if(event.key === 'Enter' && !view.composing && this.editor.isEditable && isCollapsed && cursor.parent.type.name === 'heading' && cursor.parentOffset === 0) {
+            const before = cursor.before()
             const tr = view.state.tr.insert(before, view.state.schema.nodes.paragraph.create())
             view.dispatch(tr.setSelection(TextSelection.create(tr.doc, before + 1)).scrollIntoView())
             return true
           }
-          if(event.key !== 'Backspace' || view.composing || !this.editor.isEditable || !selection.empty || selection.$from.parent.type.name !== 'heading' || selection.$from.parentOffset !== 0) return false
-          const node=selection.$from.parent, tr=view.state.tr
+          if(event.key !== 'Backspace' || view.composing || !this.editor.isEditable || !isCollapsed || cursor.parent.type.name !== 'heading' || cursor.parentOffset !== 0) return false
+          const node=cursor.parent, tr=view.state.tr
           const prefix=node.attrs.sourceMarker ? node.textContent.match(/^#{1,6} ?/)?.[0] ?? '' : ''
-          if(prefix)tr.delete(selection.from,selection.from+prefix.length)
-          view.dispatch(tr.setNodeMarkup(selection.$from.before(),view.state.schema.nodes.paragraph,{textAlign:node.attrs.textAlign??null}))
+          if(prefix)tr.delete(cursor.pos,cursor.pos+prefix.length)
+          view.dispatch(tr.setNodeMarkup(cursor.before(),view.state.schema.nodes.paragraph,{textAlign:node.attrs.textAlign??null}))
           return true
         },
         handleTextInput: (view,from,to,text) => {
