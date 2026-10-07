@@ -103,7 +103,18 @@ function mapNode(node: RichNode, rejectUnknown: boolean): RichNode {
 
   const sourceAttrs = normalizeNodeAttributes(node)
   const attrs = filteredAttributes(node.type, sourceAttrs, NODE_ATTRIBUTES, rejectUnknown)
-  const content = node.content?.map((child) => mapNode(child, rejectUnknown))
+  let children = node.content
+  if (!rejectUnknown && node.type === 'heading' && node.attrs?.sourceMarker === true) {
+    let remaining = (children ?? []).filter(child => child.type === 'text').map(child => child.text ?? '').join('').match(/^#{1,6} ?/)?.[0].length ?? 0
+    children = (children ?? []).flatMap(child => {
+      if (child.type !== 'text' || remaining === 0) return [child]
+      const remove = Math.min(remaining, (child.text ?? '').length)
+      remaining -= remove
+      const text = (child.text ?? '').slice(remove)
+      return text ? [{...child, text}] : []
+    })
+  }
+  const content = children?.map((child) => mapNode(child, rejectUnknown))
   const marks = node.marks?.map((mark) => mapMark(mark, rejectUnknown))
   const mapped: RichNode = {
     type: node.type,
@@ -121,6 +132,19 @@ function mapNode(node: RichNode, rejectUnknown: boolean): RichNode {
     if (typeof src !== 'string' || !/^assets\/screenshot-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpe?g|gif|webp)$/i.test(src)) {
       throw new Error('Rich document image requires a managed screenshot asset source')
     }
+  }
+  if (rejectUnknown && mapped.type === 'heading') {
+    mapped.attrs = {...mapped.attrs, sourceMarker:true}
+    mapped.content = [{type:'text',text:'#'.repeat(Number(mapped.attrs.level ?? 1))+' '}, ...(mapped.content ?? [])]
+  }
+  // Mapping may bring adjacent identical text marks together after removing the marker.
+  if (!rejectUnknown && mapped.content) {
+    mapped.content = mapped.content.reduce<RichNode[]>((result, child) => {
+      const previous=result[result.length - 1]
+      if(previous?.type==='text' && child.type==='text' && JSON.stringify(previous.marks)===JSON.stringify(child.marks)) previous.text=(previous.text ?? '')+(child.text ?? '')
+      else result.push(child)
+      return result
+    }, [])
   }
   return mapped
 }

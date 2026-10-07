@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DirectoryRail } from './DirectoryRail'
 import { LibraryRail } from './LibraryRail'
-import type { FolderId } from '../../domain/model'
+import type { NoteId } from '../../domain/model'
 
 afterEach(cleanup)
 
@@ -59,20 +59,19 @@ describe('collapsed library rails', () => {
     expect(onExpand).toHaveBeenCalledTimes(1)
   })
 
-  it('shows up to six starred folders and an overflow entry with descriptive labels', async () => {
+  it('shows up to six starred notes and an overflow entry with descriptive labels', async () => {
     const starred = Array.from({ length: 7 }, (_, index) => ({
-      id: `019c0000-0000-7000-8000-0000000000${50 + index}` as FolderId,
-      parentId: null,
-      name: `星标 ${index + 1}`,
-      sortOrder: index,
+      id: `019c0000-0000-7000-8000-0000000000${50 + index}` as NoteId,
+      kind: 'formal' as const, folderId: null, tags: [], revision: 1, createdAt: '', updatedAt: '', excerpt: '',
+      title: `星标 ${index + 1}`,
     }))
-    const onFolder = vi.fn()
+    const onNote = vi.fn()
     const onMore = vi.fn()
-    render(<LibraryRail activeEntry="folder" activeFolderId={starred[0].id} starredFolders={starred} onUnfiled={vi.fn()} onFolder={onFolder} onMoreFolders={onMore} onExpand={vi.fn()} />)
+    render(<LibraryRail activeEntry="folder" activeNoteId={starred[0].id} starredNotes={starred} onUnfiled={vi.fn()} onNote={onNote} onMoreNotes={onMore} onExpand={vi.fn()} />)
 
     expect(screen.getAllByRole('button', { name: /^星标 [1-6]$/ })).toHaveLength(6)
-    expect(screen.getByRole('button', { name: '更多星标文件夹' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '更多星标笔记' })).toBeVisible()
     await userEvent.setup().click(screen.getByRole('button', { name: '星标 3' }))
-    expect(onFolder).toHaveBeenCalledWith(starred[2].id)
+    expect(onNote).toHaveBeenCalledWith(starred[2].id)
   })
 })

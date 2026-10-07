@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Folder, NoteId } from '../../domain/model'
 import type { TrashEntry, TrashPort } from '../../domain/ports'
@@ -175,9 +176,9 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
         </button>
       </div>
       {feedback !== null && <p ref={feedbackRef} tabIndex={-1} role="status" className="library-status">{feedback}</p>}
-      {error !== null && <p role="alert" className="library-status library-status--error">{error}</p>}
+      <ErrorNotification error={error} />
       {state === 'loading' && <p role="status" className="library-status">正在加载回收站…</p>}
-      {state === 'error' && <p role="alert" className="library-status library-status--error">无法加载回收站。</p>}
+      <ErrorNotification error={state === 'error' ? '无法加载回收站。' : null} />
       {state === 'ready' && entries.length === 0 && <p className="library-status">回收站为空。</p>}
       {state === 'ready' && entries.length > 0 && (
         <div className="trash-view__sections" aria-label="已删除项目">

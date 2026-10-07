@@ -100,7 +100,7 @@ function glyphFor(name: IconName): ReactNode {
     case 'chevron-right':
       return <path d="m9 6 6 6-6 6" />
     case 'minimize':
-      return <path d="M6 17.5h12" />
+      return <path d="M6 12h12" />
     case 'maximize':
       return <rect x="5.5" y="5.5" width="13" height="13" rx="1.25" />
     case 'restore':

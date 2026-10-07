@@ -62,7 +62,7 @@ describe('App', () => {
 
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'changed body' } }))
 
-    expect(await screen.findByLabelText('全局保存状态')).toHaveTextContent('待保存')
+    expect(await screen.findByLabelText('笔记状态栏')).toHaveTextContent('待保存')
   })
 
   it('keeps the global toolbar focused on search and settings actions', async () => {
@@ -281,6 +281,7 @@ describe('App', () => {
     expect(check).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: '检查更新' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('tab', { name: '系统' }))
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     expect(check).toHaveBeenCalledOnce()
     expect(await screen.findByText('版本 0.1.1 可以安装。')).toBeVisible()
@@ -306,15 +307,16 @@ describe('App', () => {
     render(<App services={services} />)
 
     await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('tab', { name: '系统' }))
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     await user.click(await screen.findByRole('button', { name: '下载并安装 0.1.1' }))
     await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
 
     expect(restart).toHaveBeenCalledOnce()
-    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
+    expect((await screen.findAllByText(/更新已安装，但重启失败/)).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: '重新尝试重启' }))
     expect(restart).toHaveBeenCalledTimes(2)
-    expect(await screen.findByRole('alert')).toHaveTextContent('更新已安装，但重启失败')
+    expect((await screen.findAllByText(/更新已安装，但重启失败/)).length).toBeGreaterThan(0)
   })
 
   it('selects the keyboard-focused search result through the App safe navigation bridge', async () => {
@@ -344,9 +346,8 @@ describe('App', () => {
     await user.type(field, '篇')
     const results = await screen.findByRole('list', { name: '搜索结果' })
     fireEvent.keyDown(field, { key: 'ArrowDown' })
-    await user.tab()
-    await user.tab()
-    expect(within(results).getByRole('button', { name: /第二篇/ })).toHaveFocus()
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    expect(within(results).getByRole('button', { name: /第二篇/ })).toHaveAttribute('data-active')
     await user.keyboard('{Enter}')
 
     await waitFor(() => expect(loadNote).toHaveBeenCalledWith(secondId))
@@ -385,6 +386,7 @@ describe('App', () => {
     if (editor === null) throw new Error('CodeMirror view not found')
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'dirty update draft' } }))
     await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('tab', { name: '系统' }))
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     await user.click(await screen.findByRole('button', { name: '下载并安装 0.1.1' }))
     await user.click(await screen.findByRole('button', { name: '重启以完成更新' }))
@@ -431,7 +433,7 @@ describe('App', () => {
     expect(screen.getByRole('application', { name: '微屿' })).toBeVisible()
     await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledOnce())
-    expect(screen.getByRole('alert')).toHaveTextContent('本地索引恢复仍未完成')
+    expect(screen.getByText(/本地索引恢复仍未完成/)).toBeInTheDocument()
     await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByText(/并重建本地索引/)).not.toBeInTheDocument())
@@ -478,19 +480,19 @@ describe('App', () => {
       },
     }} />)
 
-    expect(await screen.findByRole('alert')).toBeVisible()
+    expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0)
     await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(1))
     await userEvent.setup().click(screen.getByRole('treeitem', { name: '临时便笺' }))
     await waitFor(() => expect(listTemporary).toHaveBeenCalledTimes(1))
 
-    await userEvent.setup().click(screen.getAllByRole('alert')[0].querySelector('button')!)
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(1))
     expect(listFolders).toHaveBeenCalledTimes(1)
     expect(listNotes).toHaveBeenCalledTimes(1)
     expect(listTemporary).toHaveBeenCalledTimes(1)
 
-    await userEvent.setup().click(screen.getAllByRole('alert')[0].querySelector('button')!)
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(2))
@@ -555,6 +557,7 @@ describe('App', () => {
           dailyLyrics: true,
           lineHeight: 1.7, shortcut: 'Ctrl+N', launchAtStartup: false, closeToTray: true,
           closeBehaviorConfirmed: false, showMenuBarIcon: true, defaultEditorMode: 'split', autosaveDelayMs: 800,
+          imageSaveQuality: 'webp-q95',
           dataRoot: { mode: 'default' },
         }) }),
       }} />,
@@ -579,6 +582,7 @@ describe('App', () => {
     }} />)
 
     await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('tab', { name: '存储' }))
     await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
     expect(exportLibrary).toHaveBeenCalledTimes(1)
     const dialog = screen.getByRole('dialog', { name: '设置' })
@@ -605,6 +609,7 @@ describe('App', () => {
     await user.click(headerClose!)
     expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('tab', { name: '存储' }))
     expect(screen.getByText(/已导出 2 篇笔记和 1 个附件/)).toBeVisible()
   })
 
@@ -619,6 +624,7 @@ describe('App', () => {
       exportDestinationPicker: { chooseExportDestination: vi.fn().mockResolvedValue('D:\\Portable Notes') },
     }} />)
     await user.click(screen.getByRole('button', { name: '打开设置' }))
+    await user.click(screen.getByRole('tab', { name: '存储' }))
     await user.click(screen.getByRole('button', { name: '导出完整资料库' }))
 
     rendered.unmount()
@@ -653,10 +659,11 @@ describe('App', () => {
     render(<App services={{
       notes: fakeNotePort(), folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
-      settings: fakeSettingsPort(), lifecycle,
+      settings: fakeSettingsPort({ chooseStorageDirectory: vi.fn().mockResolvedValue('D:\\Notes') }), lifecycle,
     }} />)
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('tab', { name: '存储' }))
+    await user.click(screen.getByRole('button', { name: '选择数据目录' }))
     await user.click(screen.getByRole('button', { name: '移动数据' }))
     expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
     expect(screen.queryByRole('navigation', { name: '文件夹' })).not.toBeInTheDocument()
@@ -696,13 +703,14 @@ describe('App', () => {
     render(<App services={{
       notes, folders: fakeFolderPort(), system: fakeSystemPort(),
       assets: fakeAssetPort({ relativePath: 'unused', width: 1, height: 1 }), search: fakeSearchPort(), links: fakeLinkPort(),
-      settings: fakeSettingsPort({ moveStorageRoot, restartApplication }), lifecycle,
+      settings: fakeSettingsPort({ chooseStorageDirectory: vi.fn().mockResolvedValue('D:\\Notes'), moveStorageRoot, restartApplication }), lifecycle,
     }} />)
     await user.click(await screen.findByRole('button', { name: /^Relocated note/ }))
     const editor = EditorView.findFromDOM(await screen.findByRole('textbox', { name: 'Markdown source' }))
     if (editor === null) throw new Error('CodeMirror view not found')
     await user.click(screen.getByRole('button', { name: '打开设置' }))
-    await user.type(screen.getByLabelText('新的数据位置'), 'D:\\Notes')
+    await user.click(screen.getByRole('tab', { name: '存储' }))
+    await user.click(screen.getByRole('button', { name: '选择数据目录' }))
     await user.click(screen.getByRole('button', { name: '移动数据' }))
     expect(await screen.findByRole('heading', { name: '需要重新启动' })).toBeVisible()
     expect(editor.state.facet(EditorView.editable)).toBe(false)
@@ -898,7 +906,8 @@ describe('App', () => {
     act(() => emitFailure({ participant: `temporary-${failedId}` }))
 
     await waitFor(() => expect(show).toHaveBeenCalledWith(failedId))
-    expect(await screen.findByRole('alert')).toHaveTextContent('未能安全保存')
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('已重新打开，请检查后重试'))
+    expect(screen.queryByText('正在重新打开便笺…')).not.toBeInTheDocument()
     expect(screen.queryByText('正在安全保存…')).not.toBeInTheDocument()
   })
 

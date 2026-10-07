@@ -143,3 +143,10 @@ describe('TSV parsing', () => {
     expect(documentPlainText(document)).toContain('\\sqrt{d_k}')
   })
 })
+
+it('keeps editable heading source markers out of durable content',()=>{
+ const document = {schemaVersion:1 as const,root:{type:'doc',content:[{type:'heading',attrs:{level:2},content:[{type:'text',text:'# literal title'}]}]}}
+ const json=toTiptapJson(document)
+ expect(json.content?.[0].content?.[0].text).toBe('## ')
+ expect(fromTiptapJson(json)).toEqual(document)
+})

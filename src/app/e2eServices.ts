@@ -305,9 +305,11 @@ function settingsPort() {
     async update(patch: Partial<AppSettings>) { settings = { ...settings, ...patch }; return settings },
     async reset() { settings = DEFAULT_APP_SETTINGS; return settings },
     async getStorageInfo() { return { root: 'E2E isolated storage', noteBytes: 0, assetBytes: 0, trashBytes: 0 } },
+    async chooseStorageDirectory() { return 'E2E selected storage' },
     async moveStorageRoot() { return },
     async restartApplication() { return },
     async onChanged() { return () => undefined },
+    async setShortcutRecording() {},
     async getShortcutStatus() { return { current: settings.shortcut, registration: { state: 'active' }, acceptingTriggers: true, startupError: null } },
   }
 }

@@ -1,25 +1,29 @@
+import { ErrorNotification } from '../../shared/notifications'
+import {documentBlockCount} from '../document/documentBlockCount'
 import {forwardRef,lazy,Suspense,useCallback,useEffect,useImperativeHandle,useRef,useState} from 'react'
 import {flushSync} from 'react-dom'
-import {contentOutlineMarkdown,contentSummaryMarkdown,type NoteContent} from '../../domain/content'
+import {contentText,contentOutlineMarkdown,contentSummaryMarkdown,type NoteContent} from '../../domain/content'
 import type {EditorPaneHandle,EditorPaneProps} from '../editor/EditorPane'
 import type {RichDocumentEditorHandle} from '../document/RichDocumentEditor'
 import {useContentAutosave} from './useContentAutosave'
 import {PlainTextEditor,type PlainTextEditorHandle} from './PlainTextEditor'
 import {FileViewer} from './FileViewer'
 import {TagsEditor} from '../search/TagsEditor'
+import {EditorStatusBar} from '../editor/EditorStatusBar'
 import {Backlinks} from '../editor/Backlinks'
 import { AiSummaryWidget } from '../ai/AiSummaryWidget'
 import { waitForImageAssets } from './imageAssetLoader'
 
 import './content.css'
 const RichDocumentEditor=lazy(()=>import('../document/RichDocumentEditor').then(module=>({default:module.RichDocumentEditor})))
-function formatLastEdited(value:string){const date=new Date(value);if(Number.isNaN(date.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(date)}
 export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(function TypedEditorPane(props,ref){
  const {document,notes,files,assets,assetReader,links,folders,onNavigateNote,search,onDocumentAdopt,onConvertFileToDocument,onSaveStateChange,onDraftChange,autosaveDelayMs,external,ai,deepseekModel,onOpenSettings}=props
  const save=useContentAutosave(document,notes,autosaveDelayMs)
  const aiMarkdown=save.content.type==='text' ? save.content.text : save.content.type==='document' ? contentSummaryMarkdown({ content: save.content }) : document.title
  const rich=useRef<RichDocumentEditorHandle>(null)
  const text=useRef<PlainTextEditorHandle>(null)
+ const [selectedText,setSelectedText]=useState('')
+ const [liveBlockCount,setLiveBlockCount]=useState<number|null>(null)
  const [blocked,setBlocked]=useState(false)
  const [exporting,setExporting]=useState(false)
  const exportingRef=useRef(false)
@@ -85,15 +89,15 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
   <div className="typed-editor__header">
    <input className="typed-editor__title" aria-label="笔记标题" value={title} readOnly={readOnly||!props.onRenameNote} onChange={e=>setTitle(e.target.value)} onBlur={()=>{if(title.trim()&&title!==document.title&&props.onRenameNote)void action(async()=>{if(!await flush())throw new Error();await props.onRenameNote!(title.trim())})}}/>
   </div>
-  <div className="typed-editor__metadata"><span>最后编辑于 <time dateTime={save.updatedAt}>{formatLastEdited(save.updatedAt)}</time></span>{search&&<TagsEditor tags={document.tags} onChange={async tags=>{if(blocked||!await flush())throw new Error('save');await search.updateTags(document.id,tags);onDocumentAdopt?.(await notes.loadNote(document.id))}}/>}</div>
-  {error&&<p role="alert">{error}</p>}
-  {save.state.status==='error'&&<p role="alert">{save.state.message}<button type="button" onClick={save.state.retry}>重试保存</button>{save.state.message.includes('其他窗口')&&<button type="button" onClick={()=>void reloadLatest()}>载入最新版本</button>}</p>}
+  <div className="typed-editor__metadata">{search&&<TagsEditor tags={document.tags} onChange={async tags=>{if(blocked||!await flush())throw new Error('save');await search.updateTags(document.id,tags);onDocumentAdopt?.(await notes.loadNote(document.id))}}/>}</div>
+  <ErrorNotification error={error} />
+  {save.state.status==='error'&&<><ErrorNotification error={save.state.message} /><div className="typed-editor__recovery"><button type="button" onClick={save.state.retry}>重试保存</button>{save.state.message.includes('其他窗口')&&<button type="button" onClick={()=>void reloadLatest()}>载入最新版本</button>}</div></>}
   <div className="typed-editor__body" ref={body}>
-   {save.content.type==='text'&&<PlainTextEditor ref={text} value={save.content.text} editable={!readOnly} onChange={value=>update({type:'text',text:value})}/>}
+   {save.content.type==='text'&&<PlainTextEditor onSelectionChange={setSelectedText} ref={text} value={save.content.text} editable={!readOnly} onChange={value=>update({type:'text',text:value})}/>}
    {save.content.type==='file'&&<FileViewer document={{...document,content:save.content}} files={files} onConvertToDocument={onConvertFileToDocument}/>}
-   {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
+   {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor onSelectionChange={setSelectedText} onBlockCountChange={setLiveBlockCount} ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
   </div>
   <AiSummaryWidget noteId={document.id} title={title} markdown={aiMarkdown} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages}/>
-  {links&&onNavigateNote&&<Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>}
+  <EditorStatusBar blockCount={save.content.type==='document'?liveBlockCount??documentBlockCount(save.content.document):undefined} text={save.content.type==='file'?null:contentText({content:save.content})} selectedText={selectedText} updatedAt={save.updatedAt} state={save.state} related={links&&onNavigateNote?<Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>:undefined}/>
  </div>
 })

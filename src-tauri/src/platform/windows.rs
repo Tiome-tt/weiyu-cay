@@ -136,6 +136,12 @@ fn is_lock_contention(source: &std::io::Error) -> bool {
 
 #[link(name = "kernel32")]
 extern "system" {
+    fn GetDiskFreeSpaceExW(
+        path: *const u16,
+        available: *mut u64,
+        total: *mut u64,
+        free: *mut u64,
+    ) -> i32;
     fn ReplaceFileW(
         replaced: *const u16,
         replacement: *const u16,
@@ -1259,6 +1265,23 @@ impl SafeDirectory {
         result
     }
 
+    pub(crate) fn remove_empty_child(&self, name: &str) -> Result<(), CommandError> {
+        let child = self.open_child(name, false)?;
+        if !child.entry_names()?.is_empty() {
+            return Err(CommandError::conflict("directory is not empty"));
+        }
+        child.ensure_path_identity()?;
+        let path = self.child_path(name)?;
+        drop(child);
+        // Only an empty directory can be removed. Never recurse through this path after dropping its pin.
+        fs::remove_dir(path).map_err(|error| {
+            CommandError::io(format!(
+                "could not remove empty contained directory: {error}"
+            ))
+        })?;
+        self.sync()
+    }
+
     pub fn remove_checked(&self, name: &str) -> Result<bool, CommandError> {
         let path = self.child_path(name)?;
         match fs::symlink_metadata(&path) {
@@ -2094,4 +2117,25 @@ mod tests {
         assert!(!descriptor.exists());
         assert!(!signal.exists());
     }
+}
+
+pub fn available_storage_bytes(path: &Path) -> Result<u64, CommandError> {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available = 0;
+    // The API reports space available to this user, including quotas.
+    if unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(CommandError::io(format!(
+            "could not inspect available disk space: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(available)
 }

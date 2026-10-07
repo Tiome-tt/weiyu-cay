@@ -1,8 +1,12 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Folder, FolderId, NoteId } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
 
 interface FolderTreeProps {
+  searching?: boolean
+  searchResultsSlot?: ReactNode
+  searchSlot?: ReactNode
   folders: Folder[]
   activeId: FolderId | null
   temporaryInboxActive?: boolean
@@ -136,19 +140,6 @@ export function FolderTree(props: FolderTreeProps) {
     }
   }
 
-  const runToggleStar = async (id: FolderId) => {
-    if (props.onToggleStar === undefined) return
-    const folder = props.folders.find((candidate) => candidate.id === id)
-    if (folder === undefined) return
-    try {
-      await props.onToggleStar(id, folder.starred !== true)
-      setError(false)
-      setContextTarget(null)
-      setContextPosition(null)
-    } catch {
-      setError(true)
-    }
-  }
 
   useEffect(() => {
     if (!creating && contextPosition === null) return
@@ -525,6 +516,7 @@ export function FolderTree(props: FolderTreeProps) {
           )}
         </div>
       </header>
+      {props.searchSlot}
       {creating && (
         <form className="folder-form" onSubmit={(event) => void finishCreate(event)}>
           <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setCreating(false); setName(''); setCreateParent(null) } }} />
@@ -537,7 +529,6 @@ export function FolderTree(props: FolderTreeProps) {
           {props.onImportFiles && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onImportFiles?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>导入文件</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setMoving(folder.id); setMoveTarget(folder.parentId) }; setContextTarget(null); setContextPosition(null) }}>移动文件夹</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => void runToggleStar(contextTarget)}>{props.folders.find((folder) => folder.id === contextTarget)?.starred === true ? '取消星标' : '添加星标'}</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>删除文件夹</button>}
         </div>
       )}
@@ -563,7 +554,7 @@ export function FolderTree(props: FolderTreeProps) {
         </form>
       )}
       {props.state === 'loading' && <p className="library-status">正在加载文件夹…</p>}
-      {props.state === 'error' && <p className="library-status library-status--error">无法加载文件夹。</p>}
+      <ErrorNotification error={props.state === 'error' ? '无法加载文件夹。' : null} />
       <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list" data-folder-parent-id="root" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, null)}>
         {props.showUnfiled !== false && <li role="none">
           <button
@@ -620,10 +611,11 @@ export function FolderTree(props: FolderTreeProps) {
           </li>
         )}
         {props.folders.some((folder) => folder.parentId === null) && <li role="separator" className="folder-tree__separator" aria-label="系统入口与文件夹分隔线" />}
-        {renderBranch(null)}
-        {rootContents !== undefined && <li role="none" className="folder-tree__root-notes">{rootContents}</li>}
+        {props.searching ? <li role="none">{props.searchResultsSlot}</li> : renderBranch(null)}
+        {!props.searching && <li role="none" hidden>{props.searchResultsSlot}</li>}
+        {!props.searching && rootContents !== undefined && <li role="none" className="folder-tree__root-notes">{rootContents}</li>}
       </ul>
-      {error && <p role="alert" className="library-status library-status--error">文件夹操作未完成。</p>}
+      <ErrorNotification error={error ? "文件夹操作未完成。" : null} />
       {deleteTarget !== null && (
         <div className="folder-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null) }}>
           <section className="folder-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="folder-delete-heading">

@@ -24,7 +24,7 @@ test('creates, links, searches, reopens, and exports a note', async ({ page }) =
 
   const search = page.getByRole('searchbox', { name: '搜索笔记' })
   await search.fill('登录流程')
-  await page.locator('.search-results button').filter({ hasText: '登录流程' }).click()
+  await page.getByLabel('资料库搜索结果').locator('button').filter({ hasText: '登录流程' }).click()
   await expect(page.getByRole('heading', { name: '登录流程' })).toBeVisible()
 
   await page.reload()
@@ -33,6 +33,7 @@ test('creates, links, searches, reopens, and exports a note', async ({ page }) =
   await expect(page.getByRole('heading', { name: '登录流程' })).toBeVisible()
 
   await page.getByRole('button', { name: '打开设置' }).click()
+  await page.getByRole('tab', { name: '存储' }).click()
   await page.getByRole('button', { name: '导出完整资料库' }).click()
   await expect(page.getByRole('status').filter({ hasText: /已导出 .* 篇笔记/ })).toBeVisible()
 })

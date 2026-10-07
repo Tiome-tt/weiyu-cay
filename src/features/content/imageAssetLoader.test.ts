@@ -114,3 +114,19 @@ describe('image asset loader', () => {
     }
   })
 })
+
+it('drains a new image request added while the previous batch is loading',async()=>{
+ let finish!:()=>void
+ const firstGate=new Promise<void>(resolve=>{finish=resolve})
+ const readImages=vi.fn(async({relativePaths}:{relativePaths:string[]})=>{
+  if(relativePaths.includes('assets/first.png'))await firstGate
+  return relativePaths.map(relativePath=>({relativePath,mediaType:'image/png',bytes:new Uint8Array([1])}))
+ })
+ const reader={readImage:vi.fn(),readImages}
+ const first=readImageAsset(reader,noteId,'assets/first.png')
+ await vi.waitFor(()=>expect(readImages).toHaveBeenCalledOnce())
+ const second=readImageAsset(reader,noteId,'assets/second.png')
+ finish()
+ await expect(Promise.all([first,second])).resolves.toHaveLength(2)
+ expect(readImages).toHaveBeenCalledTimes(2)
+})

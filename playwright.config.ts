@@ -12,6 +12,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 30_000,
+  expect: { timeout: 15_000 },
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',

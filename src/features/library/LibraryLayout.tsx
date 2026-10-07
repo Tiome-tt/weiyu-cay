@@ -1,3 +1,8 @@
+import { ErrorNotification } from '../../shared/notifications'
+import { shortcutMatches } from '../search/shortcuts'
+import { useStarredNotes } from './useStarredNotes'
+import { WorkspaceSearchDialog } from '../search/WorkspaceSearchDialog'
+import { SearchBox } from '../search/SearchBox'
 import { contentOutlineMarkdown, type NewNoteFormat } from '../../domain/content'
 import { emptyRichDocument } from '../../domain/content'
 import { docxToRichDocument, materializeDocumentImages } from '../content/officeConversion'
@@ -26,6 +31,8 @@ interface LibraryLayoutProps {
   folders: FolderPort
   system: SystemPort
   assets?: AssetPort & ImageReadPort
+  searchDismissSignal?: number
+  searchShortcut?: string
   search?: SearchPort
   links?: LinkPort
   temporary?: TemporaryPort
@@ -50,8 +57,14 @@ export interface LibraryLayoutHandle {
   openTemporaryInbox(): void
 }
 
-export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ files, notes, folders, system, assets, search, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, ai, deepseekModel, onOpenSettings, onSaveStateChange, onCreatePopoverOpen }, ref) {
+export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>(function LibraryLayout({ files, notes, folders, system, assets, search, searchShortcut = "CommandOrControl+F", searchDismissSignal = 0, links, temporary, temporaryWindows, trash, startupGuide, defaultEditorMode, autosaveDelayMs, ai, deepseekModel, onOpenSettings, onSaveStateChange, onCreatePopoverOpen }, ref) {
+  const [sidebarQuery,setSidebarQuery]=useState('')
+  const [sidebarResultsTarget,setSidebarResultsTarget]=useState<HTMLDivElement|null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const library = useLibrary(notes, folders, startupGuide)
+  const visibleNotes = useMemo(() => Object.values(library.notesByFolder).flat(), [library.notesByFolder])
+  const starred = useStarredNotes(system, links, visibleNotes)
   const [importBusy, setImportBusy] = useState(false)
   const [importNotice, setImportNotice] = useState<{ kind: 'status' | 'alert'; message: string } | null>(null)
   const [activeView, setActiveView] = useState<'library' | 'temporary' | 'trash'>('library')
@@ -109,6 +122,18 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     () => new Map(library.notes.map((note) => [note.id, note] as const)),
     [library.notes],
   )
+  useEffect(() => {
+    if (!search) return
+    const find = (event: globalThis.KeyboardEvent) => {
+      if (shortcutMatches(event, searchShortcut)) {
+        if (document.querySelector('[role="dialog"]:not(.workspace-search), [role="alertdialog"]')) return
+        event.preventDefault()
+        setSearchQuery(''); setSearchOpen(true)
+      }
+    }
+    window.addEventListener('keydown', find)
+    return () => window.removeEventListener('keydown', find)
+  }, [search, searchShortcut])
   const reportEditorSaveState = useCallback(
     (status: SaveState['status']) => onSaveStateChange?.(status === 'idle' ? 'hidden' : status),
     [onSaveStateChange],
@@ -611,6 +636,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         if (result === null) throw new Error('move was blocked by an unsaved editor')
         setMetadataNotice(`${noteIds.length} 项已移动。`)
       }}
+      starredIds={starred.ids}
+      onToggleStar={starred.ready ? (note) => void starred.toggle(note) : undefined}
       onExport={requestNoteExport}
     />
   }
@@ -643,14 +670,14 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
 
   return (
     <div className="library-shell">
+      {searchOpen && search && <WorkspaceSearchDialog initialQuery={searchQuery} search={search} folders={library.folders} onClose={() => setSearchOpen(false)} onSelect={async destination => {
+        const result = await navigateAfterSave(() => { setActiveView('library'); if(destination.kind==='note') library.selectNote(destination.id); else library.selectFolder(destination.id); return true })
+        return result === true
+      }} />}
       {!createPopoverOpen && createOperation.status === 'pending' && (
         <p className="sr-only" role="status">正在创建“{createOperation.title.trim()}”…</p>
       )}
-      {!createPopoverOpen && createOperation.status === 'error' && (
-        <p className="sr-only" role="alert">
-          无法新建“{createOperation.title.trim()}”。请重新打开“新建笔记”重试。
-        </p>
-      )}
+      <ErrorNotification error={!createPopoverOpen && createOperation.status === 'error' ? `无法新建“${createOperation.title.trim()}”。请重新打开“新建笔记”重试。` : null} />
       {createPopoverOpen && (
         <CreateNotePopover
           folders={library.folders}
@@ -664,12 +691,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           onClose={closeCreatePopover}
         />
       )}
+      <ErrorNotification error={starred.error} />
       <div ref={columnsRef} className="library-columns">
       {collapsed.folder && (
         <LibraryRail
           activeEntry={activeRailEntry}
-          activeFolderId={library.activeFolderId}
-          starredFolders={library.folders.filter((folder) => folder.starred === true).sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))}
+          activeNoteId={library.activeNoteId}
+          starredNotes={starred.notes}
           onUnfiled={() => {
             if (activeRailEntry === 'unfiled') return
             void navigateAfterSave(() => {
@@ -679,11 +707,11 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           }}
           onTemporary={temporary === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('temporary'))}
           onTrash={trash === undefined ? undefined : () => void navigateAfterSave(() => setActiveView('trash'))}
-          onFolder={(folderId) => void navigateAfterSave(() => {
+          onNote={(noteId) => void navigateAfterSave(() => {
             setActiveView('library')
-            library.selectFolder(folderId)
+            library.selectNote(noteId)
           })}
-          onMoreFolders={() => setColumnCollapsed('folder', false)}
+          onMoreNotes={() => setColumnCollapsed('folder', false)}
           onExpand={() => setColumnCollapsed('folder', false)}
         />
       )}
@@ -699,6 +727,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       <aside data-testid="folder-pane" className="library-pane library-pane--folders">
         <div className="library-folder-pane-stack">
         <FolderTree
+          searching={Boolean(sidebarQuery.trim())}
+          searchResultsSlot={<div ref={setSidebarResultsTarget} aria-label="资料库搜索结果"/>}
+          searchSlot={search && <div className="library-sidebar-search"><SearchBox shortcut={searchShortcut} resultsContainer={sidebarResultsTarget} onQueryChange={setSidebarQuery} search={search} dismissSignal={searchDismissSignal} onSelect={(noteId) => void navigateAfterSave(() => { setActiveView('library'); library.selectNote(noteId) })} /></div>}
           folders={library.folders}
           activeId={activeView === 'library' ? library.activeFolderId : null}
           showUnfiled={false}
@@ -725,13 +756,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           }}
           onCreateNote={(folderId) => openCreatePopover(null, folderId)}
           onImportFiles={files === undefined ? undefined : (folderId) => startImport(undefined, folderId)}
-          onToggleStar={library.toggleFolderStar}
           onMoveNote={async (noteId, folderId) => {
             await navigateAfterSave(() => library.moveNote(noteId, folderId))
           }}
           folderContents={activeView === 'library' ? renderFolderNotes : undefined}
         />
-        {importNotice && <p className={`library-status${importNotice.kind === 'alert' ? ' library-status--error' : ''}`} role={importNotice.kind}>{importNotice.message}</p>}
+        <ErrorNotification error={importNotice?.kind === 'alert' ? importNotice.message : null} />
+        {importNotice?.kind === 'status' && <p className="library-status" role="status">{importNotice.message}</p>}
         </div>
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
@@ -770,7 +801,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           />
         )}
         {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
-        {activeView === 'library' && library.documentState === 'error' && <p className="content-placeholder content-placeholder--error">无法打开笔记。</p>}
+        <ErrorNotification error={activeView === 'library' && library.documentState === 'error' ? '无法打开笔记。' : null} />
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
           <MainWindowEmptyState onCreateNote={openCreatePopover} />
         )}

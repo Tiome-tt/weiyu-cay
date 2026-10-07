@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from 'react'
 
-const DIVIDER_WIDTH = 7
+const DIVIDER_WIDTH = 1
 const COLLAPSED_SECOND_RAIL_WIDTH = 30
 const KEYBOARD_STEP = 16
 

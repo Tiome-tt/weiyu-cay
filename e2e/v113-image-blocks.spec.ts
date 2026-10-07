@@ -1,0 +1,21 @@
+import {test,expect} from '@playwright/test'
+
+test('empty paragraphs have a number and rich insertion contains native objects',async({page},info)=>{
+ await page.goto('/e2e/rich-heading-fixture.html?pane=document')
+ const body=page.getByRole('textbox',{name:'文档正文'})
+ await body.locator('p').first().click({position:{x:8,y:8}})
+ await page.keyboard.press('Home');await page.keyboard.press('Enter')
+ await expect(body.locator('p').first()).toHaveText('')
+ await body.locator('p').first().hover()
+ await expect(page.locator('.rich-document__block-number')).toHaveText('1')
+ await expect(page.locator('.rich-document__block-controls')).toHaveClass(/is-visible/)
+ await expect(body.locator('h4')).toHaveAttribute('data-block-number','3')
+ await expect(page.getByLabel('笔记状态栏')).toContainText('4 行')
+ await page.getByRole('button',{name:'添加内容块',exact:true}).click()
+ const menu=page.getByRole('menu',{name:'插入内容'})
+ await expect(menu.getByRole('menuitem',{name:'正文',exact:true})).toHaveCount(0)
+ await expect(menu.getByRole('menuitem',{name:/标题/})).toHaveCount(0)
+ await menu.getByRole('menuitem',{name:'待办列表',exact:true}).click()
+ await expect(body.locator('ul[data-type="taskList"]')).toHaveCount(1)
+ await page.screenshot({path:info.outputPath('empty-block-native-task.png')})
+})

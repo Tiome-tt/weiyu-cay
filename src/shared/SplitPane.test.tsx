@@ -67,7 +67,7 @@ describe('SplitPane', () => {
     fireEvent.pointerMove(dividers[1], { clientX: 620, pointerId: 8 })
     fireEvent.pointerCancel(dividers[1], { pointerId: 8 })
 
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '373px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '379px' })
     expect(onCommit).toHaveBeenCalledTimes(1)
   })
 
@@ -95,8 +95,8 @@ describe('SplitPane', () => {
     })
     const { dividers } = renderPane()
 
-    expect(dividers[0]).toHaveAttribute('aria-valuemax', '466')
-    expect(dividers[1]).toHaveAttribute('aria-valuemax', '526')
+    expect(dividers[0]).toHaveAttribute('aria-valuemax', '478')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '538')
   })
 
   it('fits defaults into a narrow container while preserving every minimum', () => {
@@ -114,9 +114,9 @@ describe('SplitPane', () => {
     renderPane()
 
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '226px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '238px' })
     expect(screen.getByTestId('third-pane')).toHaveStyle({ width: '420px' })
-    expect(screen.getAllByRole('separator')[0].closest('.split-pane')).toHaveStyle({ '--split-pane-divider-width': '7px' })
+    expect(screen.getAllByRole('separator')[0].closest('.split-pane')).toHaveStyle({ '--split-pane-divider-width': '1px' })
   })
 
   it('clamps folder, note-list, and editor panes to their minimum widths', () => {
@@ -170,9 +170,9 @@ describe('SplitPane', () => {
     fireEvent.pointerUp(dividers[1], { pointerId: 9 })
 
     expect(screen.getByTestId('first-pane')).toHaveStyle({ width: '240px' })
-    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '326px' })
+    expect(screen.getByTestId('second-pane')).toHaveStyle({ width: '338px' })
     expect(dividers[0]).toHaveAttribute('aria-valuemax', '240')
-    expect(dividers[1]).toHaveAttribute('aria-valuemax', '326')
+    expect(dividers[1]).toHaveAttribute('aria-valuemax', '338')
   })
 
   it('restores the applicable default on double click and has no visible instructions', () => {

@@ -54,7 +54,7 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 - Update SQLite indexes only after durable content succeeds. A failed content write must not publish new index state.
 - Use transactions for multi-row metadata changes and for each item in a batch temporary-note conversion.
 - Keep all resolved paths inside the configured application data or export root. Reject traversal and symlink escapes.
-- Sanitize pasted-image names, verify image types, and generate collision-resistant filenames.
+- Sanitize pasted-image names, verify image types, and generate collision-resistant filenames. New static PNG and JPEG assets use the selected image quality setting: high-quality WebP Q95 by default, smaller WebP Q85, or original format. Convert only when the result is smaller; preserve animation, unsupported images, and unsuccessful conversions. The original-format option may recompress PNG IDAT losslessly when smaller. Bound conversion memory and retain existing atomic asset publication; do not rewrite existing libraries automatically.
 - Preserve the previous valid content when disk-full, permission, parsing, migration, or index failures occur.
 - Treat index rebuilds as normal recovery operations and test them.
 - Never log note bodies, authentication tokens, or local absolute paths in production telemetry.
@@ -67,12 +67,23 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 - The editor supports exactly three primary views in the MVP: source, split source/preview, and preview.
 - Note rows do not expose hover delete buttons. Keep recoverable deletion in the pointer/keyboard context menu, with undo feedback outside the folder tree flow. New default table headers must avoid existing names without renaming user content.
 - View controls live in the editor title toolbar, not the global application bar.
+- 设置采用常规、系统、按键、存储、AI 五类与对齐参数行，更新归系统、导出归存储，切换分类保留输入，短数字控件右对齐并隐藏系统上下箭头；标题菜单固定显示 H，选项使用主题悬停高亮；临时便笺内容不使用悬停填色。文档工具栏折叠后不占整行，仅保留边缘格式图标；主窗口分栏使用 1px 线与透明拖动命中区。
+- 品牌、设置和窗口控件共享顶部标题栏；搜索在资料库标题下。资料库展开入口位于折叠栏顶部，内部只使用单条分隔线。仅正式笔记提供星标，按不可变笔记 ID 保存导航偏好，旧文件夹星标不自动迁移到笔记。
+- Ctrl/Cmd+F 打开紧凑居中的资料库搜索，显示文件夹、笔记和最多三句实际命中摘要与黄色关键词高亮；搜索与便笺快捷键均可点击输入框录入并持久化，侧栏搜索使用主题图标与快捷键提示，结果直接显示于左侧文件列表并高亮命中，不打开快捷键搜索弹窗；跳转须等待当前编辑保存成功。笔记底部使用薄状态栏，左侧显示行数、总字数/选中字数与关联笔记入口，右侧显示最后编辑时间和保存状态；关联面板默认关闭并支持滚动、拖动边界和键盘调高。
+- 快捷键按当前系统显示 Ctrl/Command，按键设置使用搜索/便笺简短标签，点击搜索或便笺输入框或按 Enter 录入；录入时暂停系统便笺快捷键，取消、完成或关闭设置时恢复。存储迁移仅接受新目录或现有空目录，先检查空间、复制并校验，重启验证成功后清理旧笔记；保留系统启动配置和未知文件，清理失败不阻止新位置打开并允许下次启动重试。
+- 设置复选框仅点击控件本身切换，统一主题样式；常规设置精简辅助说明，自动保存单位 ms 跟随输入框。设置操作按钮统一尺寸与主题样式；AI Key 保存嵌入输入框右端，不显示清除按钮；存储位置通过系统目录选择器选择。
+- 存储设置用细横线区分图片保存质量与“存储位置与迁移”。图片质量选项使用易懂的“高清压缩（推荐）”“省空间压缩”“保留原图”，选中后用一条简短说明交代画质和处理范围，保留实际 WebP Q95/Q85 的持久化值。迁移区区分当前位置与迁移目标文件夹。
+- 标题、字体和字号采用一致的应用菜单，鼠标打开不自动聚焦选项，选项悬停和键盘焦点使用主题高亮，Escape 可关闭；笔记标题区紧凑排版并常显添加标签入口，空标签不提交，关闭或重新输入时清除校验提示。
+- 文档标题使用连续的原生编辑区域，# 前缀为可选择、复制和删除的真实编辑文本，行首输入即转换标题，增删 # 同步 1–6 级样式；保存时移除编辑前缀，保持原有标题内容模型。非当前编辑标题隐藏 #，点击或选中标题恢复前缀。文档格式刷单次复制文字格式、标题等级和段落对齐，不复制链接地址。文档按内容块（包括空段落）统计与编号，图片、表格各占一块；文档与 Markdown 悬停行号在内容块 + 左侧淡入淡出并遵守减少动画偏好，Markdown 保留源文件行数。文档 +、工具栏插入与右键共享列表、图片、链接、表格、代码、引用、公式和分隔线操作，正文和标题样式保留在格式工具栏。设置普通参数名称统一字号与字重，仅分类和分组标题强调。文档与 Markdown 内容块加号平时透明、悬停或键盘焦点才填色，行号和加号垂直居中，鼠标跨过正文到加号的空隙时保持可点击；顶部诗词增大字号但标题栏保持 30px 高度。
+- 文档字号输入不显示上下按钮，按回车应用到选区或光标位置，光标移动刷新当前字号。临时便笺使用选中边框反馈点击，不使用悬停填色。
+- AI 总结入口仅显示在正式笔记中；临时便笺再次点击当前条目时，先等待保存成功再关闭右侧预览，保存失败保留编辑内容。
 - The editor block “+” menu and editor context menu expose the same insertion actions, including a searchable internal-link picker that excludes the current note.
-- Show non-empty note tags beside the last-edited metadata. Icon-only inline formatting controls expose visible hover labels and accessible names.
+- Show non-empty note tags below the note title; last-edited time and save state belong in the bottom status bar. Icon-only inline formatting controls expose visible hover labels and accessible names.
 - New-note and move destinations offer actual folders only. Moving a note updates both source and destination inline lists immediately; preserve compatibility with existing root-level content.
 - Keep the visual language warm, rounded, and nature-inspired, while preserving high contrast and dense-content readability.
 - Do not copy Nintendo assets or directly use `animal-island-ui`; its CC BY-NC license prohibits commercial use. Build an original design system.
 - Keyboard operation, visible focus, reduced motion, and adequate color contrast are required.
+- Transient operation errors appear in a dismissible bottom-right notification and expire after ten seconds. Preserve persistent recovery controls for blocked startup, unsaved work, and unavailable platform actions.
 
 ## Code style
 

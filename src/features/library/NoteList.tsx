@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { libraryEntryPresentation } from './libraryEntries'
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
@@ -45,9 +46,11 @@ interface NoteListProps {
   onReorder?: (folderId: FolderId | null, orderedIds: NoteId[]) => Promise<void>
   onMoveToFolder?: (noteId: NoteId, folderId: FolderId) => Promise<void>
   onExport?: (note: NoteSummary, kind: 'word' | 'pdf') => void
+  starredIds?: readonly NoteId[]
+  onToggleStar?: (note: NoteSummary) => void
   showEmptyState?: boolean
 }
-export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteSelection, onMoveSelection, folders, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onDismissFeedback, folderId = null, onReorder, onMoveToFolder, onExport, showEmptyState = true }: NoteListProps) {
+export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteSelection, onMoveSelection, folders, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onDismissFeedback, folderId = null, onReorder, onMoveToFolder, onExport, starredIds = [], onToggleStar, showEmptyState = true }: NoteListProps) {
   const feedbackRef = useRef<HTMLParagraphElement>(null)
   const contextTriggerRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ id: NoteId; x: number; y: number } | null>(null)
@@ -241,10 +244,10 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
           </div>
         </div>, document.querySelector('.main-window') ?? document.body
       )}
-      {deleteError && <p role="alert" className="library-status library-status--error">{deleteError}</p>}
+      <ErrorNotification error={deleteError} />
       {effectiveSelectedIds.size > 1 && <p className="library-status note-list__selection-status" role="status">已选择 {effectiveSelectedIds.size} 项</p>}
       {state === 'loading' && <p className="library-status">正在加载笔记…</p>}
-      {state === 'error' && <p className="library-status library-status--error">无法加载笔记。</p>}
+      <ErrorNotification error={state === 'error' ? '无法加载笔记。' : null} />
       {showEmptyState && state === 'ready' && notes.length === 0 && <p className="library-status">此文件夹中还没有笔记。</p>}
       {state === 'ready' && notes.length > 0 && (
         <ul className="note-list__items" data-note-list>
@@ -321,6 +324,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
           setContextPosition(null)
           contextTriggerRef.current?.focus()
         }} onContextMenu={(event) => event.preventDefault()}>
+          {onToggleStar && selectionCount === 1 && contextTarget.kind === 'formal' && <button type="button" role="menuitem" onClick={() => { onToggleStar(contextTarget); setContextTarget(null); setContextPosition(null) }}>{starredIds.includes(contextTarget.id) ? '取消星标' : '添加星标'}</button>}
           {onExport && selectionCount === 1 && canExportPdf(contextTarget) && <>
             <button type="button" role="menuitem" autoFocus onClick={() => { onExport(contextSelection[0], 'pdf'); setContextTarget(null); setContextPosition(null) }}>{isPdfFileEntry(contextTarget) ? '另存 PDF' : '导出 PDF'}</button>
             {contextTarget.content?.type === 'document' && <button type="button" role="menuitem" onClick={() => { onExport(contextTarget, 'word'); setContextTarget(null); setContextPosition(null) }}>导出 Word</button>}

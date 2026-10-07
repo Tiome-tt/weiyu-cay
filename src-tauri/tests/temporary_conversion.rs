@@ -1844,6 +1844,7 @@ fn sticky_capability_is_separate_and_minimal() {
             "allow-delete-temporary",
             "allow-undo-delete",
             "allow-show-temporary-window",
+            "allow-set-capture-shortcut-recording",
             "allow-get-capture-shortcut",
             "allow-rebind-capture-shortcut",
             "allow-load-sticky-settings",

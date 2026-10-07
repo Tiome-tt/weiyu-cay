@@ -27,6 +27,20 @@ function openMoreActions() {
 }
 
 describe('EditorPane', () => {
+  it('clears source-only selection statistics when entering preview', () => {
+    render(<EditorPane document={note('岛屿计划')} notes={fakeNotePort()} />)
+    act(() => view().dispatch({selection:{anchor:0,head:2}}))
+    expect(screen.getByLabelText('笔记状态栏')).toHaveTextContent('选中 2 字')
+    fireEvent.click(screen.getByRole('button', {name:labels[2]}))
+    expect(screen.getByLabelText('笔记状态栏')).not.toHaveTextContent('选中')
+  })
+
+  it('updates footer statistics and selected character counts before autosave', async () => {
+    render(<EditorPane document={note('岛屿')} notes={fakeNotePort()} autosaveDelayMs={10_000} />)
+    act(() => view().dispatch({changes:{from:2,insert:'\n计划'},selection:{anchor:0,head:2}}))
+    await waitFor(() => expect(screen.getByLabelText('笔记状态栏')).toHaveTextContent('2 行 · 4 字 · 选中 2 字'))
+  })
+
   it.each(['右键菜单', '加号'] as const)('opens the same internal-link picker from the %s', async (entry) => {
     const current = { ...note('正文'), title: '当前笔记' }
     const target = {
@@ -66,7 +80,7 @@ describe('EditorPane', () => {
     const tags = screen.getByRole('list', { name: '笔记标签' })
     expect(tags).toHaveTextContent('项目')
     expect(tags).toHaveTextContent('待确认')
-    expect(tags.parentElement).toHaveTextContent('最后编辑于')
+    expect(tags.parentElement).not.toHaveTextContent('最后编辑于')
 
     rendered.rerender(<EditorPane document={{ ...note(''), tags: [] }} notes={fakeNotePort()} />)
     expect(screen.queryByRole('list', { name: '笔记标签' })).not.toBeInTheDocument()
@@ -165,8 +179,8 @@ describe('EditorPane', () => {
     const heading = screen.getByRole('heading', { name: '岛屿周末计划', level: 1 })
     const header = heading.closest('.editor-document-heading')
     expect(header).not.toBeNull()
-    expect(header).toHaveTextContent('最后编辑于')
-    expect(header?.querySelector('time')).toHaveAttribute('dateTime', '2026-08-24T08:10:00Z')
+    expect(header).not.toHaveTextContent('最后编辑于')
+    expect(screen.getByLabelText('笔记状态栏').querySelector('time')).toHaveAttribute('dateTime', '2026-08-24T08:10:00Z')
     expect(header?.nextElementSibling).toHaveClass('editor-document__body')
   })
 
@@ -221,8 +235,8 @@ describe('EditorPane', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(folderTarget).toHaveFocus()
     expect(folderTarget).toBeEnabled()
-    await user.click(within(menu).getByRole('button', { name: '添加标签' }))
-    expect(within(menu).getByRole('textbox', { name: '添加标签' })).toBeEnabled()
+    expect(within(menu).queryByRole('button', { name: '添加标签' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '添加标签' })).toBeVisible()
 
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
@@ -230,7 +244,7 @@ describe('EditorPane', () => {
 
     await user.keyboard('{ArrowDown}')
     const reopened = screen.getByRole('menu', { name: '笔记操作' })
-    const lastControl = within(reopened).getByRole('button', { name: '添加标签' })
+    const lastControl = within(reopened).getByRole('combobox', { name: '笔记文件夹' })
     lastControl.focus()
     await user.tab()
     expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
@@ -250,7 +264,7 @@ describe('EditorPane', () => {
     const pane = screen.getByRole('toolbar', { name: '编辑器视图' }).parentElement
     expect(pane?.querySelector(':scope > .editor-notices')).not.toBeNull()
     expect(pane?.querySelector(':scope > .editor-document')).not.toBeNull()
-    expect(pane?.querySelector(':scope > .backlinks')).not.toBeNull()
+    expect(pane?.querySelector(':scope > .editor-status')).not.toBeNull()
   })
 
   it('keeps one document while switching source, split, and preview modes', async () => {
@@ -497,7 +511,7 @@ describe('EditorPane', () => {
 
     const alert = await screen.findByRole('alert')
     const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
-    const compactStatus = within(toolbar).getByRole('status', { name: '保存失败' })
+    const compactStatus = within(screen.getByLabelText('笔记状态栏')).getByRole('status', { name: '保存状态' })
     expect(compactStatus).toHaveTextContent('保存失败')
     expect(compactStatus).not.toHaveTextContent('The note could not be saved')
 
@@ -505,7 +519,7 @@ describe('EditorPane', () => {
     expect(alert.closest('.editor-notices')).not.toBeNull()
     expect(alert).not.toHaveTextContent('private storage detail')
     expect(alert).toHaveTextContent('无法保存，修改内容已保留在本地。')
-    const retry = within(alert).getByRole('button', { name: '重试保存' })
+    const retry = screen.getByRole('button', { name: '重试保存' })
     retry.focus()
     expect(retry).toHaveFocus()
     await userEvent.click(retry)

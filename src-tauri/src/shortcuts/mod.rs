@@ -170,6 +170,7 @@ pub struct ShortcutService<B> {
     platform: AcceleratorPlatform,
     state: Arc<Mutex<SharedRegistrationState>>,
     shutdown_requested: Arc<AtomicBool>,
+    recording: Arc<Mutex<Option<String>>>,
 }
 
 impl<B: Clone> Clone for ShortcutService<B> {
@@ -179,6 +180,7 @@ impl<B: Clone> Clone for ShortcutService<B> {
             platform: self.platform,
             state: self.state.clone(),
             shutdown_requested: self.shutdown_requested.clone(),
+            recording: self.recording.clone(),
         }
     }
 }
@@ -194,6 +196,7 @@ impl<B: ShortcutBackend> ShortcutService<B> {
             platform,
             state: Arc::new(Mutex::new(SharedRegistrationState::default())),
             shutdown_requested: Arc::new(AtomicBool::new(false)),
+            recording: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -319,6 +322,24 @@ impl<B: ShortcutBackend> ShortcutService<B> {
             identity,
         })
         .map(|()| canonical)
+    }
+
+    pub fn set_recording(&self, recording: bool) -> Result<(), ShortcutError> {
+        let mut suspended = lock_recover(&self.recording);
+        if recording {
+            if suspended.is_some() {
+                return Ok(());
+            }
+            let previous = self.current();
+            self.unregister()?;
+            *suspended = previous;
+        } else if let Some(previous) = suspended.as_ref() {
+            if self.current().is_none() {
+                self.register(previous)?;
+            }
+            *suspended = None;
+        }
+        Ok(())
     }
 
     pub fn unregister(&self) -> Result<(), ShortcutError> {

@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { AiPort, AiSummaryEmphasisKind, AiSummaryProgress, AiSummaryResult } from '../../domain/ports'
 import { Icon } from '../../shared/Icon'
@@ -70,8 +71,8 @@ export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, on
     setCacheLoading(true)
     void ai.getCachedSummary(effectiveNoteId).then((cached) => {
       if (active) setSummary(cached)
-    }).catch((error: unknown) => {
-      if (active) setError(error instanceof Error ? `无法读取已保存的总结：${error.message}` : '无法读取已保存的总结。')
+    }).catch(() => {
+      if (active) setError('无法读取已保存的总结，请关闭面板后重试。')
     }).finally(() => {
       if (active) setCacheLoading(false)
     })
@@ -128,8 +129,8 @@ export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, on
       setSummary(next)
     } catch (error: unknown) {
       const diagnostic = typeof error === 'object' && error !== null && 'diagnostic' in error && typeof error.diagnostic === 'string' ? error.diagnostic : error instanceof Error ? error.message : undefined
-      if (diagnostic !== undefined) console.error('[AI summary] generation failed', diagnostic)
-      setError(import.meta.env.DEV && diagnostic !== undefined ? `总结生成失败：${diagnostic}` : '总结生成失败，请检查 API 设置或网络连接。')
+      if (import.meta.env.DEV && diagnostic !== undefined) console.error('[AI summary] generation failed', diagnostic)
+      setError('总结生成失败，请检查 API 设置或网络连接。')
     } finally {
       setBusy(false)
     }
@@ -145,8 +146,8 @@ export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, on
         ? await ai.relabel({ noteId: effectiveNoteId, model })
         : await requestDeepSeekRelabel({ noteId: effectiveNoteId, summary, apiKey: apiKey ?? '', model })
       setSummary(next)
-    } catch (cause: unknown) {
-      setError(cause instanceof Error && import.meta.env.DEV ? '重新标注失败：' + cause.message : '重新标注失败，已保存的总结仍可阅读。')
+    } catch {
+      setError('重新标注失败，已保存的总结仍可阅读。')
     } finally {
       setBusy(false)
     }
@@ -193,7 +194,7 @@ export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, on
             <div className="ai-summary-widget__body">
               {cacheLoading && <p role="status">正在读取已保存的总结…</p>}
               {busy && <ProgressStatus progress={progress} />}
-              {error && <p className="ai-summary-widget__error" role="alert">{error}</p>}
+              <ErrorNotification error={error} />
               {summary && filterOpen && <fieldset className="ai-summary-widget__filters"><legend>显示的标注类别</legend>{ANNOTATION_KINDS.map((kind) => <label key={kind}><input type="checkbox" checked={visibleKinds.has(kind)} onChange={() => toggleKind(kind)} />{ANNOTATION_LABELS[kind]}</label>)}<label className="ai-summary-widget__outline-option"><input type="checkbox" checked={showOutlineEmphasis} onChange={() => setShowOutlineEmphasis((current) => !current)} />在大纲显示标注</label></fieldset>}
               {stale && summary && <p className="ai-summary-widget__stale-warning" role="status">笔记已修改，此总结可能过期。</p>}
               {summary && (summary.annotationVersion ?? 0) < 2 && (summary.emphasis?.length ?? 0) > 0 && !busy && <p className="ai-summary-widget__annotation-warning" role="status">旧版标注尚未筛选重点，可点击重新标注。</p>}

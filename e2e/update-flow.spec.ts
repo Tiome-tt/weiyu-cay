@@ -4,6 +4,7 @@ test('checks and installs a simulated update only after explicit confirmation', 
   await page.goto('/')
 
   await page.getByRole('button', { name: '打开设置' }).click()
+  await page.getByRole('tab', { name: '系统' }).click()
 
   const check = page.getByRole('button', { name: '检查更新' })
   await expect(check).toBeVisible()

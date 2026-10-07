@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { TypedEditorPane } from '../content/TypedEditorPane'
 import {
   forwardRef,
@@ -12,6 +13,7 @@ import {
 import type { EditorMode, Folder, FolderId, NoteDocument, NoteId, NoteSummary } from '../../domain/model'
 import type { AiPort, AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteResult, SearchPort, SystemPort } from '../../domain/ports'
 import { TagsEditor } from '../search/TagsEditor'
+import { EditorStatusBar, type EditorStatusBarHandle } from './EditorStatusBar'
 import { Backlinks } from './Backlinks'
 import { EditorActionsMenu } from './EditorActionsMenu'
 import { InternalLinkDialog } from './InternalLinkDialog'
@@ -93,7 +95,10 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   },
   ref,
 ) {
+  const statisticsRef = useRef<EditorStatusBarHandle>(null)
+  const [selectedText, setSelectedText] = useState('')
   const [mode, setMode] = useState<EditorMode>(initialMode)
+  useEffect(() => setSelectedText(''), [mode])
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
   const [imageError, setImageError] = useState<string | null>(null)
   const [tagTransactionActive, setTagTransactionActive] = useState(false)
@@ -304,6 +309,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
 
   const handleSourceChange = useCallback((markdown: string) => {
     draftMarkdownRef.current = markdown
+    statisticsRef.current?.updateText(markdown)
     autosave.updateMarkdown(markdown)
     scheduleDraftReport(markdown)
     schedulePreview(markdown)
@@ -371,17 +377,12 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
                         </label>
                       </div>
                     )}
-                    {search && (
-                      <div className="editor-actions-menu__section" role="group" aria-label="标签">
-                        <span className="editor-actions-menu__heading">标签</span>
-                        <TagsEditor tags={document.tags} onChange={updateTags} />
-                      </div>
-                    )}
+
                   </>
                 )}
               </EditorActionsMenu>
             )}
-            <CompactSaveStatus state={autosave.state} />
+
             {modes.map((item) => (
               <button
                 key={item.mode}
@@ -400,10 +401,10 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       </header>
       <div className="editor-notices">
         {autosave.state.status === 'error' && <SaveStatus state={autosave.state} />}
-        {imageError && <p className="editor-metadata-status editor-save--error" role="alert">{imageError}</p>}
+        <ErrorNotification error={imageError} />
         {metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
-        {metadataError && <p className="editor-metadata-status editor-save--error" role="alert">{metadataError}</p>}
-        {linkActionError && <p className="editor-metadata-status editor-save--error" role="alert">{linkActionError}</p>}
+        <ErrorNotification error={metadataError} />
+        <ErrorNotification error={linkActionError} />
       </div>
       <div
         className={`editor-document editor-document--${mode}`}
@@ -426,11 +427,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
             <h1>{displayTitle}</h1>
           )}
           <div className="editor-document-heading__meta">
-            <span>
-              最后编辑于{' '}
-              <time dateTime={autosave.updatedAt}>{formatLastEdited(autosave.updatedAt)}</time>
-            </span>
-            {document.tags.length > 0 && (
+            {search ? <TagsEditor tags={document.tags} onChange={updateTags} /> : document.tags.length > 0 && (
               <ul className="editor-document-heading__tags" aria-label="笔记标签">
                 {document.tags.map((tag) => <li key={tag}>#{tag}</li>)}
               </ul>
@@ -448,6 +445,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
           <div className="editor-document__source" hidden={mode === 'preview'}>
           <MarkdownSource
             ref={sourceRef}
+            onSelectionChange={setSelectedText}
             markdown={autosave.markdown}
             noteId={document.id}
             assets={assets}
@@ -504,7 +502,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
             />
           </div>
         </div>
-        <AiSummaryWidget noteId={document.id} title={displayTitle} markdown={draftMarkdownRef.current} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages} />
+        {document.kind !== 'temporary' && <AiSummaryWidget noteId={document.id} title={displayTitle} markdown={draftMarkdownRef.current} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages} />}
       </div>
       {linkDialogOpen && links && (
         <InternalLinkDialog
@@ -515,14 +513,14 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
           onCancel={() => setLinkDialogOpen(false)}
         />
       )}
-      {links && onNavigateNote && (
+      <EditorStatusBar ref={statisticsRef} text={autosave.markdown} selectedText={selectedText} updatedAt={autosave.updatedAt} state={autosave.state} related={links && onNavigateNote ? (
         <Backlinks
           noteId={document.id}
           links={links}
           onNavigate={onNavigateNote}
           refreshToken={`${autosave.updatedAt}:${autosave.state.status}`}
         />
-      )}
+      ) : undefined} />
     </div>
   )
 })
@@ -539,23 +537,6 @@ function SaveStatus({ state }: { state: SaveState }) {
   return <StatusNotice state={notice} className="editor-metadata-status editor-save-notice editor-save--error" />
 }
 
-function CompactSaveStatus({ state }: { state: SaveState }) {
-  if (state.status === 'idle') return null
-  const message = state.status === 'error'
-    ? '保存失败'
-    : { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status]
-  return (
-    <span
-      className={`editor-save${state.status === 'error' ? ' editor-save--error' : ''}`}
-      role="status"
-      aria-label={state.status === 'error' ? '保存失败' : '保存状态'}
-      aria-live="polite"
-    >
-      {message}
-    </span>
-  )
-}
-
 function syncScrollPosition(source: HTMLElement, target: HTMLElement, sourceTop: number) {
   const sourceRange = Math.max(0, source.scrollHeight - source.clientHeight)
   const targetRange = Math.max(0, target.scrollHeight - target.clientHeight)
@@ -564,20 +545,6 @@ function syncScrollPosition(source: HTMLElement, target: HTMLElement, sourceTop:
 
 function clampSplitPercent(value: number) {
   return Math.min(maximumSplitPercent, Math.max(minimumSplitPercent, value))
-}
-
-function formatLastEdited(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '时间未知'
-  const now = new Date()
-  return new Intl.DateTimeFormat('zh-CN', {
-    ...(date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
 }
 
 function documentBreadcrumb(document: NoteDocument, folders?: Folder[]) {

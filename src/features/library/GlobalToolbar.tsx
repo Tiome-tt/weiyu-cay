@@ -8,6 +8,7 @@ import { SearchBox } from '../search/SearchBox'
 export type ToolbarSaveState = 'hidden' | 'dirty' | 'saving' | 'saved' | 'error'
 
 export interface GlobalToolbarProps {
+  compact?: boolean
   search: SearchPort
   searchDismissSignal: number
   saveState: ToolbarSaveState
@@ -23,18 +24,18 @@ const SAVE_LABELS: Record<Exclude<ToolbarSaveState, 'hidden'>, string> = {
   error: '保存失败',
 }
 
-export function GlobalToolbar({ search, searchDismissSignal, saveState, updateAttention, onSelectResult, onOpenSettings }: GlobalToolbarProps) {
+export function GlobalToolbar({ compact = false, search, searchDismissSignal, saveState, updateAttention, onSelectResult, onOpenSettings }: GlobalToolbarProps) {
   return (
-    <header className="global-toolbar" role="toolbar" aria-label="全局应用栏">
-      <div className="global-toolbar__brand" data-testid="global-toolbar-brand">
+    <header className={compact ? "global-toolbar global-toolbar--compact" : "global-toolbar"} role="toolbar" aria-label="全局应用栏">
+      {!compact && <div className="global-toolbar__brand" data-testid="global-toolbar-brand">
         <AppIcon size={26} />
         <strong>{APP_NAME}</strong>
-      </div>
-      <div className="global-toolbar__search" data-testid="global-toolbar-search">
+      </div>}
+      {!compact && <div className="global-toolbar__search" data-testid="global-toolbar-search">
         <SearchBox search={search} onSelect={onSelectResult} dismissSignal={searchDismissSignal} />
-      </div>
+      </div>}
       <div className="global-toolbar__actions" data-testid="global-toolbar-actions">
-        {saveState !== 'hidden' && (
+        {!compact && saveState !== 'hidden' && (
                     <div aria-label="全局保存状态" className={'global-toolbar__save global-toolbar__save--' + saveState}>
             <span role="status" aria-label="保存状态">{SAVE_LABELS[saveState]}</span>
           </div>

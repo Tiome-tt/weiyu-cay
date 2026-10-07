@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
 import type { AssetPort, ImageReadPort, LifecycleParticipantPort, TemporaryPort, TemporaryWindowPort, TemporaryWindowState } from '../../domain/ports'
@@ -163,7 +164,7 @@ export function StickyWindow({
       {(autosave.state.status !== 'idle' || windowError !== null) && (
         <footer className="sticky-window__status">
           {autosave.state.status !== 'idle' && <StickySaveStatus state={autosave.state} />}
-          {windowError && <span role="alert">{windowError}</span>}
+          <ErrorNotification error={windowError} />
         </footer>
       )}
     </main>

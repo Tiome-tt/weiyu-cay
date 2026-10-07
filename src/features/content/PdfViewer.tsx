@@ -1,3 +1,4 @@
+import { ErrorNotification } from '../../shared/notifications'
 import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
@@ -84,7 +85,7 @@ export default function PdfViewer({bytes,cacheKey,onDocumentError}:{bytes:Uint8A
     return()=>{active=false;window.cancelAnimationFrame(frame);render?.cancel()}
   },[pdf,page,scale,cacheKey])
   return <div className="pdf-viewer">
-    {error&&<p role="alert">{error}</p>}
+    <ErrorNotification error={error} />
     <div className="pdf-viewer__page" onWheel={handleWheel}><canvas ref={canvas} aria-label={`PDF 第 ${page} 页`}/></div>
     <div className="pdf-viewer__toolbar" role="toolbar" aria-label="PDF 阅读工具">
       <button type="button" disabled={!pdf||page<=1} onClick={()=>setPage(p=>p-1)}>上一页</button>

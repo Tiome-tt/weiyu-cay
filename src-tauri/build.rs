@@ -49,6 +49,7 @@ fn main() {
             "show_temporary_window",
             "hide_temporary_window",
             "set_temporary_always_on_top",
+            "set_capture_shortcut_recording",
             "get_capture_shortcut",
             "rebind_capture_shortcut",
             "check_for_update",

@@ -1,3 +1,6 @@
+import { shortcutLabel } from './shortcuts'
+import { Icon } from '../../shared/Icon'
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import type { NoteId } from '../../domain/model'
 import type { SearchPort, SearchResult } from '../../domain/ports'
@@ -5,6 +8,10 @@ import { parseSearchQuery } from './query'
 import { SearchResults } from './SearchResults'
 
 interface SearchBoxProps {
+  resultsContainer?: HTMLElement | null
+  onQueryChange?: (query:string)=>void
+  shortcut?: string
+  onSubmit?: (query: string) => void
   search: SearchPort
   onSelect: (noteId: NoteId) => void
   dismissSignal?: number
@@ -14,7 +21,7 @@ type SearchState = 'idle' | 'loading' | 'empty' | 'invalid' | 'error'
 
 const SEARCH_DELAY_MS = 180
 
-export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProps) {
+export function SearchBox({ search, onSelect, onSubmit, resultsContainer, onQueryChange, shortcut = "CommandOrControl+F", dismissSignal = 0 }: SearchBoxProps) {
   const [input, setInput] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [state, setState] = useState<SearchState>('idle')
@@ -23,8 +30,11 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
   const [activeIndex, setActiveIndex] = useState(-1)
   const [retryRequest, setRetryRequest] = useState(0)
   const generation = useRef(0)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const resultsContainerRef = useRef(resultsContainer)
+  resultsContainerRef.current = resultsContainer
   const resultsId = useId()
 
   const close = useCallback((restoreFocus = false) => {
@@ -36,10 +46,13 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
     if (restoreFocus) inputRef.current?.focus()
   }, [])
 
+  useEffect(() => { onQueryChange?.(input) }, [input,onQueryChange])
   useEffect(() => () => { generation.current += 1 }, [])
 
   useEffect(() => {
-    if (dismissSignal > 0) close()
+    if (dismissSignal === 0) return
+    close()
+    if (resultsContainerRef.current) setInput('')
   }, [close, dismissSignal])
 
   useEffect(() => {
@@ -78,7 +91,7 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
   }, [input, retryRequest, search])
 
   const select = (noteId: NoteId) => {
-    close()
+    if(!resultsContainer) close()
     onSelect(noteId)
   }
 
@@ -93,10 +106,17 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {
-      close(true)
+      if(resultsContainer) {setInput('');setResults([]);setState('idle')} else close(true)
       return
     }
     if (event.target !== inputRef.current) return
+    if (event.key === 'Enter' && !event.nativeEvent.isComposing && activeIndex < 0 && input.trim()) {
+      event.preventDefault()
+      if (onSubmit && !resultsContainer) { close(); onSubmit(input) }
+      else if (results[0]) select(results[0].noteId)
+      else retry()
+      return
+    }
     if (results.length === 0 || dismissed) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
@@ -113,18 +133,18 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
   const open = !dismissed && (state !== 'idle' || results.length > 0)
 
   useEffect(() => {
-    if (!open) return
+    if (!open || resultsContainer) return
     const dismissOutside = (event: PointerEvent) => {
       const target = event.target
-      if (target instanceof Node && !rootRef.current?.contains(target)) close()
+      if (target instanceof Node && !rootRef.current?.contains(target) && !overlayRef.current?.contains(target)) close()
     }
     document.addEventListener('pointerdown', dismissOutside)
     return () => document.removeEventListener('pointerdown', dismissOutside)
-  }, [close, open])
+  }, [close, open, resultsContainer])
 
   return (
     <div ref={rootRef} className="library-search" onKeyDown={onKeyDown}>
-      <input
+      <div className="library-search__field"><Icon name="search" size={14} /><input
         ref={inputRef}
         type="search"
         role="searchbox"
@@ -133,7 +153,7 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
         aria-controls={resultsId}
         aria-expanded={open}
         aria-activedescendant={activeIndex >= 0 ? `${resultsId}-${activeIndex}` : undefined}
-        placeholder="搜索标题、正文或 #标签"
+        placeholder="搜索笔记"
         value={input}
         onChange={(event) => {
           generation.current += 1
@@ -144,8 +164,9 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
           setDismissed(false)
           setActiveIndex(-1)
         }}
-      />
-      {open && results.length === 0 && (
+      /><kbd aria-hidden="true">{shortcutLabel(shortcut)}</kbd></div>
+      {open && createPortal(<div ref={overlayRef} className={resultsContainer ? "library-search-inline" : "library-search-overlay"} style={resultsContainer ? undefined : { left: Math.max(12, Math.min(inputRef.current?.getBoundingClientRect().left ?? 12, window.innerWidth - 572)), top: (inputRef.current?.getBoundingClientRect().bottom ?? 0) + 7 }}>
+      {results.length === 0 && (
         <div className="search-results search-results--message" id={resultsId}>
           <p role={state === 'error' ? 'alert' : 'status'}>
             {guidance || (state === 'loading' ? '正在搜索…' : state === 'empty' ? '没有匹配的笔记' : '搜索失败，请重试')}
@@ -153,7 +174,8 @@ export function SearchBox({ search, onSelect, dismissSignal = 0 }: SearchBoxProp
           {state === 'error' && <button type="button" onClick={retry}>重新搜索</button>}
         </div>
       )}
-      {open && results.length > 0 && <SearchResults id={resultsId} results={results} activeIndex={activeIndex} onActiveIndexChange={setActiveIndex} onSelect={select} />}
+      {results.length > 0 && <SearchResults query={input} id={resultsId} results={results} activeIndex={activeIndex} onActiveIndexChange={setActiveIndex} onSelect={select} />}
+      </div>, resultsContainer ?? document.body)}
     </div>
   )
 }

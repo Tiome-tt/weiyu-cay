@@ -934,3 +934,22 @@ fn permissions_keep_shortcut_management_out_of_sticky_windows() {
     assert!(!sticky.contains("global-shortcut"));
     assert!(!desktop.contains("global-shortcut:default"));
 }
+
+#[test]
+fn recording_suspends_and_restores_without_reviving_a_replaced_binding() {
+    let backend = ShortcutFixture::default();
+    let service = ShortcutService::new_for_platform(backend.clone(), AcceleratorPlatform::Windows);
+    service.register(DEFAULT_CAPTURE_SHORTCUT).unwrap();
+    service.set_recording(true).unwrap();
+    assert_eq!(service.current(), None);
+    assert!(matches!(
+        service.status().registration,
+        ShortcutRegistrationStatus::Inactive
+    ));
+    service.set_recording(false).unwrap();
+    assert_eq!(service.current().as_deref(), Some(DEFAULT_CAPTURE_SHORTCUT));
+    service.set_recording(true).unwrap();
+    service.rebind("Control+Alt+N").unwrap();
+    service.set_recording(false).unwrap();
+    assert_eq!(service.current().as_deref(), Some("Control+Alt+N"));
+}

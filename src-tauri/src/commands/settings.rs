@@ -1,6 +1,6 @@
 use crate::{
     error::CommandError,
-    platform::{IndexMutationLock, SafeDirectory, SafeEntryKind},
+    platform::{available_storage_bytes, IndexMutationLock, SafeDirectory, SafeEntryKind},
     shortcuts::{normalize_accelerator, DEFAULT_CAPTURE_SHORTCUT},
     storage::{
         database::Database, paths::StoragePaths, rebuild::rebuild_index_strict_with_validator,
@@ -69,6 +69,14 @@ pub enum EditorMode {
     Preview,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImageSaveQuality {
+    WebpQ95,
+    WebpQ85,
+    Original,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum DataRootSetting {
@@ -89,6 +97,8 @@ pub struct AppSettings {
     pub line_height: f64,
     #[serde(default = "default_true")]
     pub daily_lyrics: bool,
+    #[serde(default = "default_search_shortcut")]
+    pub search_shortcut: String,
     pub shortcut: String,
     pub launch_at_startup: bool,
     #[serde(default = "default_true")]
@@ -99,6 +109,8 @@ pub struct AppSettings {
     pub show_menu_bar_icon: bool,
     pub default_editor_mode: EditorMode,
     pub autosave_delay_ms: u64,
+    #[serde(default = "default_image_save_quality")]
+    pub image_save_quality: ImageSaveQuality,
     pub data_root: DataRootSetting,
     #[serde(default = "default_deepseek_model")]
     pub deepseek_model: String,
@@ -114,6 +126,8 @@ pub struct StickySettings {
     pub font_size: f64,
     pub line_height: f64,
     pub autosave_delay_ms: u64,
+    #[serde(default = "default_image_save_quality")]
+    pub image_save_quality: ImageSaveQuality,
 }
 
 impl From<&AppSettings> for StickySettings {
@@ -126,6 +140,7 @@ impl From<&AppSettings> for StickySettings {
             font_size: settings.font_size,
             line_height: settings.line_height,
             autosave_delay_ms: settings.autosave_delay_ms,
+            image_save_quality: settings.image_save_quality,
         }
     }
 }
@@ -140,6 +155,10 @@ const fn default_true() -> bool {
 
 fn default_deepseek_model() -> String {
     "deepseek-flash".to_owned()
+}
+
+const fn default_image_save_quality() -> ImageSaveQuality {
+    ImageSaveQuality::WebpQ95
 }
 
 impl Default for AppSettings {
@@ -165,6 +184,7 @@ pub struct SettingsPatch {
     pub font_size: Option<f64>,
     pub line_height: Option<f64>,
     pub daily_lyrics: Option<bool>,
+    pub search_shortcut: Option<String>,
     pub shortcut: Option<String>,
     pub launch_at_startup: Option<bool>,
     pub close_to_tray: Option<bool>,
@@ -172,6 +192,7 @@ pub struct SettingsPatch {
     pub show_menu_bar_icon: Option<bool>,
     pub default_editor_mode: Option<EditorMode>,
     pub autosave_delay_ms: Option<u64>,
+    pub image_save_quality: Option<ImageSaveQuality>,
     pub deepseek_model: Option<String>,
 }
 
@@ -371,8 +392,8 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
         self.load_unlocked()
     }
 
-    /// Reads only persisted sticky-window appearance fields. This intentionally avoids
-    /// shortcut/autostart reconciliation: sticky windows need no OS preference authority.
+    /// Reads the persisted fields shared with sticky editors, including image quality.
+    /// This avoids shortcut/autostart reconciliation: sticky windows need no OS preference authority.
     pub fn load_sticky_settings(&self) -> Result<StickySettings, CommandError> {
         let _transaction = self
             .transaction
@@ -505,6 +526,9 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
             .parent()
             .ok_or_else(|| CommandError::validation("storage destination has no parent"))?;
         let parent = SafeDirectory::open(parent_path, &[], false)?;
+        let available = available_storage_bytes(parent_path)?;
+        let required = count_tree_bytes(self.paths.root())?.saturating_add(16 * 1024 * 1024);
+        validate_relocation_space(required, available)?;
         let staging = parent_path.join(format!(".simple-notes-relocation-{operation_id}"));
         if fs::symlink_metadata(&staging).is_ok() {
             return Err(CommandError::conflict(
@@ -586,6 +610,10 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
                 &index_snapshot_bytes,
             )?;
             staging_directory.ensure_path_identity()?;
+            if fs::symlink_metadata(&destination).is_ok() {
+                // Recheck emptiness at publication; a populated folder is never replaced.
+                parent.remove_empty_child(destination_name)?;
+            }
             staging_directory
                 .move_self_no_replace(&parent, destination_name)
                 .map_err(|failure| failure.into_error())?;
@@ -776,6 +804,10 @@ fn apply_patch(
     if let Some(value) = patch.daily_lyrics {
         settings.daily_lyrics = value;
     }
+    if let Some(shortcut) = patch.search_shortcut {
+        settings.search_shortcut = normalize_accelerator(&shortcut)
+            .map_err(|error| CommandError::validation(error.to_string()))?;
+    }
     if let Some(shortcut) = patch.shortcut {
         settings.shortcut = normalize_accelerator(&shortcut)
             .map_err(|error| CommandError::validation(error.to_string()))?;
@@ -798,6 +830,9 @@ fn apply_patch(
     if let Some(value) = patch.autosave_delay_ms {
         settings.autosave_delay_ms = value.clamp(150, 2_000);
     }
+    if let Some(value) = patch.image_save_quality {
+        settings.image_save_quality = value;
+    }
     if let Some(value) = patch.deepseek_model {
         settings.deepseek_model = match value.as_str() {
             "deepseek-v4-pro" => value,
@@ -814,6 +849,10 @@ fn migrate_loaded_settings(mut settings: AppSettings) -> AppSettings {
     settings
 }
 
+fn default_search_shortcut() -> String {
+    "CommandOrControl+F".to_owned()
+}
+
 fn validate_settings(mut settings: AppSettings) -> Result<AppSettings, CommandError> {
     if settings.version != SETTINGS_VERSION {
         return Err(CommandError::validation("settings version is unsupported"));
@@ -828,6 +867,8 @@ fn validate_settings(mut settings: AppSettings) -> Result<AppSettings, CommandEr
     settings.font_size = settings.font_size.clamp(12.0, 28.0);
     settings.line_height = settings.line_height.clamp(1.2, 2.2);
     settings.autosave_delay_ms = settings.autosave_delay_ms.clamp(150, 2_000);
+    settings.search_shortcut = normalize_accelerator(&settings.search_shortcut)
+        .map_err(|error| CommandError::validation(error.to_string()))?;
     settings.shortcut = normalize_accelerator(&settings.shortcut)
         .map_err(|error| CommandError::validation(error.to_string()))?;
     if let DataRootSetting::Custom { path } = &settings.data_root {
@@ -955,6 +996,15 @@ fn count_tree_bytes(root: &Path) -> Result<u64, CommandError> {
     Ok(total)
 }
 
+fn validate_relocation_space(required: u64, available: u64) -> Result<(), CommandError> {
+    if available < required {
+        return Err(CommandError::io(
+            "not enough available disk space for relocation",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_fresh_destination(source: &Path, destination: &Path) -> Result<PathBuf, CommandError> {
     if !destination.is_absolute()
         || destination
@@ -966,9 +1016,11 @@ fn validate_fresh_destination(source: &Path, destination: &Path) -> Result<PathB
         ));
     }
     if fs::symlink_metadata(destination).is_ok() {
-        return Err(CommandError::conflict(
-            "storage destination must not already exist",
-        ));
+        reject_existing_path_links(destination)?;
+        let directory = SafeDirectory::open(destination, &[], false)?;
+        if !directory.entry_names()?.is_empty() {
+            return Err(CommandError::conflict("storage destination must be empty"));
+        }
     }
     let requested_parent = destination
         .parent()
@@ -1335,6 +1387,7 @@ fn read_window_state_rows_connection(
 enum RelocationPhase {
     AwaitingRestart,
     ReadyForCleanup,
+    Cleaned,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1604,7 +1657,17 @@ pub fn finalize_reopened_relocation(paths: &StoragePaths) -> Result<(), CommandE
     let Some(mut marker) = read_relocation_marker(paths)? else {
         return Ok(());
     };
+    if marker.phase == RelocationPhase::Cleaned {
+        let _ = finish_previous_cleanup(&marker);
+        return Ok(());
+    }
     if marker.phase == RelocationPhase::ReadyForCleanup {
+        if cleanup_previous_storage(paths, &marker).is_ok() {
+            marker.phase = RelocationPhase::Cleaned;
+            write_marker(paths.root(), &marker)?;
+            let _ = finish_previous_cleanup(&marker);
+        }
+        // Cleanup failure must not prevent opening an already verified new library.
         return Ok(());
     }
     let expected_window_states = read_window_state_rows(paths.database())?;
@@ -1618,7 +1681,187 @@ pub fn finalize_reopened_relocation(paths: &StoragePaths) -> Result<(), CommandE
         Ok(())
     })?;
     marker.phase = RelocationPhase::ReadyForCleanup;
-    write_marker(paths.root(), &marker)
+    write_marker(paths.root(), &marker)?;
+    if cleanup_previous_storage(paths, &marker).is_ok() {
+        marker.phase = RelocationPhase::Cleaned;
+        write_marker(paths.root(), &marker)?;
+        let _ = finish_previous_cleanup(&marker);
+    }
+    Ok(())
+}
+
+fn cleanup_previous_storage(paths: &StoragePaths, marker: &MoveMarker) -> Result<(), CommandError> {
+    let source_path = Path::new(&marker.source);
+    if !source_path.is_absolute()
+        || source_path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(CommandError::validation(
+            "previous storage path is not absolute and normalized",
+        ));
+    }
+    reject_existing_path_links(source_path)?;
+    if source_path == paths.root()
+        || paths.root().starts_with(source_path)
+        || source_path.starts_with(paths.root())
+    {
+        return Err(CommandError::validation("invalid previous storage root"));
+    }
+    let Some(record) = read_source_move_record(source_path)? else {
+        return Err(CommandError::validation(
+            "previous storage has no matching move record",
+        ));
+    };
+    if record.marker.operation_id != marker.operation_id
+        || record.marker.source != marker.source
+        || record.marker.destination != marker.destination
+        || record.phase != SourceMovePhase::ConfigurationPublished
+    {
+        return Err(CommandError::validation(
+            "previous storage move record does not match",
+        ));
+    }
+    let guard = IndexMutationLock::acquire(source_path)?;
+    let source = SafeDirectory::open(source_path, &[], false)?;
+    let destination = SafeDirectory::open(paths.root(), &[], false)?;
+    // Enumerate the fixed application-owned set again; never trust arbitrary marker paths.
+    let candidates = collect_cleanup_candidates(source_path)?;
+    for candidate in &candidates {
+        let name = candidate.relative_path.as_str();
+        if source.entry_kind(name)? == SafeEntryKind::Directory {
+            verify_previous_tree(
+                &source.open_child(name, false)?,
+                &destination.open_child(name, false)?,
+            )?;
+        } else if !name.starts_with("index.sqlite")
+            && !source.regular_file_bytes_equal(name, &destination, name)?
+        {
+            return Err(CommandError::conflict(
+                "previous content changed; cleanup preserved it",
+            ));
+        }
+    }
+    for candidate in candidates {
+        let name = candidate.relative_path.as_str();
+        if source.entry_kind(name)? == SafeEntryKind::Directory {
+            remove_previous_tree(
+                &source.open_child(name, false)?,
+                &destination.open_child(name, false)?,
+            )?;
+            source.remove_empty_child(name)?;
+        } else {
+            source.remove_checked(name)?;
+        }
+    }
+    drop(guard);
+    Ok(())
+}
+
+fn finish_previous_cleanup(marker: &MoveMarker) -> Result<(), CommandError> {
+    let source_path = Path::new(&marker.source);
+    if !source_path.exists() {
+        return Ok(());
+    }
+    if !source_path.is_absolute()
+        || source_path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(CommandError::validation(
+            "previous storage path is not absolute and normalized",
+        ));
+    }
+    reject_existing_path_links(source_path)?;
+    let Some(record) = read_source_move_record(source_path)? else {
+        return Ok(());
+    };
+    if record.marker.operation_id != marker.operation_id
+        || record.marker.source != marker.source
+        || record.marker.destination != marker.destination
+    {
+        return Err(CommandError::validation(
+            "previous cleanup record does not match",
+        ));
+    }
+    if !collect_cleanup_candidates(source_path)?.is_empty() {
+        return Ok(());
+    }
+    let guard = IndexMutationLock::acquire(source_path)?;
+    let source = SafeDirectory::open(source_path, &[], false)?;
+    source.remove_checked(SOURCE_MOVE_MARKER)?;
+    drop(guard);
+    source.remove_checked(MUTATION_LOCK)?;
+    let empty = source.entry_names()?.is_empty();
+    drop(source);
+    if empty {
+        let parent_path = source_path
+            .parent()
+            .ok_or_else(|| CommandError::validation("previous storage has no parent"))?;
+        let name = source_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| CommandError::validation("previous storage name is invalid"))?;
+        SafeDirectory::open(parent_path, &[], false)?.remove_empty_child(name)?;
+    }
+    Ok(())
+}
+
+fn verify_previous_tree(
+    source: &SafeDirectory,
+    destination: &SafeDirectory,
+) -> Result<(), CommandError> {
+    let mut previous = source.entry_names()?;
+    let mut current = destination.entry_names()?;
+    previous.sort();
+    current.sort();
+    if previous.iter().any(|name| !current.contains(name)) {
+        return Err(CommandError::conflict(
+            "previous content layout changed; cleanup preserved it",
+        ));
+    }
+    for name in previous {
+        match source.entry_kind(&name)? {
+            SafeEntryKind::Directory => verify_previous_tree(
+                &source.open_child(&name, false)?,
+                &destination.open_child(&name, false)?,
+            )?,
+            SafeEntryKind::RegularFile => {
+                if !source.regular_file_bytes_equal(&name, destination, &name)? {
+                    return Err(CommandError::conflict(
+                        "previous content changed; cleanup preserved it",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remove_previous_tree(
+    directory: &SafeDirectory,
+    destination: &SafeDirectory,
+) -> Result<(), CommandError> {
+    for name in directory.entry_names()? {
+        match directory.entry_kind(&name)? {
+            SafeEntryKind::Directory => {
+                remove_previous_tree(
+                    &directory.open_child(&name, false)?,
+                    &destination.open_child(&name, false)?,
+                )?;
+                directory.remove_empty_child(&name)?;
+            }
+            SafeEntryKind::RegularFile => {
+                if !directory.regular_file_bytes_equal(&name, destination, &name)? {
+                    return Err(CommandError::conflict(
+                        "previous content changed during cleanup",
+                    ));
+                }
+                directory.remove_checked(&name)?;
+            }
+        }
+    }
+    directory.sync()
 }
 
 fn cleanup_created_destination(
@@ -2000,4 +2243,33 @@ pub fn restart_application(
 ) -> Result<(), CommandError> {
     authorize_restart_request(window.label(), state.relocation_pending())?;
     crate::windows::main::commit_storage_relocation_restart(&state.app, &lifecycle)
+}
+
+#[cfg(test)]
+mod relocation_space_tests {
+    use super::validate_relocation_space;
+    #[test]
+    fn disk_space_preflight_rejects_insufficient_user_available_space() {
+        assert!(validate_relocation_space(1024, 1023).is_err());
+        assert!(validate_relocation_space(1024, 1024).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod search_shortcut_contract {
+    use super::AppSettings;
+
+    #[test]
+    fn search_shortcut_is_backward_compatible_and_persisted_independently() {
+        let mut settings = serde_json::to_value(AppSettings::default()).unwrap();
+        settings.as_object_mut().unwrap().remove("searchShortcut");
+        let mut loaded: AppSettings = serde_json::from_value(settings).unwrap();
+        assert_eq!(loaded.search_shortcut, "CommandOrControl+F");
+        let capture = loaded.shortcut.clone();
+        loaded.search_shortcut = "Control+K".into();
+        let saved: AppSettings =
+            serde_json::from_value(serde_json::to_value(&loaded).unwrap()).unwrap();
+        assert_eq!(saved.search_shortcut, "Control+K");
+        assert_eq!(saved.shortcut, capture);
+    }
 }

@@ -19,14 +19,17 @@ import { GlobalToolbar, type ToolbarSaveState } from '../features/library/Global
 import type { UpdateController, UpdateViewState } from '../features/settings/UpdateSettings'
 import { useLifecycleParticipant } from '../features/lifecycle/useLifecycleParticipant'
 import { CloseBehaviorDialog, type CloseBehaviorChoice } from '../features/lifecycle/CloseBehaviorDialog'
+import { NotificationProvider } from '../shared/notifications'
 
 const defaultServices = createAppServices()
 
 export function App({ services = defaultServices }: { services?: AppServices }) {
   const sticky = stickyRoute()
-  return sticky === null
-    ? <MainApplication services={services} />
-    : <StickyApplication services={services} route={sticky} />
+  return <NotificationProvider>
+    {sticky === null
+      ? <MainApplication services={services} />
+      : <StickyApplication services={services} route={sticky} />}
+  </NotificationProvider>
 }
 
 function startupRecoveryFailureMessage(failure: StartupRecoveryReport['failure']): string {
@@ -276,7 +279,7 @@ function MainApplication({ services }: { services: AppServices }) {
       setCloseNotice({ status: 'error', message: '未能安全保存全部编辑内容，窗口保持打开，请检查后重试。' })
       return
     }
-    setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，正在重新打开…' })
+    setCloseNotice({ status: 'status', message: '正在重新打开便笺…' })
     void services.temporaryWindows.show(failedSticky).then(() => {
       setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，已重新打开，请检查后重试。' })
     }).catch(() => {
@@ -288,20 +291,7 @@ function MainApplication({ services }: { services: AppServices }) {
       <StatusNotice state={recoveryNotice} className="startup-recovery-notice" />
       <StatusNotice state={closeNotice} className="startup-recovery-notice" />
       <div className="app-workspace" aria-hidden={restartRequired || closeChoice !== null || undefined} inert={restartRequired || closeChoice !== null}>
-        <GlobalToolbar
-          search={services.search}
-          searchDismissSignal={searchDismissSignal}
-          saveState={saveState}
-          updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
-          onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
-          onOpenSettings={() => {
-            if (services.settings !== undefined) {
-              dismissSearch()
-              setSettingsOpen(true)
-            }
-          }}
-        />
-        <LibraryLayout files={services.files} ref={libraryRef} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} ai={services.ai} deepseekModel={settings.deepseekModel} onOpenSettings={() => setSettingsOpen(true)} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
+        <LibraryLayout searchShortcut={settings.searchShortcut} files={services.files} ref={libraryRef} searchDismissSignal={searchDismissSignal} notes={services.notes} folders={services.folders} system={services.system} startupGuide={services.startupGuide} assets={services.assets} search={services.search} links={services.links} temporary={services.temporary} temporaryWindows={services.temporaryWindows} trash={services.trash} defaultEditorMode={settings.defaultEditorMode} autosaveDelayMs={settings.autosaveDelayMs} ai={services.ai} deepseekModel={settings.deepseekModel} onOpenSettings={() => setSettingsOpen(true)} onSaveStateChange={setSaveState} onCreatePopoverOpen={dismissSearch} />
       </div>
       {settingsOpen && services.settings && <SettingsView settings={services.settings} value={settings} platform={services.windowChrome.platform} ai={services.ai} onChange={setSettings} onClose={() => { if (!restartRequired) setSettingsOpen(false) }} prepareStorageMove={async () => {
         if (services.lifecycle?.prepareRelocation === undefined || services.lifecycle.cancelRelocation === undefined) return null
@@ -323,7 +313,19 @@ function MainApplication({ services }: { services: AppServices }) {
     </>
   return (
     <main role="application" aria-label={APP_NAME} className="app-shell main-window" data-theme={settings.theme} style={themeStyle(settings, systemScheme)}>
-      <AppChrome windowChrome={services.windowChrome} dailyLyricsEnabled={settings.dailyLyrics}>{content}</AppChrome>
+      <AppChrome windowChrome={services.windowChrome} dailyLyricsEnabled={settings.dailyLyrics} actionsDisabled={restartRequired || closeChoice !== null} actions={<GlobalToolbar compact
+          search={services.search}
+          searchDismissSignal={searchDismissSignal}
+          saveState={saveState}
+          updateAttention={updateState.status === 'available' ? 'available' : updateState.status === 'installed' || updateState.status === 'restart-error' ? 'restart-required' : 'none'}
+          onSelectResult={(noteId) => libraryRef.current?.selectSearchResult(noteId)}
+          onOpenSettings={() => {
+            if (services.settings !== undefined) {
+              dismissSearch()
+              setSettingsOpen(true)
+            }
+          }}
+        />}>{content}</AppChrome>
     </main>
   )
 }

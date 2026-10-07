@@ -218,6 +218,7 @@ export interface LibraryCollapsedPreference {
 export type LibraryOutlineCollapsedPreference = Record<string, string[]>
 
 export interface WindowPreferenceMap {
+  'library-starred-notes': NoteId[]
   'library-columns': LibraryColumnPreference
   'library-collapsed': LibraryCollapsedPreference
   'library-outline-collapsed': LibraryOutlineCollapsedPreference
@@ -310,6 +311,7 @@ export interface AppSettings {
 
   dailyLyrics: boolean
   lineHeight: number
+  searchShortcut?: string
   shortcut: string
   launchAtStartup: boolean
   closeToTray: boolean
@@ -317,6 +319,7 @@ export interface AppSettings {
   showMenuBarIcon: boolean
   defaultEditorMode: EditorMode
   autosaveDelayMs: number
+  imageSaveQuality: 'webp-q95' | 'webp-q85' | 'original'
   dataRoot: { mode: 'default' } | { mode: 'custom'; path: string }
   /** Selected model for the opt-in DeepSeek summary feature. */
   deepseekModel?: string
@@ -330,6 +333,7 @@ export interface StickySettings {
   fontSize: number
   lineHeight: number
   autosaveDelayMs: number
+  imageSaveQuality: AppSettings['imageSaveQuality']
 }
 
 export interface StickySettingsPort {
@@ -342,6 +346,7 @@ export interface StorageInfo {
   noteBytes: number
   assetBytes: number
   trashBytes: number
+  previousStorageCleanup?: { root: string; candidates: Array<{ relativePath: string; kind: string }> } | null
 }
 
 export interface SettingsPort {
@@ -349,9 +354,11 @@ export interface SettingsPort {
   update(patch: Partial<AppSettings>): Promise<AppSettings>
   reset(): Promise<AppSettings>
   getStorageInfo(): Promise<StorageInfo>
+  chooseStorageDirectory?(): Promise<string | null>
   moveStorageRoot(destination: string): Promise<void>
   restartApplication(): Promise<void>
   onChanged(handler: (settings: AppSettings) => void): Promise<() => void>
+  setShortcutRecording(recording: boolean): Promise<void>
   getShortcutStatus(): Promise<{
     current: string | null
     registration: { state: string }
