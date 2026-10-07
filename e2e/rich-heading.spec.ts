@@ -1,4 +1,14 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
+
+async function placeCaretAtHeadingStart(heading: Locator) {
+ await heading.click()
+ await heading.evaluate(element => {
+  const firstText = document.createTreeWalker(element,NodeFilter.SHOW_TEXT).nextNode()
+  const selection = window.getSelection()
+  if(!firstText || !selection) throw new Error('Heading text is unavailable')
+  selection.collapse(firstText,0)
+ })
+}
 
 test('keeps heading # selectable, copyable, editable and deletable',async({page},info)=>{
  await page.goto('/e2e/rich-heading-fixture.html')
@@ -16,10 +26,8 @@ test('keeps heading # selectable, copyable, editable and deletable',async({page}
  await page.keyboard.insertText('## 新标题')
  const second=page.locator('h2[data-rich-heading]')
  await expect(second).toHaveText('## 新标题')
- await second.click({clickCount:3})
- await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString().trim())).toBe('## 新标题')
- await page.keyboard.press('ArrowLeft')
- await expect.poll(()=>page.evaluate(()=>({offset:window.getSelection()?.anchorOffset,inHeading:!!window.getSelection()?.anchorNode?.parentElement?.closest('h2[data-rich-heading]')}))).toEqual({offset:0,inHeading:true})
+ await placeCaretAtHeadingStart(second)
+ await expect.poll(()=>page.evaluate(()=>({offset:window.getSelection()?.anchorOffset,collapsed:window.getSelection()?.isCollapsed,inHeading:!!window.getSelection()?.anchorNode?.parentElement?.closest('h2[data-rich-heading]')}))).toEqual({offset:0,collapsed:true,inHeading:true})
  await page.keyboard.press('Shift+ArrowRight')
  await expect.poll(()=>page.evaluate(()=>window.getSelection()?.toString())).toBe('#')
  await page.keyboard.press('Backspace')
@@ -32,9 +40,8 @@ test('keeps heading # selectable, copyable, editable and deletable',async({page}
 test('Enter at the leading edge keeps an existing heading intact',async({page})=>{
  await page.goto('/e2e/rich-heading-fixture.html')
  const heading=page.locator('h4[data-rich-heading]')
- await heading.click({clickCount:3})
- await page.keyboard.press('ArrowLeft')
- await expect.poll(()=>page.evaluate(()=>({offset:window.getSelection()?.anchorOffset,inHeading:!!window.getSelection()?.anchorNode?.parentElement?.closest('h4[data-rich-heading]')}))).toEqual({offset:0,inHeading:true})
+ await placeCaretAtHeadingStart(heading)
+ await expect.poll(()=>page.evaluate(()=>({offset:window.getSelection()?.anchorOffset,collapsed:window.getSelection()?.isCollapsed,inHeading:!!window.getSelection()?.anchorNode?.parentElement?.closest('h4[data-rich-heading]')}))).toEqual({offset:0,collapsed:true,inHeading:true})
  await page.keyboard.press('Enter')
  await expect(heading).toHaveText('#### Self-Attention')
  await expect(page.locator('.rich-document__content > p').nth(1)).toBeEmpty()

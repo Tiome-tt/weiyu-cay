@@ -489,6 +489,20 @@ const richHeadingLevelExtension = Extension.create({
         handleKeyDown: (view,event) => {
           const selection=view.state.selection
           const nativeSelection = view.dom.ownerDocument.getSelection()
+          if(event.key === 'Backspace' && !view.composing && this.editor.isEditable && nativeSelection?.anchorNode && nativeSelection.focusNode && !nativeSelection.isCollapsed && view.dom.contains(nativeSelection.anchorNode) && view.dom.contains(nativeSelection.focusNode)) {
+            try {
+              const anchor = view.posAtDOM(nativeSelection.anchorNode,nativeSelection.anchorOffset)
+              const focus = view.posAtDOM(nativeSelection.focusNode,nativeSelection.focusOffset)
+              const from = Math.min(anchor,focus), to = Math.max(anchor,focus)
+              const start = view.state.doc.resolve(from), end = view.state.doc.resolve(to)
+              const prefix = start.parent.type.name === 'heading' && start.parent.attrs.sourceMarker ? start.parent.textContent.match(/^#{1,6} ?/)?.[0] ?? '' : ''
+              if(prefix && start.parent === end.parent && from >= start.start() && to <= start.start()+prefix.length && from < to) {
+                const tr = view.state.tr.delete(from,to)
+                view.dispatch(tr.setSelection(TextSelection.create(tr.doc,from)).scrollIntoView())
+                return true
+              }
+            } catch { return false }
+          }
           let cursor = selection.$from
           let isCollapsed = selection.empty
           if(nativeSelection?.anchorNode && view.dom.contains(nativeSelection.anchorNode)) {
