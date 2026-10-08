@@ -42,11 +42,11 @@
 
 ## 版本记录
 
-### 1.1.3 · Windows/macOS · 预发布
-日期：2026-10-05
+### 1.1.3 · Windows/macOS · 稳定
+日期：2026-10-08
 平台：Windows、macOS
-状态：预发布
-提交：待发布
+状态：稳定
+提交：6edfe43
 
 #### 新增
 - 新增图片保存质量设置，默认以高质量 WebP Q95 保存更小的新静态图片，也可选 WebP Q85 或保留原格式。
@@ -139,16 +139,24 @@
 - 完成 Rust 回归（424 项通过、8 项按既有配置忽略）并复用同轮已通过的万笔记重建测试，完成 Cargo check 与 Clippy；未执行 Windows/macOS 原生界面、系统快捷键实际触发和安装包验收。
 - 将 README 同步更新纳入默认发布完成步骤，统一核对最新稳定版本、功能摘要、下载入口、更新说明和项目状态，无需用户另行提醒。
 - 限定发布文档修改使用定向契约测试和差异检查，保持已发布版本记录及签名标签不变。
+- 完成 GitHub 验证的签名标签、Windows/macOS 全套门禁、三平台正式构建、更新签名与 SHA256 复核，发布代码固定于提交 `6edfe43`。
 
 - 完成本次搜索快捷键、命中句、标题标记、格式刷和内容块统计的 101 项前端定向测试及 6 项 Chromium 用例，验证选区与保存映射、黄色高亮、等宽配置、图片表格编号及格式刷；类型检查与定向 lint 通过。
 - 完成本次 3 项 Rust 搜索摘要测试、1 项旧设置兼容测试和 51 项设置集成测试；运行应用占用可执行文件时使用库测试与已编译集成测试程序，未关闭应用，cargo check 与 Clippy 通过，未执行原生交互验收或打包。
 - 重新生成一万条确定性搜索夹具，保留源数据和索引边界；未执行完整前端、Rust 或安装包验收套件。
 
 #### 已知问题
-- 当前为源码候选；Chrome 验收不代替 Windows/macOS 原生 WebView、窗口拖动、安装包和发布验收，这些原生验收尚未执行。
+- 本次完成自动化构建及 Windows 本机启动冒烟验证；未执行 v1.1.3 安装包的 Windows/macOS 真机安装、系统快捷键、自启动与升级重启验收。
+- 平台安装包尚未做操作系统代码签名或 macOS 公证，首次运行可能出现 SmartScreen/Gatekeeper 提示；Tauri 更新包签名已由发布流程校验。
 
 #### 安装包
-- Windows x64 EXE/MSI、macOS arm64/x64 DMG：文件名与 SHA256 待发布构建生成后补录。
+- _1.1.3_x64-setup.exe — SHA256: `d82b2d73190fb7b6720f4159d9f72816cf2100cad7f6b2f319f3a30734af7945`
+- _1.1.3_x64_en-US.msi — SHA256: `ebedfefa970ffbc3ec1bd2eaa3bd5a79efd504c5ba1d4de6a39ec04322182774`
+- _1.1.3_aarch64.dmg — SHA256: `69db23e005b9eb83c4dbbadcd7e5a3a781fe5af2daded1bd38401fe51a098172`
+- _1.1.3_x64.dmg — SHA256: `1b404a41d735d036dfe9f54b780eb3688632d8dc990ceeb1b8d42087ccd6e523`
+- _1.1.3_aarch64.app.tar.gz — SHA256: `3fce9f76229c508d0af396f6c9b4e21ce412a6fa5ea913c5a9adaa1adec69fc3`
+- _1.1.3_x64.app.tar.gz — SHA256: `8a72877eb38678ed804accd42eb6f6ca1837b50f6a3cb0becc50325f5ab524fb`
+- latest.json — SHA256: `596fb18aaa5a42a102449fa18ea248d04c0bb51bb4c446b4a842b70eb730a07e`
 
 ### 1.1.2 · Windows/macOS · 稳定
 日期：2026-09-28
