@@ -2453,6 +2453,11 @@ mod search_shortcut_contract {
 mod installer_storage_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    // macOS exposes its temporary directory through a system symlink alias.
+    // Fixtures use the real path so production symlink rejection stays strict.
+    fn canonical_tempdir() -> tempfile::TempDir {
+        tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+    }
     #[derive(Clone, Default)]
     struct MemoryStore {
         value: Arc<Mutex<Option<Value>>>,
@@ -2502,7 +2507,7 @@ mod installer_storage_tests {
     }
     #[test]
     fn default_library_uses_cay_and_preserves_custom_directories() {
-        let parent = tempfile::tempdir().unwrap();
+        let parent = canonical_tempdir();
         let bootstrap = parent.path().join("app.simplenotes.desktop");
         fs::create_dir(&bootstrap).unwrap();
         let store = MemoryStore::default();
@@ -2534,7 +2539,7 @@ mod installer_storage_tests {
     }
     #[test]
     fn default_library_migration_keeps_source_until_verified_reopen() {
-        let parent = tempfile::tempdir().unwrap();
+        let parent = canonical_tempdir();
         let bootstrap = parent.path().join("app.simplenotes.desktop");
         let old = StoragePaths::open(&bootstrap).unwrap();
         let temporary = crate::windows::sticky::TemporaryRepository::new(old.clone())
@@ -2614,7 +2619,7 @@ mod installer_storage_tests {
     }
     #[test]
     fn default_library_migration_does_not_overwrite_an_occupied_cay_directory() {
-        let parent = tempfile::tempdir().unwrap();
+        let parent = canonical_tempdir();
         let bootstrap = parent.path().join("app.simplenotes.desktop");
         let old = StoragePaths::open(&bootstrap).unwrap();
         let target = parent.path().join("app.cay");
@@ -2636,7 +2641,7 @@ mod installer_storage_tests {
     }
     #[test]
     fn default_library_migration_save_failure_preserves_source_and_can_retry() {
-        let parent = tempfile::tempdir().unwrap();
+        let parent = canonical_tempdir();
         let bootstrap = parent.path().join("app.simplenotes.desktop");
         let old = StoragePaths::open(&bootstrap).unwrap();
         fs::write(old.notes().join("durable.bin"), b"source").unwrap();
@@ -2665,8 +2670,8 @@ mod installer_storage_tests {
     }
     #[test]
     fn installer_data_path_initializes_only_a_new_empty_library() {
-        let default = tempfile::tempdir().unwrap();
-        let target_parent = tempfile::tempdir().unwrap();
+        let default = canonical_tempdir();
+        let target_parent = canonical_tempdir();
         let target = target_parent.path().join("new library");
         let store = MemoryStore::default();
         initialize_installer_storage(&store, default.path(), Some(&target)).unwrap();
@@ -2684,8 +2689,8 @@ mod installer_storage_tests {
 
     #[test]
     fn installer_data_path_rejects_nonempty_relative_and_nested_targets() {
-        let default = tempfile::tempdir().unwrap();
-        let target = tempfile::tempdir().unwrap();
+        let default = canonical_tempdir();
+        let target = canonical_tempdir();
         fs::write(target.path().join("keep.txt"), "keep").unwrap();
         let store = MemoryStore::default();
         assert!(initialize_installer_storage(&store, default.path(), Some(target.path())).is_err());
@@ -2716,7 +2721,7 @@ mod installer_storage_tests {
 
     #[test]
     fn installer_data_path_preserves_legacy_default_libraries_and_missing_custom_settings() {
-        let default = tempfile::tempdir().unwrap();
+        let default = canonical_tempdir();
         fs::create_dir(default.path().join("notes")).unwrap();
         let store = MemoryStore::default();
         initialize_installer_storage(&store, default.path(), Some(&PathBuf::from("invalid")))
@@ -2735,8 +2740,8 @@ mod installer_storage_tests {
 
     #[test]
     fn installer_data_path_save_failure_keeps_profile_unpublished() {
-        let default = tempfile::tempdir().unwrap();
-        let target = tempfile::tempdir().unwrap();
+        let default = canonical_tempdir();
+        let target = canonical_tempdir();
         let store = MemoryStore::default();
         store.fail_next_save();
         assert!(initialize_installer_storage(&store, default.path(), Some(target.path())).is_err());
