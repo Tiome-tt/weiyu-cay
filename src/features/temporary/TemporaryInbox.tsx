@@ -319,7 +319,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                   <span className="sr-only">选择 {title}</span>
                 </label>
                 <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} disabled={busy !== null} onClick={() => void openCapture(item.id)}>
-                  <span className="temporary-inbox__capture-title"><Icon name="note" size={16} /><strong>{title}</strong></span>
+                  <span className="temporary-inbox__capture-title"><Icon name="note" size={20} /><strong>{title}</strong></span>
                   <span className="temporary-inbox__capture-preview">{preview(item.markdown)}</span>
                   <time dateTime={item.updatedAt}>{formatDate(item.updatedAt)}</time>
                 </button>

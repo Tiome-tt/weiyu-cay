@@ -9,7 +9,7 @@ test('creates, links, searches, reopens, and exports a note', async ({ page }) =
   const editor = page.getByRole('textbox', { name: 'Markdown source' })
   await editor.fill('# 登录流程\n\n')
   await page.getByRole('button', { name: '添加内容块' }).click()
-  await page.getByRole('menuitem', { name: '插入内部链接' }).click()
+  await page.getByRole('menuitem', { name: '引用笔记' }).click()
   await page.getByRole('treeitem', { name: '选择链接：用户认证' }).click()
   await page.getByRole('button', { name: '插入链接' }).click()
   await expect(page.getByTestId('content-pane').getByRole('status', { name: '保存状态' })).toHaveText('已保存')

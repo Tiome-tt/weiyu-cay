@@ -1,3 +1,4 @@
+import {fitMenuToBounds} from '../../shared/menuPosition'
 import { createPortal } from 'react-dom'
 import { captureFormat, applyFormat, type PaintedFormat } from './formatPainter'
 import { FormatMenu } from './FormatMenu'
@@ -5,7 +6,7 @@ import { HeadingStyleMenu } from './HeadingStyleMenu'
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import type { RichDocument } from '../../domain/content'
 import type { SystemPort } from '../../domain/ports'
 import type { Folder, NoteId, NoteSummary } from '../../domain/model'
@@ -124,7 +125,9 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   selectionRef.current = onSelectionChange
   const blockCountRef = useRef(onBlockCountChange)
   blockCountRef.current = onBlockCountChange
-  const emittedJson = useRef(JSON.stringify(toTiptapJson(value)))
+  const projectedValue = useMemo(() => toTiptapJson(value), [value])
+  const projectedJson = useMemo(() => JSON.stringify(projectedValue), [projectedValue])
+  const emittedJson = useRef(projectedJson)
   const editorInstanceRef = useRef<TiptapEditor | null>(null)
   const composing = useRef(false)
   const [linkTargets, setLinkTargets] = useState<NoteSummary[]>([])
@@ -149,7 +152,6 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const contextImageRef = useRef<string | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [tableSelectTarget, setTableSelectTarget] = useState<{ table: HTMLTableElement; left: number; top: number } | null>(null)
-  const tableDragAnchor = useRef<{ table: HTMLTableElement; cell: HTMLTableCellElement } | null>(null)
   const [, refreshEditorState] = useState(0)
   const [assetError, setAssetError] = useState<string | null>(null)
   const [commandError, setCommandError] = useState<string | null>(null)
@@ -172,7 +174,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const extensions = useMemo(() => richEditorExtensions({ noteId, assetReader }), [assetReader, noteId])
   const editor = useEditor({
     extensions,
-    content: toTiptapJson(value),
+    content: projectedValue,
     editable,
     immediatelyRender: false,
     editorProps: {
@@ -201,7 +203,33 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       },
       handleKeyDown: (_view, event) => {
         const currentEditor = editorInstanceRef.current
-        if (event.key !== 'Enter' || currentEditor === null) return false
+        if (currentEditor === null || !currentEditor.isEditable || event.isComposing) return false
+        const cursor = currentEditor.state.selection.$from
+        if (event.key === 'Tab') {
+          if (currentEditor.isActive('table') || currentEditor.isActive('codeBlock')) return false
+          event.preventDefault()
+          const list = currentEditor.isActive('taskItem') ? 'taskItem' : currentEditor.isActive('listItem') ? 'listItem' : null
+          if (list && (event.shiftKey ? currentEditor.commands.liftListItem(list) : currentEditor.commands.sinkListItem(list))) return true
+          if (!event.shiftKey) currentEditor.commands.insertContent('\t')
+          else {
+            const indent = /^(?:\t| {1,2})/.exec(cursor.parent.textContent)?.[0]
+            if (indent) currentEditor.commands.deleteRange({from:cursor.start(),to:cursor.start()+indent.length})
+          }
+          return true
+        }
+        if (event.key !== 'Enter') return false
+        const fence = cursor.parent.type.name === 'paragraph' && currentEditor.state.selection.empty && /^```(?:([\w+#-]+))?$/.exec(cursor.parent.textContent)
+        if (fence) {
+          event.preventDefault()
+          const position = cursor.before()
+          currentEditor.chain().deleteRange({from:cursor.start(),to:cursor.end()}).setCodeBlock({language:fence[1] ?? null}).run()
+          if (!fence[1]) requestAnimationFrame(() => {
+            if (currentEditor.isDestroyed || currentEditor.state.selection.$from.parent.type.name !== 'codeBlock') return
+            const node = currentEditor.view.nodeDOM(position)
+            if (node instanceof HTMLElement) node.querySelector<HTMLInputElement>('[role="combobox"]')?.focus()
+          })
+          return true
+        }
         return splitBlockAfterSelectedHighlight(currentEditor)
       },
       handlePaste: (_view, event) => {
@@ -258,9 +286,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     onUpdate: ({ editor: current }) => {
       selectionRef.current?.(current.state.doc.textBetween(current.state.selection.from, current.state.selection.to, "\n"))
       const json = current.getJSON()
-      blockCountRef.current?.(documentBlockCount(fromTiptapJson(json)))
-      emittedJson.current = JSON.stringify(toTiptapJson(fromTiptapJson(json)))
-      onChange(fromTiptapJson(json))
+      const document = fromTiptapJson(json)
+      blockCountRef.current?.(documentBlockCount(document))
+      emittedJson.current = JSON.stringify(toTiptapJson(document))
+      onChange(document)
       refreshEditorState((revision) => revision + 1)
     },
     onSelectionUpdate: ({ editor: current }) => {
@@ -296,8 +325,8 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
 
   useEffect(() => {
     if (!editor) return
-    const next = toTiptapJson(value)
-    const nextJson = JSON.stringify(next)
+    const next = projectedValue
+    const nextJson = projectedJson
     if (nextJson === emittedJson.current || nextJson === JSON.stringify(editor.getJSON())) return
     emittedJson.current = nextJson
     const selection = editor.state.selection
@@ -327,7 +356,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         position.element.scrollLeft = position.left
       }
     })
-  }, [editor, value])
+  }, [editor, projectedValue, projectedJson])
 
   useEffect(() => {
     if (!links || !linkPickerOpen) return
@@ -337,7 +366,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     }).catch(() => {
       if (active) {
         setLinkTargets([])
-        setCommandError('无法加载内部链接目标，请重试。')
+        setCommandError('无法加载可引用笔记，请重试。')
       }
     })
     return () => { active = false }
@@ -372,14 +401,23 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     return () => window.removeEventListener('resize', update)
   }, [tablePickerOpen])
 
+  useLayoutEffect(()=>{
+    const menu=contextMenuRef.current
+    if(!menu||!contextPosition)return
+    const rect=menu.getBoundingClientRect()
+    const fitted=fitMenuToBounds({...contextPosition,width:rect.width,height:rect.height,left:0,top:30,right:window.innerWidth,bottom:window.innerHeight})
+    if(fitted.x!==contextPosition.x||fitted.y!==contextPosition.y)setContextPosition(fitted)
+  },[contextPosition,contextMenuKind])
   useEffect(() => {
     if (contextPosition === null) return
     const closeFromOutside = (event: MouseEvent) => {
       const menu = contextMenuRef.current
       if (menu !== null && !menu.contains(event.target as Node)) { contextImageRef.current = null; setContextMenuKind('default'); setContextPosition(null) }
     }
+    const resize=()=>setContextPosition(current=>current?{...current}:null)
+    window.addEventListener('resize',resize)
     document.addEventListener('click', closeFromOutside)
-    return () => document.removeEventListener('click', closeFromOutside)
+    return () => {window.removeEventListener('resize',resize);document.removeEventListener('click', closeFromOutside)}
   }, [contextPosition])
 
   const commitComposition = useCallback(async () => {
@@ -478,39 +516,6 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     editor.commands.focus()
   }, [editor])
 
-  const selectTableRange = useCallback((table: HTMLTableElement, anchor: HTMLTableCellElement, head: HTMLTableCellElement) => {
-    if (!editor) return
-    const surface = table.closest('.rich-document__surface')
-    if (!surface) return
-    const tables = Array.from(surface.querySelectorAll<HTMLTableElement>('table'))
-    const tableIndex = tables.indexOf(table)
-    if (tableIndex < 0) return
-    let matchingTablePosition: number | undefined
-    let currentTableIndex = 0
-    editor.state.doc.descendants((node, position) => {
-      if (node.type.name !== 'table') return
-      if (currentTableIndex === tableIndex) matchingTablePosition = position
-      currentTableIndex += 1
-    })
-    if (matchingTablePosition === undefined) return
-    const tableNode = editor.state.doc.nodeAt(matchingTablePosition)
-    if (!tableNode) return
-    const cellPositions: number[] = []
-    editor.state.doc.nodesBetween(
-      matchingTablePosition + 1,
-      matchingTablePosition + tableNode.nodeSize - 1,
-      (node, position) => {
-        if (node.type.name === 'tableCell' || node.type.name === 'tableHeader') cellPositions.push(position)
-      },
-    )
-    const domCells = Array.from(table.querySelectorAll<HTMLTableCellElement>('th,td'))
-    const anchorIndex = domCells.indexOf(anchor)
-    const headIndex = domCells.indexOf(head)
-    if (anchorIndex < 0 || headIndex < 0 || anchorIndex >= cellPositions.length || headIndex >= cellPositions.length) return
-    editor.commands.setCellSelection({ anchorCell: cellPositions[anchorIndex], headCell: cellPositions[headIndex] })
-    editor.commands.focus()
-  }, [editor])
-
   const handleDocumentZoom = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     if (!event.ctrlKey) return
     event.preventDefault()
@@ -521,12 +526,6 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     const target = event.target instanceof Element ? event.target : null
     if (target?.closest('.rich-document__table-select-all')) return
     const table = target?.closest<HTMLTableElement>('table')
-    const drag = tableDragAnchor.current
-    const cell = target?.closest<HTMLTableCellElement>('th,td')
-    if (drag && cell && table === drag.table) {
-      event.preventDefault()
-      selectTableRange(table, drag.cell, cell)
-    }
     if (!table) {
       setTableSelectTarget(null)
       return
@@ -538,7 +537,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       left: tableRect.left - surfaceRect.left + event.currentTarget.scrollLeft + 2,
       top: tableRect.top - surfaceRect.top + event.currentTarget.scrollTop + 2,
     })
-  }, [editable, selectTableRange])
+  }, [editable])
 
   const activeTextAlign = String(editor?.getAttributes('paragraph').textAlign ?? editor?.getAttributes('heading').textAlign ?? 'left')
   const activeCellTextAlign = String(editor?.getAttributes('tableCell').textAlign ?? editor?.getAttributes('tableHeader').textAlign ?? 'left')
@@ -603,7 +602,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
                 <output>{tablePickerSize.rows > 0 ? tablePickerSize.rows + ' × ' + tablePickerSize.cols : '选择行列'}</output>
                   </div>}
             </div>
-            {links && <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setLinkPickerOpen(true);setInsertOpen(false);setContextPosition(null)}}>内部链接</button>}
+            {links && <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setLinkPickerOpen(true);setInsertOpen(false);setContextPosition(null)}}>引用笔记</button>}
             <button type="button" role="menuitem" onClick={()=>{run(()=>{editor.chain().focus().setHorizontalRule().run()});setInsertOpen(false);setContextPosition(null)}}>分隔线</button>
             <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setUrlDialog({url:'',text:editor.state.doc.textBetween(editor.state.selection.from,editor.state.selection.to,'')});setInsertOpen(false);setContextPosition(null)}}>超链接</button>
             {assets&&noteId&&<button type="button" role="menuitem" onClick={()=>{imagePickerRef.current?.click();setInsertOpen(false);setContextPosition(null)}}>图片</button>}
@@ -613,10 +612,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       <ErrorNotification error={assetError} />
       <ErrorNotification error={commandError} />
       {editable && <div className={`rich-document__toolbar${toolbarCollapsed ? ' rich-document__toolbar--collapsed' : ''}`} role="toolbar" aria-label="文档格式">
-        <button type="button" aria-label="撤销" title="撤销" disabled={!editor.can().undo()} onClick={() => run(() => { editor.chain().focus().undo().run() })}>↶</button>
-        <button type="button" aria-label="重做" title="重做" disabled={!editor.can().redo()} onClick={() => run(() => { editor.chain().focus().redo().run() })}>↷</button>
+        <button type="button" aria-label="撤销" title="撤销" disabled={!editor.can().undo()} onClick={() => run(() => { editor.chain().focus().undo().run() })}><Icon name="undo" size={16} /></button>
+        <button type="button" aria-label="重做" title="重做" disabled={!editor.can().redo()} onClick={() => run(() => { editor.chain().focus().redo().run() })}><Icon name="redo" size={16} /></button>
         <span className="rich-document__toolbar-separator" />
-        <button type="button" aria-label="格式刷" title={painting ? '选择目标文字应用格式，Esc 取消' : '格式刷'} aria-pressed={painting} onMouseDown={event=>event.preventDefault()} onClick={() => { if (painting) {paintRef.current=null;setPainting(false)} else {paintRef.current=captureFormat(editor);setPainting(true);editor.commands.focus()} }}><svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m11 3 6 6-7 7-6-6zM8 6l6 6M6 12l-3 3c-1 1 0 3-2 3 3 1 5 0 6-2l1-2"/></svg></button>
+        <button type="button" aria-label="格式刷" title={painting ? '选择目标文字应用格式，Esc 取消' : '格式刷'} aria-pressed={painting} onMouseDown={event=>event.preventDefault()} onClick={() => { if (painting) {paintRef.current=null;setPainting(false)} else {paintRef.current=captureFormat(editor);setPainting(true);editor.commands.focus()} }}><Icon name="brush" size={16} /></button>
         <button type="button" aria-label="粗体" title="粗体" aria-pressed={editor.isActive('bold')} onClick={() => run(() => { editor.chain().focus().toggleBold().run() })}><strong>B</strong></button>
         <button type="button" aria-label="斜体" title="斜体" aria-pressed={editor.isActive('italic')} onClick={() => run(() => { editor.chain().focus().toggleItalic().run() })}><em>I</em></button>
         <button type="button" aria-label="下划线" title="下划线" aria-pressed={editor.isActive('underline')} onClick={() => run(() => { editor.chain().focus().toggleUnderline().run() })}><u>U</u></button>
@@ -657,7 +656,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           aria-expanded={!toolbarCollapsed}
           onClick={() => setToolbarCollapsed((collapsed) => !collapsed)}
         >
-          {toolbarCollapsed ? <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M3 5h14M3 10h14M3 15h14M7 3v4M13 8v4M8 13v4" /></svg> : <Icon name="chevron-down" size={15} />}
+          {toolbarCollapsed ? <Icon name="format" size={16} /> : <Icon name="chevron-down" size={15} />}
         </button>
       </div>}
 
@@ -716,13 +715,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         try { const url=new URL(urlDialog.url); if(!['http:','https:'].includes(url.protocol))throw new Error('protocol') } catch {setCommandError('请输入完整的 http 或 https 链接。');return}
         editor.chain().focus().insertContent({type:'text',text:urlDialog.text.trim()||urlDialog.url,marks:[{type:'link',attrs:{href:urlDialog.url}}]}).run();setUrlDialog(null);setCommandError(null)
       }}><label>显示文字<input aria-label="链接文字" value={urlDialog.text} onChange={event=>setUrlDialog({...urlDialog,text:event.target.value})}/></label><label>地址<input autoFocus aria-label="链接地址" value={urlDialog.url} onChange={event=>setUrlDialog({...urlDialog,url:event.target.value})}/></label><div className="rich-document__math-dialog-actions"><button type="button" onClick={()=>setUrlDialog(null)}>取消</button><button type="submit">插入</button></div></form>}
-      <div onPointerUp={() => { requestAnimationFrame(() => { if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }) }} onKeyUp={event => { if (event.key === 'Escape') { paintRef.current=null; setPainting(false) } else if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }} className="rich-document__surface" style={{ "--rich-document-zoom": documentZoom } as CSSProperties} onWheel={handleDocumentZoom} onMouseDown={(event) => {
-        if (!editable) return
-        const target = event.target instanceof Element ? event.target : null
-        const cell = target?.closest<HTMLTableCellElement>("th,td")
-        const table = cell?.closest<HTMLTableElement>("table")
-        if (cell && table) tableDragAnchor.current = { table, cell }
-      }} onMouseMove={event=>{
+      <div onPointerUp={() => { requestAnimationFrame(() => { if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }) }} onKeyUp={event => { if (event.key === 'Escape') { paintRef.current=null; setPainting(false) } else if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }} className="rich-document__surface" style={{ "--rich-document-zoom": documentZoom } as CSSProperties} onWheel={handleDocumentZoom} onMouseMove={event=>{
         handleSurfaceMouseMove(event)
         if(event.target instanceof Element && event.target.closest('.rich-document__block-controls'))return
         const block=event.target instanceof Element?event.target.closest<HTMLElement>('[data-block-number]'):null
@@ -736,7 +729,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           const crossingGutter=event.clientX>=previous.left && event.clientX<=previous.left+60 && event.clientY>=previous.top && event.clientY<=previous.top+24
           return crossingGutter ? previous : {...previous,visible:false}
         })
-      }} onScrollCapture={()=>setHoverBlock(previous=>({...previous,visible:false}))} onMouseUp={() => { tableDragAnchor.current = null }} onMouseLeave={() => { setHoverBlock(previous=>({...previous,visible:false})); tableDragAnchor.current = null; setTableSelectTarget(null) }} onContextMenu={(event) => {
+      }} onScrollCapture={()=>setHoverBlock(previous=>({...previous,visible:false}))} onMouseLeave={() => { setHoverBlock(previous=>({...previous,visible:false})); setTableSelectTarget(null) }} onContextMenu={(event) => {
         event.preventDefault()
         setInsertOpen(false)
         const target = event.target instanceof Element ? event.target : null
@@ -783,7 +776,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           </svg>
         </button>}
       </div>
-      {contextPosition !== null && <div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
+      {contextPosition !== null && <div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y, maxHeight: 'calc(100dvh - 46px)', overflowY:'auto' }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
         {contextMenuKind === 'image' ? <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); void copyImageToClipboard() }}>复制图片</button> : <>
           {renderInsertionItems()}
           <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().clearNodes().unsetAllMarks().run() }); setContextPosition(null) }}>清除格式</button>

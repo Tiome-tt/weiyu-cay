@@ -1,4 +1,7 @@
 import { WidgetType, type EditorView } from '@codemirror/view'
+import { undo, redo } from '@codemirror/commands'
+import { elementScale } from '../../shared/elementScale'
+import { parseTsv, serializeTsv } from './tableClipboard'
 import type { NoteId } from '../../domain/model'
 import type { ImageReadPort } from '../../domain/ports'
 import { readImageAsset } from '../content/imageAssetLoader'
@@ -6,6 +9,7 @@ import {
   mergeTableCells,
   splitTableCell,
   tableWithCell,
+  tableWithMatrix,
   tableWithDeletedColumn,
   tableWithDeletedRow,
   tableWithAlignment,
@@ -149,21 +153,53 @@ export class DocumentTableWidget extends WidgetType {
     return this.source === other.source && this.onEdit === other.onEdit && this.editable === other.editable && this.onOpenExternal === other.onOpenExternal
   }
 
+  updateDOM(dom: HTMLElement, _view: EditorView, previousWidget: DocumentTableWidget) {
+    const previous = dom.dataset.gridShape
+    const shape = JSON.stringify([this.table.cells.map(row => row.length), this.table.alignments, this.table.merges ?? [], this.editable])
+    if (previous !== shape) return false
+    this.cleanupOutsidePointer = previousWidget.cleanupOutsidePointer
+    previousWidget.cleanupOutsidePointer = null
+    dom.dispatchEvent(new CustomEvent('table-model-update', { detail: { table: this.table, source: this.source } }))
+    return true
+  }
+
   toDOM(view: EditorView) {
     const wrapper = document.createElement('span')
     wrapper.className = 'cm-live-table'
     wrapper.setAttribute('aria-label', this.editable ? '编辑 Markdown 表格' : 'Markdown 表格')
     let current = this.table
+    const eagerCellActions = current.cells.length * Math.max(1, ...current.cells.map(line => line.length)) <= 800
+    let sourceLength = this.source.length
+    wrapper.dataset.gridShape = JSON.stringify([current.cells.map(row => row.length), current.alignments, current.merges ?? [], this.editable])
+    wrapper.addEventListener('table-model-update', event => {
+      const detail = (event as CustomEvent<{ table: MarkdownTable; source: string }>).detail
+      current = detail.table
+      sourceLength = detail.source.length
+      for (const input of [...wrapper.querySelectorAll<HTMLTextAreaElement>('textarea'), ...stagingRows.querySelectorAll<HTMLTextAreaElement>('textarea')]) {
+        const cell = input.closest<HTMLElement>('[data-row][data-column]')!
+        const value = current.cells[Number(cell.dataset.row)]?.[Number(cell.dataset.column)] ?? ''
+        if (input.value !== value) input.value = value
+        input.title = value
+        cell.title = value
+      }
+    })
     let selection: TableCellRange | null = null
     let dragAnchor: { row: number; column: number } | null = null
     let dragging = false
+    let pendingCellChange = false
     let suppressClick = false
+    wrapper.addEventListener('table-flush', () => {
+      const active = document.activeElement
+      if (active instanceof HTMLTextAreaElement && wrapper.contains(active)) { active.dispatchEvent(new Event('input')); active.blur() }
+      dragging = false
+      if (pendingCellChange) { pendingCellChange = false; commit(current) }
+    })
     const from = () => view.posAtDOM(wrapper)
-    const to = () => from() + this.source.length
-    const commit = (tableModel: MarkdownTable, focusCell?: { row: number; column: number }) => {
+    const to = () => from() + sourceLength
+    const commit = (tableModel: MarkdownTable, focusCell?: { row: number; column: number }, range?: TableCellRange) => {
       const position = from()
       const scrollLeft = Math.max(0, viewport.scrollLeft)
-      this.tableScrollPositions?.set(this.position, scrollLeft)
+      this.tableScrollPositions?.set(position, scrollLeft)
       this.onEdit({ from: position, to: to(), table: tableModel, scrollLeft })
       current = tableModel
       if (focusCell === undefined) return
@@ -176,6 +212,21 @@ export class DocumentTableWidget extends WidgetType {
         )
         if (target === null || target === undefined) return
         target.focus({ preventScroll: true })
+        target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+        const nextViewport = tableWrapper?.querySelector<HTMLElement>('.cm-live-table-viewport')
+        if (nextViewport !== null && nextViewport !== undefined) {
+          const bounds = nextViewport.getBoundingClientRect()
+          const cellBounds = target.getBoundingClientRect()
+          if (bounds.width > 0) {
+            const scale = elementScale(nextViewport)
+            if (cellBounds.right > bounds.right) nextViewport.scrollLeft += (cellBounds.right - bounds.right) / scale
+            else if (cellBounds.left < bounds.left) nextViewport.scrollLeft -= (bounds.left - cellBounds.left) / scale
+          }
+          this.tableScrollPositions?.set(position, nextViewport.scrollLeft)
+          const rail = tableWrapper?.querySelector<HTMLElement>('.cm-live-table-scrollbar')
+          if (rail) rail.scrollLeft = nextViewport.scrollLeft
+        }
+        if (range !== undefined) tableWrapper?.dispatchEvent(new CustomEvent('table-cell-selection', { detail: range }))
       }
       window.requestAnimationFrame(restoreFocus)
       window.setTimeout(restoreFocus, 0)
@@ -238,15 +289,16 @@ export class DocumentTableWidget extends WidgetType {
       const wrapperRect = wrapper.getBoundingClientRect()
       const cellRect = activeCell.getBoundingClientRect()
       const toolbarRect = toolbar.getBoundingClientRect()
+      const scale = elementScale(wrapper)
       const gap = 8
-      const toolbarWidth = toolbarRect.width || toolbar.offsetWidth
-      const toolbarHeight = toolbarRect.height || toolbar.offsetHeight
-      const wrapperWidth = wrapperRect.width || wrapper.clientWidth
+      const toolbarWidth = toolbarRect.width / scale || toolbar.offsetWidth
+      const toolbarHeight = toolbarRect.height / scale || toolbar.offsetHeight
+      const wrapperWidth = wrapperRect.width / scale || wrapper.clientWidth
       const maxLeft = Math.max(gap, wrapperWidth - toolbarWidth - gap)
-      const centeredLeft = cellRect.left - wrapperRect.left + (cellRect.width - toolbarWidth) / 2
+      const centeredLeft = (cellRect.left - wrapperRect.left) / scale + (cellRect.width / scale - toolbarWidth) / 2
       const left = Math.max(gap, Math.min(maxLeft, centeredLeft))
-      let top = cellRect.top - wrapperRect.top - toolbarHeight - gap
-      if (top < gap) top = cellRect.bottom - wrapperRect.top + gap
+      let top = (cellRect.top - wrapperRect.top) / scale - toolbarHeight - gap
+      if (top < gap) top = (cellRect.bottom - wrapperRect.top) / scale + gap
       toolbar.style.left = `${Math.round(left)}px`
       toolbar.style.top = `${Math.round(top)}px`
     }
@@ -279,6 +331,9 @@ export class DocumentTableWidget extends WidgetType {
         cell.setAttribute('aria-selected', String(selected))
       }
     }
+    wrapper.addEventListener('table-cell-selection', (event) => {
+      if (event instanceof CustomEvent) setSelection(event.detail as TableCellRange)
+    })
     const clearSelectionOutsideTable = (event: Event) => {
       const target = event.target
       if (target instanceof Node && wrapper.contains(target)) return
@@ -288,6 +343,42 @@ export class DocumentTableWidget extends WidgetType {
     for (const eventName of outsideEvents) document.addEventListener(eventName, clearSelectionOutsideTable, true)
 
     const rangeOrCell = () => selectedRange() ?? { startRow: current.cells.length - 1, startColumn: 0, endRow: current.cells.length - 1, endColumn: 0 }
+    const selectedMatrix = () => {
+      const range = selectedRange()
+      if (range === null || range.startRow === range.endRow && range.startColumn === range.endColumn) return null
+      const row = Math.min(range.startRow, range.endRow)
+      const column = Math.min(range.startColumn, range.endColumn)
+      const cells = current.cells.slice(row, Math.max(range.startRow, range.endRow) + 1)
+        .map(line => line.slice(column, Math.max(range.startColumn, range.endColumn) + 1))
+      return { row, column, cells, range }
+    }
+    const clearSelected = () => {
+      const selected = selectedMatrix()
+      if (selected === null) return
+      commit(tableWithMatrix(current, selected.row, selected.column, selected.cells.map(line => line.map(() => ''))),
+        { row: selected.row, column: selected.column }, selected.range)
+    }
+    for (const type of ['copy', 'cut'] as const) wrapper.addEventListener(type, event => {
+      if (!this.editable || event.clipboardData === null) return
+      const selected = selectedMatrix()
+      if (selected === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.clipboardData.setData('text/plain', serializeTsv(selected.cells))
+      if (type === 'cut') clearSelected()
+    })
+    wrapper.addEventListener('keydown', event => {
+      if (this.editable && !event.isComposing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.shiftKey) redo(view); else undo(view)
+        return
+      }
+      if (!this.editable || event.isComposing || !['Delete', 'Backspace'].includes(event.key) || selectedMatrix() === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      clearSelected()
+    })
     const selectedColumns = () => {
       const range = rangeOrCell()
       const fromColumn = Math.min(range.startColumn, range.endColumn)
@@ -303,11 +394,15 @@ export class DocumentTableWidget extends WidgetType {
       const deletionGroup = group()
       button('row-delete', '删除行', () => {
         const range = rangeOrCell()
-        commit(tableWithDeletedRow(current, Math.min(range.startRow, range.endRow)))
+        let next = current
+        for (let row = Math.max(range.startRow, range.endRow); row >= Math.min(range.startRow, range.endRow); row -= 1) next = tableWithDeletedRow(next, row)
+        commit(next)
       }, deletionGroup)
       button('column-delete', '删除列', () => {
         const range = rangeOrCell()
-        commit(tableWithDeletedColumn(current, Math.min(range.startColumn, range.endColumn)))
+        let next = current
+        for (let column = Math.max(range.startColumn, range.endColumn); column >= Math.min(range.startColumn, range.endColumn); column -= 1) next = tableWithDeletedColumn(next, column)
+        commit(next)
       }, deletionGroup)
       const mergeGroup = group()
       button('merge', '合并单元格', () => {
@@ -347,29 +442,10 @@ export class DocumentTableWidget extends WidgetType {
         event.stopPropagation()
         const target = event.target
         selectCell()
+        dragAnchor = { row, column }
+        dragging = true
+        suppressClick = false
         if (target instanceof HTMLTextAreaElement) {
-          dragging = false
-          dragAnchor = null
-          suppressClick = false
-          const activeInput = document.activeElement instanceof HTMLTextAreaElement && wrapper.contains(document.activeElement)
-            ? document.activeElement
-            : null
-          if (activeInput !== null && activeInput !== target) {
-            event.preventDefault()
-            const activeCell = activeInput.closest<HTMLElement>('[data-row][data-column]')
-            const activeRow = activeCell === null ? NaN : Number(activeCell.dataset.row)
-            const activeColumn = activeCell === null ? NaN : Number(activeCell.dataset.column)
-            if (Number.isInteger(activeRow) && Number.isInteger(activeColumn)) {
-              const activeMerge = mergeAt(activeRow, activeColumn)
-              const logicalRow = activeMerge?.row ?? activeRow
-              const logicalColumn = activeMerge?.column ?? activeColumn
-              commit(
-                tableWithCell(current, logicalRow, logicalColumn, activeInput.value.replace(/\r?\n/gu, ' ')),
-                { row, column },
-              )
-            }
-            return
-          }
           target.focus({ preventScroll: true })
           return
         }
@@ -381,6 +457,7 @@ export class DocumentTableWidget extends WidgetType {
       })
       cell.addEventListener('pointerenter', () => {
         if (!this.editable || !dragging || dragAnchor === null) return
+        if (row !== dragAnchor.row || column !== dragAnchor.column) suppressClick = true
         setSelection({ startRow: dragAnchor.row, startColumn: dragAnchor.column, endRow: row, endColumn: column })
       })
       cell.addEventListener('click', (event) => {
@@ -403,10 +480,38 @@ export class DocumentTableWidget extends WidgetType {
           input.title = input.value
           cell.title = input.value
           resizeMarkdownCellEditor(input)
+          updateCell()
         })
-        input.addEventListener('focus', () => resizeMarkdownCellEditor(input))
+        input.addEventListener('focus', () => { ensureActions(); resizeMarkdownCellEditor(input); selectCell() })
         input.addEventListener('blur', () => collapseMarkdownCellEditor(input))
-        const updateCell = () => commit(tableWithCell(current, merge?.row ?? row, merge?.column ?? column, input.value.replace(/\r?\n/gu, ' ')))
+        const updateCell = () => {
+          const value = input.value.replace(/\r\n?|\n/gu, '<br>')
+          if (current.cells[merge?.row ?? row]?.[merge?.column ?? column] === value) return
+          const next = tableWithCell(current, merge?.row ?? row, merge?.column ?? column, value)
+          // Blur during a pointer gesture must not replace the DOM before drag completes.
+          if (dragging) { current = next; pendingCellChange = true; return }
+          commit(next)
+        }
+        input.addEventListener('paste', (event) => {
+          const text = event.clipboardData?.getData('text/plain') ?? ''
+          if (text.length === 0) return
+          const range = selectedRange()
+          const multi = range !== null && (range.startRow !== range.endRow || range.startColumn !== range.endColumn)
+          if (!multi && !/[\t\r\n]/u.test(text)) return
+          event.preventDefault()
+          event.stopPropagation()
+          const values = parseTsv(text)
+          const anchorRow = range === null ? row : Math.min(range.startRow, range.endRow)
+          const anchorColumn = range === null ? column : Math.min(range.startColumn, range.endColumn)
+          const single = values.length === 1 && values[0].length === 1
+          const height = single && multi ? Math.abs(range!.endRow - range!.startRow) + 1 : values.length
+          const width = single && multi ? Math.abs(range!.endColumn - range!.startColumn) + 1 : Math.max(...values.map(line => line.length))
+          const matrix = single && multi ? Array.from({ length: height }, () => Array.from({ length: width }, () => values[0][0])) : values
+          const next = tableWithMatrix(current, anchorRow, anchorColumn, matrix)
+          commit(next, { row: anchorRow, column: anchorColumn }, {
+            startRow: anchorRow, startColumn: anchorColumn, endRow: anchorRow + height - 1, endColumn: anchorColumn + width - 1,
+          })
+        })
         input.addEventListener('click', (event) => {
           if (!event.ctrlKey && !event.metaKey) return
           const href = externalUrlAtPosition(input.value, input.selectionStart ?? 0)
@@ -417,38 +522,35 @@ export class DocumentTableWidget extends WidgetType {
         })
         input.addEventListener('change', updateCell)
         input.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            input.blur()
-            return
-          }
+          if (event.isComposing) return
           if (event.key === 'Escape') {
             event.preventDefault()
             input.blur()
             return
           }
-          if (event.key !== 'Tab') return
+          if (event.key !== 'Tab' && event.key !== 'Enter') return
           const direction = event.shiftKey ? -1 : 1
-          const columns = tableColumns()
-          let nextRow = row
-          let nextColumn = column + direction
-          if (nextColumn >= columns) {
-            nextRow += 1
-            nextColumn = 0
-          } else if (nextColumn < 0) {
-            nextRow -= 1
-            nextColumn = columns - 1
-          }
-          const nextTarget = wrapper.querySelector<HTMLTextAreaElement>('textarea[aria-label="' + (nextRow + 1) + ' 行 ' + (nextColumn + 1) + ' 列"]')
-          if (nextTarget === null) {
+          if (event.key === 'Enter' && direction > 0) renderRows(row + (merge?.rowSpan ?? 1) + 1)
+          if (event.key === 'Tab' && direction > 0 && column + (merge?.columnSpan ?? 1) >= tableColumns()) renderRows(row + (merge?.rowSpan ?? 1) + 1)
+          const inputs = [...wrapper.querySelectorAll<HTMLTextAreaElement>('textarea')]
+          const nextRow = row + (direction > 0 ? rowSpan : -1)
+          const verticalTarget = inputs.find(candidate => {
+            const cell = candidate.closest<HTMLTableCellElement>('[data-row][data-column]')!
+            const startRow = Number(cell.dataset.row), startColumn = Number(cell.dataset.column)
+            return nextRow >= startRow && nextRow < startRow + cell.rowSpan && column >= startColumn && column < startColumn + cell.colSpan
+          })
+          const nextTarget = event.key === 'Tab' ? inputs[inputs.indexOf(input) + direction] : verticalTarget
+          if (nextTarget === null || nextTarget === undefined) {
+            if (event.key === 'Enter') { event.preventDefault(); input.blur(); return }
             updateCell()
             return
           }
+          const nextCell = nextTarget.closest<HTMLElement>('[data-row][data-column]')!
           event.preventDefault()
           event.stopPropagation()
           commit(
             tableWithCell(current, merge?.row ?? row, merge?.column ?? column, input.value.replace(/\r?\n/gu, ' ')),
-            { row: nextRow, column: nextColumn },
+            { row: Number(nextCell.dataset.row), column: Number(nextCell.dataset.column) },
           )
         })
         cell.append(input)
@@ -458,16 +560,23 @@ export class DocumentTableWidget extends WidgetType {
         const logicalColumn = merge?.column ?? column
         const columnSpan = merge?.columnSpan ?? 1
         const rowSpan = merge?.rowSpan ?? 1
-        actions.append(
+        let actionsReady = false
+        const ensureActions = () => {
+          if (actionsReady) return
+          actionsReady = true
+          actions.append(
           cellInsertButton('在左侧添加列', 'column-left', () => commit(tableWithInsertedColumn(current, logicalColumn))),
           cellInsertButton('在右侧添加列', 'column-right', () => commit(tableWithInsertedColumn(current, logicalColumn + columnSpan))),
           cellInsertButton('在下方添加行', 'row-below', () => commit(tableWithInsertedRow(current, logicalRow + rowSpan))),
-        )
+          )
+        }
+        if (eagerCellActions) ensureActions()
+        cell.addEventListener('pointerenter', ensureActions)
         cell.append(actions)
         actions.dataset.edge = 'none'
         cell.addEventListener('pointermove', (event) => {
           const bounds = cell.getBoundingClientRect()
-          const edgeDistance = 14
+          const edgeDistance = 14 * elementScale(cell)
           const edge = event.clientX - bounds.left <= edgeDistance
             ? 'left'
             : bounds.right - event.clientX <= edgeDistance
@@ -485,14 +594,36 @@ export class DocumentTableWidget extends WidgetType {
       }
       return cell
     }
-    for (let row = 0; row < current.cells.length; row += 1) {
-      const tableRow = document.createElement('tr')
-      const columns = Math.max(1, ...current.cells.map((line) => line.length))
-      for (let column = 0; column < columns; column += 1) {
-        const cell = renderCell(row, column)
-        if (cell !== undefined) tableRow.append(cell)
+    let renderedRows = 0
+    let renderFrame = 0
+    const columns = Math.max(1, ...current.cells.map(line => line.length))
+    const stagingRows = document.createDocumentFragment()
+    const renderRows = (end: number, destination: Node = grid) => {
+      if (destination === grid) grid.append(stagingRows)
+      const fragment = document.createDocumentFragment()
+      for (; renderedRows < Math.min(end, current.cells.length); renderedRows += 1) {
+        const row = renderedRows
+        const tableRow = document.createElement('tr')
+        for (let column = 0; column < columns; column += 1) {
+          const cell = renderCell(row, column)
+          if (cell !== undefined) tableRow.append(cell)
+        }
+        fragment.append(tableRow)
       }
-      grid.append(tableRow)
+      destination.appendChild(fragment)
+    }
+    // The durable model is committed synchronously. Materialize large grids in
+    // small frames so painting, pointer input and save actions can continue.
+    renderRows(current.cells.length * columns > 800 ? 10 : current.cells.length)
+    const renderRemaining = () => {
+      if (!wrapper.isConnected) return
+      renderRows(renderedRows + Math.max(1, Math.floor(200 / columns)), stagingRows)
+      if (renderedRows < current.cells.length) renderFrame = window.requestAnimationFrame(renderRemaining)
+      else { grid.append(stagingRows); wrapper.removeAttribute('aria-busy'); updateScrollbar() }
+    }
+    if (renderedRows < current.cells.length) {
+      wrapper.setAttribute('aria-busy', 'true')
+      renderFrame = window.requestAnimationFrame(renderRemaining)
     }
     table.append(grid)
     toolbar.append(summary)
@@ -540,16 +671,19 @@ export class DocumentTableWidget extends WidgetType {
     resizeObserver?.observe(table)
     window.requestAnimationFrame(updateScrollbar)
     this.cleanupOutsidePointer = () => {
+      window.cancelAnimationFrame(renderFrame)
       for (const eventName of outsideEvents) document.removeEventListener(eventName, clearSelectionOutsideTable, true)
       viewport.removeEventListener('scroll', repositionOnScroll)
       scrollRail.removeEventListener('scroll', syncViewportFromRail)
+      document.removeEventListener('pointerup', stopDrag, true)
+      document.removeEventListener('pointercancel', stopDrag, true)
       resizeObserver?.disconnect()
     }
 
     wrapper.addEventListener('pointermove', (event) => {
       if (!this.editable || !dragging || dragAnchor === null) return
       if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return
-      const target = document.elementFromPoint(event.clientX, event.clientY)
+      const target = document.elementFromPoint?.(event.clientX, event.clientY) ?? event.target
       const hoveredCell = target instanceof Element
         ? target.closest<HTMLElement>('[data-row][data-column]')
         : null
@@ -557,20 +691,22 @@ export class DocumentTableWidget extends WidgetType {
       const row = Number(hoveredCell.dataset.row)
       const column = Number(hoveredCell.dataset.column)
       if (!Number.isInteger(row) || !Number.isInteger(column)) return
+      if (row !== dragAnchor.row || column !== dragAnchor.column) { suppressClick = true; event.preventDefault() }
       setSelection({ startRow: dragAnchor.row, startColumn: dragAnchor.column, endRow: row, endColumn: column })
     })
-    wrapper.addEventListener('pointerup', (event) => {
+    const stopDrag = (event: PointerEvent) => {
       if (!dragging) return
       dragging = false
+      if (pendingCellChange && dragAnchor !== null) {
+        pendingCellChange = false
+        commit(current, dragAnchor, selection ?? undefined)
+      }
       dragAnchor = null
-      if (Number.isFinite(event.pointerId)) wrapper.releasePointerCapture?.(event.pointerId)
+      if (wrapper.hasPointerCapture?.(event.pointerId)) wrapper.releasePointerCapture(event.pointerId)
       globalThis.setTimeout(() => { suppressClick = false }, 0)
-    })
-    wrapper.addEventListener('pointercancel', () => {
-      dragging = false
-      dragAnchor = null
-      suppressClick = false
-    })
+    }
+    document.addEventListener('pointerup', stopDrag, true)
+    document.addEventListener('pointercancel', stopDrag, true)
     updateToolbar()
     return wrapper
   }

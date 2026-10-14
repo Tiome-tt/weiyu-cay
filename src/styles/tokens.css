@@ -37,7 +37,7 @@
   --motion-fast: 120ms;
   --theme-note-accent: #D7E9DF;
   --sticky-color: var(--theme-note-accent);
-  --body-font: "楷体", KaiTi, "STKaiti", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", ui-sans-serif, system-ui, sans-serif;
+  --body-font: KaiTi, STKaiti, serif;
   --code-font: ui-monospace, SFMono-Regular, Consolas, monospace;
   --app-font-size: 16px;
   --app-line-height: 1.4;

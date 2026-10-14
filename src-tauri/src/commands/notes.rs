@@ -169,7 +169,7 @@ Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本�
 现在，新建你的第一篇笔记吧。
 "#;
 
-const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+const PRE_FORMAT_GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
 
 微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
 
@@ -229,6 +229,262 @@ Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本�
 
 现在，新建你的第一篇笔记吧。
 "#;
+const PRE_MERGE_GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+
+微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
+
+## 从这里开始
+
+你可以试着：
+
+- 新建一篇笔记，随手写下此刻的想法
+- 创建文件夹，整理不同主题的内容
+- 在源码、分屏和预览三种视图间切换
+- 为笔记添加标签
+- 使用 `[[笔记标题]]` 连接两篇笔记
+
+## 关于 Markdown
+
+Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本编辑器打开的文件。下面这些写法已足够应对大多数记录：
+
+````markdown
+# 一级标题
+## 二级标题
+
+**粗体**、*斜体*、~~删除线~~ 和 `行内代码`
+
+- 无序列表
+1. 有序列表
+- [ ] 任务项
+
+> 引用一段重要内容
+
+[显示文字](https://example.com)
+![图片说明](图片路径)
+
+分隔线使用三个短横线：
+
+---
+
+```text
+一段代码
+```
+````
+
+编辑器的“＋”菜单和右键菜单可以快速插入表格、代码块、图片和内部链接；也可以直接粘贴图片。
+
+## 富文档与多格式文件
+
+除了 Markdown，微屿还支持“文档”笔记，用于标题、行内格式、列表、任务、链接、图片和表格等富文本编辑。
+
+资料库也可以导入纯文本、PDF、图片和 DOCX 等文件：PDF 与图片可直接预览，DOCX 可转换为可编辑的文档笔记，原始文件仍会保留。
+
+## 文档导入与笔记类型
+
+从资料库导入文件，可以将资料集中在同一文件夹中。微屿支持 Markdown（.md/.markdown）、纯文本（.txt）、Word（.doc/.docx）、Excel（.xls/.xlsx）、PowerPoint（.ppt/.pptx）、PDF，以及 PNG、JPG、WebP 等图片；其他文件也可以作为附件保留。
+
+- **Markdown 笔记**：用轻量语法写作，在文档编辑、分栏校对和阅读视图之间切换。
+- **文档笔记**：使用格式工具栏编辑文字、图片、表格和代码块。
+- **纯文本笔记**：保留原始文字，不解释 Markdown 格式。
+- **文件条目**：保留导入文件的格式与内容；PDF、图片和现代 Office 文件可在微屿预览，Office 文件可打开进行编辑，保存后同步到原笔记。复杂版式及旧版 Office 文件请使用系统应用查看。
+
+## AI 辅助
+
+点击正式笔记右侧的机器人星光图标打开 **AI 总结**。在“设置 → AI”中配置自己的 DeepSeek API Key 和总结模型后，可以为当前笔记生成一句话总结、关键要点、章节大纲、待办事项和关键词。
+
+生成总结需要联网，并在你主动操作时发送当前笔记内容。保存的总结可以再次查看；日常记录、编辑和本地搜索无需账号或网络。
+
+## 临时便笺
+
+按 `Ctrl+Shift+D`（macOS 为 `Command+Shift+D`）可以从任何位置快速调出便笺。便笺可以钉在桌面最上层；关闭窗口只会隐藏内容，不会删除记录。你也可以在设置中修改全局快捷键。
+
+之后回到主应用的“临时便笺”，可以继续整理内容，并将便笺转为正式笔记。
+
+---
+
+现在，新建你的第一篇笔记吧。
+"#;
+const PRE_REFINEMENT_GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+
+微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
+
+## 从这里开始
+
+你可以试着：
+
+- 新建一篇笔记，随手写下此刻的想法
+- 创建文件夹，整理不同主题的内容
+- 在源码、分屏和预览三种视图间切换
+- 为笔记添加标签
+- 使用 `[[笔记标题]]` 连接两篇笔记
+
+## 关于 Markdown
+
+Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本编辑器打开的文件。下面这些写法已足够应对大多数记录：
+
+````markdown
+# 一级标题
+## 二级标题
+
+**粗体**、*斜体*、~~删除线~~ 和 `行内代码`
+
+- 无序列表
+1. 有序列表
+- [ ] 任务项
+
+> 引用一段重要内容
+
+[显示文字](https://example.com)
+![图片说明](图片路径)
+
+分隔线使用三个短横线：
+
+---
+
+```text
+一段代码
+```
+````
+
+编辑器的“＋”菜单和右键菜单可以快速插入表格、代码块、图片和内部链接；也可以直接粘贴图片。
+
+## 文档导入与笔记类型
+
+从资料库导入文件，可以将资料集中在同一文件夹中。微屿支持 Markdown（.md/.markdown）、纯文本（.txt）、Word（.doc/.docx）、Excel（.xls/.xlsx）、PowerPoint（.ppt/.pptx）、PDF，以及 PNG、JPG、WebP 等图片；其他文件也可以作为附件保留。
+
+- **Markdown 笔记**：用轻量语法写作，在文档编辑、分栏校对和阅读视图之间切换。
+- **文档笔记**：使用格式工具栏编辑标题、文字格式、列表、任务、链接、图片、表格和代码块；导入的 DOCX 也可以转换为可编辑的文档笔记，原始文件仍会保留。
+- **纯文本笔记**：保留原始文字，不解释 Markdown 格式。
+- **文件条目**：保留导入文件的格式与内容；PDF、图片和现代 Office 文件可在微屿预览，Office 文件可打开进行编辑，保存后同步到原笔记。复杂版式及旧版 Office 文件请使用系统应用查看。
+
+## AI 辅助
+
+点击正式笔记右侧的机器人星光图标打开 **AI 总结**。在“设置 → AI”中配置自己的 DeepSeek API Key 和总结模型后，可以为当前笔记生成一句话总结、关键要点、章节大纲、待办事项和关键词。
+
+生成总结需要联网，并在你主动操作时发送当前笔记内容。保存的总结可以再次查看；日常记录、编辑和本地搜索无需账号或网络。
+
+## 临时便笺
+
+按 `Ctrl+Shift+D`（macOS 为 `Command+Shift+D`）可以从任何位置快速调出便笺。便笺可以钉在桌面最上层；关闭窗口只会隐藏内容，不会删除记录。你也可以在设置中修改全局快捷键。
+
+之后回到主应用的“临时便笺”，可以继续整理内容，并将便笺转为正式笔记。
+
+---
+
+现在，新建你的第一篇笔记吧。
+"#;
+const PRE_CONCISE_IMPORT_SECTION: &str = r#"## 文档导入与笔记类型
+
+### 导入已有资料
+
+你可以把已有文件导入资料库，和自己的笔记一起整理。
+
+支持 Markdown（.md/.markdown）、纯文本（.txt）、Word（.doc/.docx）、Excel（.xls/.xlsx）和 PowerPoint（.ppt/.pptx），也支持 PDF、PNG、JPG、WebP 等文件。
+
+PDF 和图片可直接预览，现代 Office 文件可查看文字、表格等内容。复杂版式和旧版 Office 文件请使用系统应用查看。
+
+### 选择笔记类型
+
+**Markdown 笔记**：用简洁的文字语法记录内容，可切换文档编辑、分栏校对和阅读视图。
+
+**文档笔记**：通过工具栏编辑标题、列表、图片和表格，适合需要排版的内容。
+
+**纯文本笔记**：只记录文字，输入的符号会按原样保留。
+
+**文件条目**：保留导入的原文件，方便集中查看和整理资料。
+
+导入的 DOCX 可以转换为文档笔记继续编辑，原始文件仍会保留。Word、Excel 和 PowerPoint 文件也可通过“打开进行编辑”交给系统应用，保存后会同步回微屿。
+
+"#;
+const CONCISE_IMPORT_SECTION: &str = r#"## 文档导入与笔记类型
+
+可导入 Markdown、TXT、Word、Excel、PowerPoint、PDF 和 PNG/JPG/WebP 图片。
+
+**Markdown 笔记**：支持文档编辑、分栏校对和阅读。
+
+**文档笔记**：通过工具栏编辑标题、列表、图片和表格。
+
+**纯文本笔记**：保留文字原样。
+
+**文件条目**：保留原文件，支持 PDF、图片及现代 Office 内容预览。
+
+DOCX 可转为文档笔记，原始文件仍会保留。Office 文件可用系统应用编辑，保存后同步回微屿。
+
+"#;
+const GETTING_STARTED_MARKDOWN: &str = r#"# 欢迎来到微屿 🌿
+
+微屿是一款安静、轻巧的本地 Markdown 笔记应用。无需登录，也不依赖网络，你的笔记会保存在自己的设备上。
+
+## 从这里开始
+
+你可以试着：
+
+- 新建一篇笔记，随手写下此刻的想法
+- 创建文件夹，整理不同主题的内容
+- 在源码、分屏和预览三种视图间切换
+- 为笔记添加标签
+- 使用 `[[笔记标题]]` 连接两篇笔记
+
+## 关于 Markdown
+
+Markdown 用简单符号表达文章结构，笔记仍是可以用普通文本编辑器打开的文件。下面这些写法已足够应对大多数记录：
+
+````markdown
+# 一级标题
+## 二级标题
+
+**粗体**、*斜体*、~~删除线~~ 和 `行内代码`
+
+- 无序列表
+1. 有序列表
+- [ ] 任务项
+
+> 引用一段重要内容
+
+[显示文字](https://example.com)
+![图片说明](图片路径)
+
+分隔线使用三个短横线：
+
+---
+
+```text
+一段代码
+```
+````
+
+编辑器的“＋”菜单和右键菜单可以快速插入表格、代码块、图片和内部链接；也可以直接粘贴图片。
+
+## 文档导入与笔记类型
+
+可导入 Markdown、TXT、Word、Excel、PowerPoint、PDF 和 PNG/JPG/WebP 图片。
+
+**Markdown 笔记**：支持文档编辑、分栏校对和阅读。
+
+**文档笔记**：通过工具栏编辑标题、列表、图片和表格。
+
+**纯文本笔记**：保留文字原样。
+
+**文件条目**：保留原文件，支持 PDF、图片及现代 Office 内容预览。
+
+DOCX 可转为文档笔记，原始文件仍会保留。Office 文件可用系统应用编辑，保存后同步回微屿。
+
+## AI 辅助
+
+点击正式笔记右侧的机器人星光图标打开 **AI 总结**。在“设置 → AI”中配置自己的 DeepSeek API Key 和总结模型后，可以为当前笔记生成一句话总结、关键要点、章节大纲、待办事项和关键词。
+
+生成总结需要联网，并在你主动操作时发送当前笔记内容。保存的总结可以再次查看；日常记录、编辑和本地搜索无需账号或网络。
+
+## 临时便笺
+
+按 `Ctrl+Shift+D`（macOS 为 `Command+Shift+D`）可以从任何位置快速调出便笺。便笺可以钉在桌面最上层；关闭窗口只会隐藏内容，不会删除记录。你也可以在设置中修改全局快捷键。
+
+之后回到主应用的“临时便笺”，可以继续整理内容，并将便笺转为正式笔记。
+
+---
+
+现在，新建你的第一篇笔记吧。
+"#;
 
 #[doc(hidden)]
 pub fn legacy_getting_started_markdown() -> &'static str {
@@ -276,7 +532,29 @@ fn upgrade_getting_started_guide(paths: &StoragePaths) -> Result<(), CommandErro
         .replace("Ctrl+Shift+D", "Ctrl+Shift+Space")
         .replace("Command+Shift+D", "Command+Shift+Space");
     let stored_markdown = normalize_guide_line_endings(&document.markdown);
-    if stored_markdown != normalize_guide_line_endings(LEGACY_GETTING_STARTED_MARKDOWN)
+    if stored_markdown
+        != normalize_guide_line_endings(
+            &GETTING_STARTED_MARKDOWN.replace(CONCISE_IMPORT_SECTION, PRE_CONCISE_IMPORT_SECTION),
+        )
+        && stored_markdown
+            != normalize_guide_line_endings(
+                &GETTING_STARTED_MARKDOWN
+                    .replace(CONCISE_IMPORT_SECTION, PRE_CONCISE_IMPORT_SECTION)
+                    .replace("图片和内部链接", "图片和引用笔记"),
+            )
+        && stored_markdown != normalize_guide_line_endings(PRE_REFINEMENT_GETTING_STARTED_MARKDOWN)
+        && stored_markdown
+            != normalize_guide_line_endings(
+                &PRE_REFINEMENT_GETTING_STARTED_MARKDOWN
+                    .replace("图片和内部链接", "图片和引用笔记"),
+            )
+        && stored_markdown != normalize_guide_line_endings(PRE_MERGE_GETTING_STARTED_MARKDOWN)
+        && stored_markdown
+            != normalize_guide_line_endings(
+                &PRE_MERGE_GETTING_STARTED_MARKDOWN.replace("图片和内部链接", "图片和引用笔记"),
+            )
+        && stored_markdown != normalize_guide_line_endings(PRE_FORMAT_GETTING_STARTED_MARKDOWN)
+        && stored_markdown != normalize_guide_line_endings(LEGACY_GETTING_STARTED_MARKDOWN)
         && stored_markdown != normalize_guide_line_endings(&previous_guide)
         && stored_markdown != normalize_guide_line_endings(&previous_shortcut_guide)
         && stored_markdown != normalize_guide_line_endings(&current_previous_guide)
@@ -454,11 +732,14 @@ where
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn load_note(
+pub async fn load_note(
     state: State<'_, StorageCommandState>,
     note_id: NoteId,
 ) -> Result<NoteDocument, CommandError> {
-    repository(&state)?.load(note_id)
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || NoteRepository::new(paths).load(note_id))
+        .await
+        .map_err(|_| CommandError::io("note read did not complete"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -473,11 +754,16 @@ pub fn save_note(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn list_notes(
+pub async fn list_notes(
     state: State<'_, StorageCommandState>,
     folder_id: Option<FolderId>,
 ) -> Result<Vec<NoteSummary>, CommandError> {
-    repository(&state)?.list_in_folder(folder_id)
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        NoteRepository::new(paths).list_in_folder(folder_id)
+    })
+    .await
+    .map_err(|_| CommandError::io("note list read did not complete"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]

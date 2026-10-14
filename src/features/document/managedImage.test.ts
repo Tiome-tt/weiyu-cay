@@ -47,9 +47,11 @@ describe('managed rich images', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(created)
   })
 
-  it('loads managed images without waiting for an intersection callback', async () => {
+  it('defers offscreen images until they enter the prefetch region', async () => {
     const observe = vi.fn()
+    let callback!:IntersectionObserverCallback
     class NeverIntersects {
+      constructor(next:IntersectionObserverCallback){callback=next}
       observe = observe
       disconnect = vi.fn()
     }
@@ -62,6 +64,9 @@ describe('managed rich images', () => {
       content: { type: 'doc', content: [{ type: 'image', attrs: { src: IMAGE_PATH } }] },
     })
 
+    expect(observe).toHaveBeenCalled()
+    expect(readImage).not.toHaveBeenCalled()
+    callback([{isIntersecting:true} as IntersectionObserverEntry],{} as IntersectionObserver)
     await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
     expect(readImage).toHaveBeenCalledOnce()
     editor.destroy()

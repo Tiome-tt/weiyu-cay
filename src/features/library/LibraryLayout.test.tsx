@@ -80,7 +80,7 @@ describe('LibraryLayout', () => {
     await screen.findByRole('treeitem', { name: '项目 A' })
     expect(document.querySelector('.folder-tree__root-notes')).not.toBeInTheDocument()
   })
-  it('updates expanded source and destination rows immediately after moving from the editor menu', async () => {
+  it('updates expanded source and destination rows immediately after moving from the note context menu', async () => {
     let current: NoteDocument = { ...note('body'), id: noteA, title: '移动刷新测试', folderId: folderA }
     const notes = fakeNotePort({
       listNotes: vi.fn(async (id) => current.folderId === id ? [{ ...current, excerpt: 'body' }] : []),
@@ -95,10 +95,12 @@ describe('LibraryLayout', () => {
     const source = screen.getByRole('treeitem', { name: '项目 A' })
     await user.click(source)
     await user.click(await screen.findByRole('button', { name: /^移动刷新测试/ }))
-    await user.click(screen.getByRole('button', { name: '笔记更多操作' }))
-    const select = screen.getByRole('combobox', { name: '笔记文件夹' })
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^移动刷新测试/ }))
+    await user.click(screen.getByRole('menuitem', { name: '移动到' }))
+    const select = screen.getByRole('combobox', { name: '移动所选条目到' })
     expect(within(select).queryByRole('option', { name: '未归档笔记' })).not.toBeInTheDocument()
     await user.selectOptions(select, folderB)
+    await user.click(within(screen.getByRole('dialog',{name:'移动所选条目'})).getByRole('button',{name:'移动'}))
     await within(destination.closest('li')!).findByRole('button', { name: /^移动刷新测试/ })
 
     expect(within(source.closest('li')!).queryByRole('button', { name: /^移动刷新测试/ })).not.toBeInTheDocument()
@@ -442,10 +444,12 @@ describe('LibraryLayout', () => {
 
     expect(notes.renameNote).toHaveBeenCalledWith(noteA, 'Renamed note')
     expect(await screen.findByRole('heading', { name: 'Renamed note' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '笔记更多操作' }))
-    await user.selectOptions(screen.getByRole('combobox', { name: '笔记文件夹' }), folderB)
+    fireEvent.contextMenu(screen.getByRole('button',{name:/^Renamed note/}))
+    await user.click(screen.getByRole('menuitem',{name:'移动到'}))
+    await user.selectOptions(screen.getByRole('combobox', { name: '移动所选条目到' }), folderB)
+    await user.click(within(screen.getByRole('dialog',{name:'移动所选条目'})).getByRole('button',{name:'移动'}))
     expect(notes.moveNote).toHaveBeenCalledWith(noteA, folderB)
-    expect(await screen.findByText('笔记已移动。', { selector: '[role="status"]' })).toBeVisible()
+    await waitFor(()=>expect(current.folderId).toBe(folderB))
   })
 
   it('adopts a committed rename revision, retries partial link repair, and saves without conflict', async () => {
@@ -1720,7 +1724,7 @@ describe('LibraryLayout', () => {
     await user.click(screen.getByRole('menuitem', { name: '导入文件' }))
 
     expect(importFiles).toHaveBeenCalledWith({ paths: ['C:\\incoming\\预算.final.xlsx'], folderId: folderA })
-    expect(await screen.findByRole('button', { name: '预算' })).toHaveAccessibleDescription('Office · XLSX')
+    expect(await screen.findByRole('button', { name: '预算' })).toHaveAccessibleDescription('XLSX')
     expect(screen.getByRole('status')).toHaveTextContent('已导入 1 项')
   })
 
@@ -1781,7 +1785,7 @@ describe('LibraryLayout', () => {
     fireEvent.keyDown(firstCard, { key: ' ', ctrlKey: true })
     fireEvent.keyDown(secondCard, { key: ' ', ctrlKey: true })
     fireEvent.contextMenu(secondCard)
-    fireEvent.click(screen.getByRole('menuitem', { name: '删除 2 项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除笔记' }))
 
     await waitFor(() => expect(trash.trash).toHaveBeenCalledWith([noteA, noteB]))
     expect(await screen.findByText('2 项已移入回收站。')).toBeVisible()
@@ -1838,7 +1842,9 @@ it('exports the active Markdown note without selecting it again', async () => {
   await waitFor(() => expect(loadNote).toHaveBeenCalledTimes(1))
 
   fireEvent.contextMenu(card)
-  await user.click(screen.getByRole('menuitem', { name: '导出 PDF' }))
+  await user.click(screen.getByRole('menuitem', { name: '另存为' }))
+  await user.selectOptions(screen.getByRole('combobox',{name:'另存格式'}),'pdf')
+  await user.click(screen.getByRole('button',{name:'另存为'}))
   await waitFor(() => expect(markdownPdfExport).toHaveBeenCalled())
   expect(loadNote).toHaveBeenCalledTimes(2)
 })

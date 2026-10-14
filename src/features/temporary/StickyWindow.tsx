@@ -158,6 +158,7 @@ export function StickyWindow({
           assets={assets}
           assetReader={assetReader}
           showBlockHandle={false}
+          showLineNumbers={false}
           onImageError={(message) => setWindowError(message)}
         />
       </section>

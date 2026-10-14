@@ -10,9 +10,9 @@ test('aligns settings controls and sizes fields for their contents', async ({ pa
   const size = page.getByRole('spinbutton', { name: '界面字号' })
   await expect(theme).toBeVisible()
   const boxes = await Promise.all([theme, font, code].map((control) => control.boundingBox()))
-  expect(Math.abs(boxes[0]!.x - boxes[1]!.x)).toBeLessThan(1)
+  expect(Math.abs(boxes[0]!.x+boxes[0]!.width - boxes[1]!.x-boxes[1]!.width)).toBeLessThan(1)
   expect(Math.abs((await size.boundingBox())!.x + (await size.boundingBox())!.width - boxes[1]!.x - boxes[1]!.width)).toBeLessThan(1)
-  expect(Math.abs(boxes[1]!.x - boxes[2]!.x)).toBeLessThan(1)
+  expect(Math.abs(boxes[1]!.x+boxes[1]!.width - boxes[2]!.x-boxes[2]!.width)).toBeLessThan(1)
   expect((await size.boundingBox())!.width).toBeLessThan(120)
   await expect(page.getByRole('button', { name: '完成', exact: true })).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('settings.png') })
@@ -20,8 +20,8 @@ test('aligns settings controls and sizes fields for their contents', async ({ pa
     await page.getByRole('tab', { name, exact: true }).click()
     await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible()
     if (name === '系统') {
-      const startup = (await page.getByRole('checkbox', { name: '开机启动' }).boundingBox())!
-      const tray = (await page.getByRole('checkbox', { name: '关闭主窗口时隐藏到托盘' }).boundingBox())!
+      const startup = (await page.getByRole('switch', { name: '开机启动' }).boundingBox())!
+      const tray = (await page.getByRole('switch', { name: '关闭主窗口时隐藏到托盘' }).boundingBox())!
       expect(Math.abs(startup.x - tray.x)).toBeLessThan(1)
     }
     await page.screenshot({ path: testInfo.outputPath('settings-' + name + '.png') })
@@ -32,7 +32,7 @@ test('aligns settings controls and sizes fields for their contents', async ({ pa
   await page.screenshot({ path: testInfo.outputPath('settings-night.png') })
 })
 
-test('centers a complete poem and uses a continuous divider at desktop widths', async ({ page }, testInfo) => {
+test('centers a poem with truncation and uses a continuous divider at desktop widths', async ({ page }, testInfo) => {
   await page.goto('/')
   await page.getByRole('treeitem', { name: '项目', exact: true }).click()
   for (const width of [800, 1180]) {
@@ -45,7 +45,8 @@ test('centers a complete poem and uses a continuous divider at desktop widths', 
       const a = text.getBoundingClientRect(), b = cite.getBoundingClientRect()
       return Math.abs((a.left + b.right) / 2 - window.innerWidth / 2)
     })).toBeLessThan(2)
-    expect(await lyric.evaluate((element) => Array.from(element.children).every((child) => child.scrollWidth <= child.clientWidth))).toBe(true)
+    expect(await lyric.locator('.daily-lyric__text').evaluate(element=>getComputedStyle(element).textOverflow)).toBe('ellipsis')
+    await expect(lyric).toHaveAttribute('title',/《.+》/)
   }
   const divider = page.getByRole('separator', { name: '调整文件夹栏宽度' })
   const bounds = (await divider.boundingBox())!
@@ -62,7 +63,8 @@ test('centers a complete poem and uses a continuous divider at desktop widths', 
   await page.getByRole('spinbutton', { name: '界面字号' }).blur()
   await page.getByRole('button', { name: '完成', exact: true }).click()
   const lyric = page.getByTestId('daily-lyric')
-  await expect.poll(() => lyric.evaluate((element) => Array.from(element.children).every((child) => child.scrollWidth <= child.clientWidth))).toBe(true)
+  await expect(lyric).toHaveAttribute('title',/《.+》/)
+  expect(await lyric.locator('.daily-lyric__text').evaluate(element=>getComputedStyle(element).textOverflow)).toBe('ellipsis')
   await page.screenshot({ path: testInfo.outputPath('workspace.png') })
 })
 

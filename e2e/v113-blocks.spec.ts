@@ -11,7 +11,7 @@ test('records search binding, responds to it, and submits the sidebar query',asy
  await page.keyboard.press('Control+k');await expect(binding).toHaveValue('Ctrl+K')
  await page.getByRole('tab',{name:'AI',exact:true}).click()
  const key=page.locator('.settings-view__key-control'),model=page.getByRole('combobox',{name:'总结模型'})
- expect((await key.boundingBox())?.width).toBeCloseTo((await model.boundingBox())?.width??0,0)
+ expect((await model.boundingBox())!.width).toBeLessThan((await key.boundingBox())!.width)
  await page.screenshot({path:info.outputPath('settings-ai.png')})
  await page.getByRole('button',{name:'完成',exact:true}).click()
  await page.keyboard.press('Control+k');await expect(page.getByRole('dialog',{name:'搜索资料库'})).toBeVisible()

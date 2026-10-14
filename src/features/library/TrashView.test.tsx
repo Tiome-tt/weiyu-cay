@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Folder, FolderId, NoteDocument, NoteId } from '../../domain/model'
@@ -73,7 +73,7 @@ describe('TrashView', () => {
     expect(status).toHaveTextContent('已恢复 2 项')
     expect(status).toHaveTextContent('原文件夹不可用的项目已放入“已恢复”')
     expect(status).toHaveFocus()
-    expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
+    await waitFor(()=>expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument())
   })
 
   it('invalidates an older list request before restore and refreshes the surrounding library', async () => {
@@ -126,7 +126,7 @@ describe('TrashView', () => {
 
     expect(purge).toHaveBeenCalledWith([formalId])
     expect(await screen.findByText('已永久删除 1 项，之后无法恢复。')).toBeVisible()
-    expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument()
+    await waitFor(()=>expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument())
   })
 
   it('supports keyboard selection and preserves failed entries with an actionable error', async () => {

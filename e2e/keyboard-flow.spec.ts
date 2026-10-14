@@ -4,6 +4,7 @@ const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A'
 async function tabTo(page: Page, target: Locator, limit = 120) {
   for (let index = 0; index < limit; index += 1) {
     if (await target.evaluate((element) => element === document.activeElement).catch(() => false)) return
+    if(await page.evaluate(()=>Boolean(document.activeElement?.closest('.cm-content'))))await page.keyboard.press('Escape')
     await page.keyboard.press('Tab')
   }
   throw new Error(`keyboard focus did not reach ${await target.getAttribute('aria-label') ?? await target.textContent()}`)
@@ -29,7 +30,7 @@ test('completes the primary application flow with keyboard input only', async ({
   await tabTo(page, editor)
   await page.keyboard.type('# 键盘流程\n\n')
   await activate(page, page.getByRole('button', { name: '添加内容块' }))
-  await activate(page, page.getByRole('menuitem', { name: '插入内部链接' }))
+  await activate(page, page.getByRole('menuitem', { name: '引用笔记' }))
   await expect(page.getByRole('treeitem', { name: '选择链接：用户认证' })).toHaveAttribute('aria-selected', 'true')
   await tabTo(page, page.getByRole('searchbox', { name: '筛选笔记' }))
   await page.keyboard.press('Enter')

@@ -24,6 +24,10 @@ export interface TableCellRange {
   endColumn: number
 }
 
+// Source provenance lives only in memory; the durable representation stays Markdown.
+// Keeping it per row lets row moves retain escapes without adding persisted fields.
+const rowSources = new WeakMap<string[], ({ value: string; source: string } | undefined)[]>()
+
 export function tableMarkdownFromCells(
   cells: string[][],
   alignments: readonly MarkdownTableAlignment[] = [],
@@ -35,6 +39,7 @@ export function tableMarkdownFromCells(
   const usedNames = new Set(header.filter(Boolean))
   for (let column = 0; column < columns; column += 1) {
     if (header[column] !== '') continue
+    if (rowSources.get(normalized[0])?.[column]?.value === '') continue
     let number = column + 1
     while (usedNames.has(`列 ${number}`)) number += 1
     header[column] = `列 ${number}`
@@ -42,7 +47,12 @@ export function tableMarkdownFromCells(
   }
   const divider = header.map((_, column) => alignmentMarker(alignments[column] ?? null))
   const body = normalized.slice(1).map((row) => Array.from({ length: columns }, (_, column) => row[column]?.trim() ?? ''))
-  return [formatRow(header), formatRow(divider, false), ...body.map((row) => formatRow(row))].join('\n')
+  const sourceRow = (row: string[], original: string[] | undefined) => {
+    const sources = original === undefined ? undefined : rowSources.get(original)
+    return formatRow(row.map((value, column) => sources?.[column]?.value === value
+      ? sources[column]!.source : escapeTableCell(value)), false)
+  }
+  return [sourceRow(header, normalized[0]), formatRow(divider, false), ...body.map((row, index) => sourceRow(row, normalized[index + 1]))].join('\n')
 }
 
 export function parseMarkdownTable(source: string): MarkdownTable | null {
@@ -56,13 +66,16 @@ export function parseMarkdownTable(source: string): MarkdownTable | null {
   const alignments = separators.map(parseAlignment)
   if (alignments.some((alignment) => alignment === undefined)) return null
   const cells = [header]
+  rowSources.set(header, rawTableRow(lines[0]).map((source, index) => ({ value: header[index], source })))
   for (const line of lines.slice(2)) {
     // A GFM table row must contain a pipe. Lezer can keep a plain paragraph
     // immediately after a table in the same Table node, but that paragraph
     // must remain editable text outside the rendered table.
     if (!line.includes('|')) break
     const row = parseTableRow(line)
-    cells.push(Array.from({ length: header.length }, (_, column) => row[column] ?? ''))
+    const padded = Array.from({ length: header.length }, (_, column) => row[column] ?? '')
+    rowSources.set(padded, rawTableRow(line).map((source, index) => ({ value: padded[index], source })))
+    cells.push(padded)
   }
   const merges = metadata === undefined || metadata === null ? undefined : normalizeMerges(metadata, cells.length, header.length) ?? undefined
   return merges === undefined ? { cells, alignments: alignments as MarkdownTableAlignment[] } : { cells, alignments: alignments as MarkdownTableAlignment[], merges }
@@ -82,6 +95,26 @@ export function tableWithCell(table: MarkdownTable, row: number, column: number,
   const cells = cloneCells(table.cells)
   cells[anchor.row]![anchor.column] = value
   return { ...cloneTable(table), cells }
+}
+
+/** Clone the grid once for a matrix paste; split intersected merges before writing. */
+export function tableWithMatrix(table: MarkdownTable, row: number, column: number, values: string[][]): MarkdownTable {
+  const height = values.length
+  const width = Math.max(0, ...values.map(line => line.length))
+  const columns = Math.max(1, column + width, ...table.cells.map(line => line.length))
+  const cells = Array.from({ length: Math.max(table.cells.length, row + height) }, (_, r) =>
+    Array.from({ length: columns }, (_, c) => table.cells[r]?.[c] ?? ''))
+  cells.forEach((line, r) => {
+    const sources = rowSources.get(table.cells[r])
+    if (sources) rowSources.set(line, sources.slice())
+  })
+  values.forEach((line, r) => line.forEach((value, c) => { cells[row + r][column + c] = value.replace(/\r\n?|\n/g, '<br>') }))
+  return {
+    cells,
+    alignments: Array.from({ length: columns }, (_, c) => table.alignments[c] ?? null),
+    merges: table.merges?.filter(merge => merge.row >= row + height || merge.row + merge.rowSpan <= row ||
+      merge.column >= column + width || merge.column + merge.columnSpan <= column),
+  }
 }
 
 export function tableWithAlignment(
@@ -108,7 +141,7 @@ export function tableWithInsertedRow(table: MarkdownTable, row: number): Markdow
 export function tableWithInsertedColumn(table: MarkdownTable, column: number): MarkdownTable {
   const cells = cloneCells(table.cells)
   const index = Math.max(0, Math.min(Math.max(1, ...cells.map((line) => line.length)), Math.round(column)))
-  for (const line of cells) line.splice(index, 0, '')
+  for (const line of cells) { line.splice(index, 0, ''); rowSources.get(line)?.splice(index, 0, undefined) }
   const merges = adjustMergesForInsertedColumn(table.merges ?? [], index)
   return { ...cloneTable(table), cells, merges }
 }
@@ -124,7 +157,7 @@ export function tableWithDeletedColumn(table: MarkdownTable, column: number): Ma
   const columns = Math.max(1, ...table.cells.map((line) => line.length))
   if (columns <= 1 || column < 0 || column >= columns) return cloneTable(table)
   const cells = cloneCells(table.cells)
-  for (const line of cells) line.splice(column, 1)
+  for (const line of cells) { line.splice(column, 1); rowSources.get(line)?.splice(column, 1) }
   return { ...cloneTable(table), cells, merges: adjustMergesForDeletedColumn(table.merges ?? [], column) }
 }
 
@@ -197,7 +230,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function cloneCells(cells: string[][]) {
-  return cells.map((row) => [...row])
+  return cells.map(row => {
+    const clone = [...row]
+    const sources = rowSources.get(row)
+    if (sources) rowSources.set(clone, sources.slice())
+    return clone
+  })
 }
 
 function cloneTable(table: MarkdownTable): MarkdownTable {
@@ -304,6 +342,21 @@ function parseTableRow(line: string) {
   return cells
 }
 
+function rawTableRow(line: string): string[] {
+  let value = line.trim()
+  if (value.startsWith('|')) value = value.slice(1)
+  if (value.endsWith('|') && (value.match(/\\+\|$/)?.[0].length ?? 1) % 2 === 1) value = value.slice(0, -1)
+  const cells: string[] = []
+  let cell = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '\\' && index + 1 < value.length) { cell += character + value[++index]; continue }
+    if (character === '|') { cells.push(cell.trim()); cell = '' } else cell += character
+  }
+  cells.push(cell.trim())
+  return cells
+}
+
 function parseAlignment(value: string): MarkdownTableAlignment | undefined {
   if (!/^:?-+:?$/u.test(value)) return undefined
   if (value.startsWith(':') && value.endsWith(':')) return 'center'
@@ -320,7 +373,7 @@ function alignmentMarker(alignment: MarkdownTableAlignment) {
 }
 
 function escapeTableCell(value: string) {
-  return value.replace(/\\/gu, '\\\\').replace(/\|/gu, '\\|')
+  return value.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{}~])/gu, '\\$1').replace(/\\(?![!"#$%&'()*+,\-./:;<=>?@[\]^_`{}~])/gu, '\\\\').replace(/\|/gu, '\\|')
 }
 
 export const markdownSnippets = {

@@ -2,8 +2,12 @@ import { ErrorNotification } from '../../shared/notifications'
 import { libraryEntryPresentation } from './libraryEntries'
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import type { ExportSelection, FilePort } from '../../domain/ports'
 import type { Folder, FolderId, NoteId, NoteSummary } from '../../domain/model'
 import { Icon, type IconName } from '../../shared/Icon'
+import type { NoteExportKind } from '../../domain/noteExport'
+import { dialogKeyboard } from '../../shared/dialogKeyboard'
+import { SaveAsDialog } from '../content/SaveAsDialog'
 
 export function reorderNoteIds(ids: NoteId[], draggedId: NoteId, targetId: NoteId, placement: 'before' | 'after'): NoteId[] {
   if (draggedId === targetId || !ids.includes(draggedId) || !ids.includes(targetId)) return [...ids]
@@ -17,16 +21,8 @@ export function reorderNoteIds(ids: NoteId[], draggedId: NoteId, targetId: NoteI
 type NoteDropTarget = { noteId?: NoteId; folderId?: FolderId; placement?: 'before' | 'after' }
 
 const EMPTY_SELECTION = new Set<NoteId>()
-function isPdfFileEntry(note: NoteSummary): boolean {
-  return note.content?.type === 'file'
-    && (note.content.file.mediaType === 'application/pdf' || /\.pdf$/i.test(note.content.file.originalName))
-}
-
-function canExportPdf(note: NoteSummary): boolean {
-  return note.content?.type !== 'file' || isPdfFileEntry(note)
-}
-
 interface NoteListProps {
+  files?:Pick<FilePort,'chooseExportDirectory'>
   notes: NoteSummary[]
   activeId: NoteId | null
   state: 'loading' | 'ready' | 'error'
@@ -45,12 +41,16 @@ interface NoteListProps {
   folderId?: FolderId | null
   onReorder?: (folderId: FolderId | null, orderedIds: NoteId[]) => Promise<void>
   onMoveToFolder?: (noteId: NoteId, folderId: FolderId) => Promise<void>
-  onExport?: (note: NoteSummary, kind: 'word' | 'pdf') => void
+  onExport?: (note: NoteSummary, kind: NoteExportKind, selection?:ExportSelection) => void
   starredIds?: readonly NoteId[]
+  onSetStars?: (notes:NoteSummary[],enabled:boolean)=>void
   onToggleStar?: (note: NoteSummary) => void
   showEmptyState?: boolean
 }
-export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteSelection, onMoveSelection, folders, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onDismissFeedback, folderId = null, onReorder, onMoveToFolder, onExport, starredIds = [], onToggleStar, showEmptyState = true }: NoteListProps) {
+export function NoteList({ files, notes, activeId, state, onSelect, onDelete, onDeleteSelection, onMoveSelection, folders, deletingId = null, deleteError = null, deleteFeedback = null, undoAvailable = false, undoBusy = false, onUndoDelete, onDismissFeedback, folderId = null, onReorder, onMoveToFolder, onExport, starredIds = [], onToggleStar, onSetStars, showEmptyState = true }: NoteListProps) {
+  const listRef=useRef<HTMLElement>(null)
+  const [saveTarget,setSaveTarget]=useState<NoteSummary|null>(null)
+  const [moveTargets,setMoveTargets]=useState<NoteId[]|null>(null)
   const feedbackRef = useRef<HTMLParagraphElement>(null)
   const contextTriggerRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ id: NoteId; x: number; y: number } | null>(null)
@@ -65,6 +65,18 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
   const [contextTarget, setContextTarget] = useState<NoteSummary | null>(null)
   const [contextPosition, setContextPosition] = useState<{ x: number; y: number } | null>(null)
   const [moveFolderId, setMoveFolderId] = useState<FolderId | ''>('')
+  useEffect(()=>{
+    if(selectedIds.size<2)return
+    const cancel=(event:PointerEvent)=>{
+      const target=event.target
+      if(!(target instanceof Element)||event.ctrlKey||event.metaKey)return
+      if(listRef.current?.contains(target)||target.closest('.note-context-menu, .save-as-dialog, .library-operation-dialog'))return
+      setSelectedIds(new Set())
+      setContextTarget(null);setContextPosition(null)
+    }
+    document.addEventListener('pointerdown',cancel,true)
+    return()=>document.removeEventListener('pointerdown',cancel,true)
+  },[selectedIds])
   useEffect(() => {
     if (deleteFeedback !== null) feedbackRef.current?.focus()
   }, [deleteFeedback])
@@ -234,7 +246,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
   const selectionCount = contextSelection.length
 
   return (
-    <section aria-label="笔记列表" className="note-list">
+    <section ref={listRef} aria-label="笔记列表" className="note-list">
       {deleteFeedback && createPortal(
         <div className="note-list__mutation-status">
           <span className="note-list__mutation-icon" aria-hidden="true"><Icon name="note" size={18} /></span><p ref={feedbackRef} role="status" tabIndex={-1} title={deleteFeedback}>{deleteFeedback}</p>
@@ -245,7 +257,6 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
         </div>, document.querySelector('.main-window') ?? document.body
       )}
       <ErrorNotification error={deleteError} />
-      {effectiveSelectedIds.size > 1 && <p className="library-status note-list__selection-status" role="status">已选择 {effectiveSelectedIds.size} 项</p>}
       {state === 'loading' && <p className="library-status">正在加载笔记…</p>}
       <ErrorNotification error={state === 'error' ? '无法加载笔记。' : null} />
       {showEmptyState && state === 'ready' && notes.length === 0 && <p className="library-status">此文件夹中还没有笔记。</p>}
@@ -308,7 +319,7 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
                   }
                 }}
               >
-                <strong className="note-card__title"><Icon name={entryIconName(note)} size={14} />{note.title}</strong>
+                <strong className="note-card__title"><Icon name={entryIconName(note)} size={20} />{note.title}</strong>
                 <span id={`entry-type-${note.id}`} className="note-card__type">{entryTypeText(note)}</span>
                 {note.tags.length > 0 && <span className="note-card__tags">{note.tags.map((tag) => `#${tag}`).join(' ')}</span>}
               </button>
@@ -324,35 +335,24 @@ export function NoteList({ notes, activeId, state, onSelect, onDelete, onDeleteS
           setContextPosition(null)
           contextTriggerRef.current?.focus()
         }} onContextMenu={(event) => event.preventDefault()}>
-          {onToggleStar && selectionCount === 1 && contextTarget.kind === 'formal' && <button type="button" role="menuitem" onClick={() => { onToggleStar(contextTarget); setContextTarget(null); setContextPosition(null) }}>{starredIds.includes(contextTarget.id) ? '取消星标' : '添加星标'}</button>}
-          {onExport && selectionCount === 1 && canExportPdf(contextTarget) && <>
-            <button type="button" role="menuitem" autoFocus onClick={() => { onExport(contextSelection[0], 'pdf'); setContextTarget(null); setContextPosition(null) }}>{isPdfFileEntry(contextTarget) ? '另存 PDF' : '导出 PDF'}</button>
-            {contextTarget.content?.type === 'document' && <button type="button" role="menuitem" onClick={() => { onExport(contextTarget, 'word'); setContextTarget(null); setContextPosition(null) }}>导出 Word</button>}
-          </>}
-          {onMoveSelection && folders && selectionCount > 1 && <form aria-label="移动所选条目" onSubmit={(event) => {
-            event.preventDefault()
-            if (moveFolderId === '') return
-            void onMoveSelection(contextSelection.map((entry) => entry.id), moveFolderId)
-            setContextTarget(null)
-            setContextPosition(null)
-          }}>
-            <label>
-              <span className="sr-only">移动所选条目到</span>
-              <select aria-label="移动所选条目到" value={moveFolderId} onChange={(event) => setMoveFolderId(event.target.value as FolderId | '')}>
-                <option value="" disabled>选择文件夹</option>
-                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-              </select>
-            </label>
-            <button type="submit" disabled={moveFolderId === ''}>移动</button>
-          </form>}
+          {(onSetStars||(onToggleStar&&selectionCount===1))&&contextSelection.every(note=>note.kind==='formal')&&<button type="button" role="menuitem" onClick={()=>{
+            const enabled=!contextSelection.every(note=>starredIds.includes(note.id))
+            if(onSetStars)onSetStars(contextSelection,enabled)
+            else if(selectionCount===1)onToggleStar?.(contextTarget)
+            setContextTarget(null);setContextPosition(null)
+          }}>{contextSelection.every(note=>starredIds.includes(note.id))?'取消星标':'添加星标'}</button>}
+          {onExport && selectionCount === 1 && <button type="button" role="menuitem" onClick={()=>{setSaveTarget(contextTarget);setContextTarget(null);setContextPosition(null)}}>另存为</button>}
+          {onMoveSelection && folders && <button type="button" role="menuitem" onClick={()=>{setMoveFolderId('');setMoveTargets(contextSelection.map(entry=>entry.id));setContextTarget(null);setContextPosition(null)}}>移动到</button>}
           <button type="button" role="menuitem" autoFocus={onExport === undefined} disabled={(onDelete === undefined && onDeleteSelection === undefined) || deletingId !== null || undoBusy} onClick={() => {
             if (onDeleteSelection !== undefined) onDeleteSelection(contextSelection)
             else if (onDelete !== undefined) onDelete(contextTarget.id, contextTarget.title)
             setContextTarget(null)
             setContextPosition(null)
-          }}>{selectionCount > 1 ? `删除 ${selectionCount} 项` : '删除笔记'}</button>
+          }}>删除笔记</button>
         </div>
       )}
+      {saveTarget && onExport && <SaveAsDialog note={saveTarget} files={files} onClose={()=>{setSaveTarget(null);contextTriggerRef.current?.focus()}} onSave={(kind,selection)=>{onExport(saveTarget,kind,selection);setSaveTarget(null)}} />}
+      {moveTargets && folders && onMoveSelection && <div className="settings-backdrop"><form className="save-as-dialog" role="dialog" aria-modal="true" aria-label="移动所选条目" onKeyDown={event=>dialogKeyboard(event,()=>{setMoveTargets(null);contextTriggerRef.current?.focus()})} onSubmit={event=>{event.preventDefault();if(moveFolderId==='')return;void onMoveSelection(moveTargets,moveFolderId);setMoveTargets(null)}}><header><div className="library-operation-dialog__heading"><span className="library-operation-dialog__symbol"><Icon name="folder" size={24}/></span><h2>移动到</h2></div><button type="button" aria-label="关闭移动" onClick={()=>{setMoveTargets(null);contextTriggerRef.current?.focus()}}><Icon name="close" size={18}/></button></header><div className="library-operation-dialog__entry"><Icon name="file" size={20}/><span>{moveTargets.length===1?notes.find(note=>note.id===moveTargets[0])?.title:`所选 ${moveTargets.length} 篇笔记`}</span></div><label className="library-operation-dialog__field">目标文件夹<select autoFocus aria-label="移动所选条目到" value={moveFolderId} onChange={event=>setMoveFolderId(event.target.value as FolderId)}><option value="" disabled>选择文件夹</option>{folders.map(folder=><option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label><footer><button type="button" onClick={()=>{setMoveTargets(null);contextTriggerRef.current?.focus()}}>取消</button><button type="submit" disabled={!moveFolderId}>移动</button></footer></form></div>}
     </section>
   )
 }
@@ -367,17 +367,13 @@ function entryIconName(note: NoteSummary): IconName {
       return extension === 'xls' || extension === 'xlsx' ? 'file-excel' : extension === 'ppt' || extension === 'pptx' ? 'file-powerpoint' : 'file-word'
     }
     case 'text': return 'file-text'
-    case 'markdown': return 'file-text'
-    case 'document': return 'file-text'
+    case 'markdown': return 'file-markdown'
+    case 'document': return 'file-document'
     default: return 'file'
   }
 }
 
 function entryTypeText(note: NoteSummary): string {
   const presentation = libraryEntryPresentation(note)
-  return presentation.format !== 'markdown'
-    && presentation.extension !== null
-    && presentation.extension.toLocaleLowerCase() !== presentation.label.toLocaleLowerCase()
-    ? `${presentation.label} · ${presentation.extension}`
-    : presentation.label
+  return presentation.format === 'markdown' || presentation.format === 'document' ? presentation.label : presentation.extension ?? presentation.label
 }

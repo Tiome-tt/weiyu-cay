@@ -2,15 +2,30 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { Profiler } from 'react'
+import { Profiler, createRef } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NoteId } from '../../domain/model'
 import { fakeAssetPort, fakeLinkPort, fakeNotePort, fakeSearchPort, folders, note, pngBytes } from '../../test/fakes'
-import { EditorPane } from './EditorPane'
+import { EditorPane, type EditorPaneHandle } from './EditorPane'
 import * as markdownPipeline from './markdownPipeline'
 
 afterEach(cleanup)
+it('exports the saved Markdown snapshot as TXT and releases the editing barrier', async () => {
+  const source = note('old')
+  let saved = source
+  const calls: string[] = []
+  const notes = fakeNotePort({ saveNote: vi.fn(async draft => { calls.push('save'); saved = { ...draft, revision: 2 }; return saved }), loadNote: vi.fn(async () => { calls.push('load'); return saved }) })
+  const saveTextExport = vi.fn(async () => { calls.push('export'); return true })
+  const files = { chooseFiles: vi.fn(), importFiles: vi.fn(), readFile: vi.fn(), saveFileAs: vi.fn(), openFile: vi.fn(), saveTextExport }
+  const ref = createRef<EditorPaneHandle>()
+  render(<EditorPane ref={ref} document={source} notes={notes} files={files} autosaveDelayMs={10000} />)
+  act(() => view().dispatch({ changes: { from: 0, to: 3, insert: '**最新**' } }))
+  await act(async () => { expect(await ref.current!.exportDocument('text')).toBe(true) })
+  expect(calls).toEqual(['save', 'load', 'export'])
+  expect(saveTextExport).toHaveBeenCalledWith(source.id, '最新', source.title, 'text')
+  expect(view().state.readOnly).toBe(false)
+})
 
 const labels = ['文档编辑', '分栏校对', '阅读视图']
 
@@ -21,12 +36,25 @@ function view() {
   return editor
 }
 
-function openMoreActions() {
-  fireEvent.click(screen.getByRole('button', { name: '笔记更多操作' }))
-  return screen.getByRole('menu', { name: '笔记操作' })
-}
-
 describe('EditorPane', () => {
+  it('also hides line numbers for temporary captures in the main preview', () => {
+    const { container } = render(<EditorPane document={{ ...note('capture'), kind: 'temporary' }} notes={fakeNotePort()} />)
+    expect(container.querySelector('.markdown-line-number')).toBeNull()
+  })
+  it('zooms all Markdown views with Ctrl-wheel without changing source or global settings', () => {
+    const original = note('unchanged')
+    const { container } = render(<EditorPane document={original} notes={fakeNotePort()} />)
+    const body = container.querySelector<HTMLElement>('.editor-document__body')!
+    fireEvent.wheel(body, { ctrlKey: true, deltaY: -120 })
+    expect(body.style.zoom).toBe('1.1')
+    fireEvent.click(screen.getByRole('button', { name: labels[1] }))
+    expect(body.style.zoom).toBe('1.1')
+    fireEvent.click(screen.getByRole('button', { name: labels[2] }))
+    fireEvent.wheel(body, { ctrlKey: true, deltaY: 120 })
+    expect(body.style.zoom).toBe('1')
+    fireEvent.wheel(body, { deltaY: -120 })
+    expect(body.style.zoom).toBe('1')
+  })
   it('clears source-only selection statistics when entering preview', () => {
     render(<EditorPane document={note('岛屿计划')} notes={fakeNotePort()} />)
     act(() => view().dispatch({selection:{anchor:0,head:2}}))
@@ -61,16 +89,16 @@ describe('EditorPane', () => {
 
     if (entry === '右键菜单') fireEvent.contextMenu(view().contentDOM, { clientX: 80, clientY: 120 })
     else await user.click(screen.getByRole('button', { name: '添加内容块' }))
-    await user.click(screen.getByRole('menuitem', { name: '插入内部链接' }))
+    await user.click(screen.getByRole('menuitem', { name: '引用笔记' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '插入内部链接' })
+    const dialog = await screen.findByRole('dialog', { name: '引用笔记' })
     expect(within(dialog).queryByRole('treeitem', { name: '选择链接：当前笔记' })).not.toBeInTheDocument()
     await user.type(within(dialog).getByRole('searchbox', { name: '筛选笔记' }), '潮汐')
     await user.click(within(dialog).getByRole('treeitem', { name: '选择链接：潮汐计划' }))
     await user.click(within(dialog).getByRole('button', { name: '插入链接' }))
 
     expect(view().state.doc.toString()).toBe('正文[[潮汐计划|' + target.id + ']]')
-    expect(screen.queryByRole('dialog', { name: '插入内部链接' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '引用笔记' })).not.toBeInTheDocument()
   })
 
   it('shows document tags beside the last-edited metadata and omits an empty tag list', () => {
@@ -86,23 +114,12 @@ describe('EditorPane', () => {
     expect(screen.queryByRole('list', { name: '笔记标签' })).not.toBeInTheDocument()
   })
 
-  it('offers only real folders as move destinations for legacy unfiled notes', async () => {
-    const onMoveNote = vi.fn().mockResolvedValue({ ...note(''), folderId: folders()[0].id })
-    render(<EditorPane document={{ ...note(''), folderId: null }} notes={fakeNotePort()} folders={folders()} onMoveNote={onMoveNote} />)
-    openMoreActions()
-    const select = screen.getByRole('combobox', { name: '笔记文件夹' })
-    expect(within(select).queryByRole('option', { name: '未归档笔记' })).not.toBeInTheDocument()
-    expect(select.querySelector('option[value=""]')).toBeDisabled()
-    expect(select).toHaveValue('')
-    fireEvent.change(select, { target: { value: folders()[0].id } })
-    await waitFor(() => expect(onMoveNote).toHaveBeenCalledWith(folders()[0].id))
-  })
   it('keeps internal-link insertion in the right-click picker instead of the more menu', async () => {
     const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([]) })
     render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} />)
     expect(screen.queryByRole('button', { name: '笔记更多操作' })).not.toBeInTheDocument()
     fireEvent.contextMenu(view().contentDOM, { clientX: 80, clientY: 120 })
-    expect(await screen.findByRole('menuitem', { name: '插入内部链接' })).toBeVisible()
+    expect(await screen.findByRole('menuitem', { name: '引用笔记' })).toBeVisible()
   })
 
   it('starts in the configured default editor view', () => {
@@ -206,49 +223,12 @@ describe('EditorPane', () => {
     expect(within(heading).getByRole('textbox', { name: '笔记标题' })).toHaveValue('Goal')
   })
 
-  it('collects secondary metadata controls in a keyboard-discoverable more menu', async () => {
-    const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([]) })
-    render(
-      <EditorPane
-        document={{ ...note('# Goal'), title: 'Goal' }}
-        notes={fakeNotePort()}
-        links={links}
-        folders={[]}
-        onMoveNote={vi.fn()}
-        search={fakeSearchPort()}
-      />,
-    )
-
-    const user = userEvent.setup()
-    const toolbar = screen.getByRole('toolbar', { name: '编辑器视图' })
-    const primary = toolbar.querySelector('.editor-toolbar__primary') as HTMLElement
-    const trigger = within(primary).getByRole('button', { name: '笔记更多操作' })
-    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(within(trigger).getByTestId('icon-more')).toBeVisible()
-    labels.forEach((label) => expect(within(primary).getByRole('button', { name: label })).toBeVisible())
-
-    await user.click(trigger)
-    const menu = screen.getByRole('menu', { name: '笔记操作' })
-    expect(toolbar).toContainElement(menu)
-    const folderTarget = within(menu).getByRole('combobox', { name: '笔记文件夹' })
-    expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    expect(folderTarget).toHaveFocus()
-    expect(folderTarget).toBeEnabled()
-    expect(within(menu).queryByRole('button', { name: '添加标签' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '添加标签' })).toBeVisible()
-
-    await user.keyboard('{Escape}')
-    expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
-
-    await user.keyboard('{ArrowDown}')
-    const reopened = screen.getByRole('menu', { name: '笔记操作' })
-    const lastControl = within(reopened).getByRole('combobox', { name: '笔记文件夹' })
-    lastControl.focus()
-    await user.tab()
-    expect(screen.queryByRole('menu', { name: '笔记操作' })).not.toBeInTheDocument()
-    expect(within(primary).getByRole('button', { name: labels[0] })).toHaveFocus()
+  it('omits the more menu while retaining the three primary view controls',()=>{
+    render(<EditorPane document={note('body')} notes={fakeNotePort()} search={fakeSearchPort()} folders={folders()}/>)
+    expect(screen.queryByRole('button',{name:'笔记更多操作'})).not.toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'文档编辑'})).toBeVisible()
+    expect(screen.getByRole('button',{name:'分栏校对'})).toBeVisible()
+    expect(screen.getByRole('button',{name:'阅读视图'})).toBeVisible()
   })
 
   it('assigns notices, document, and backlinks to stable editor grid regions', () => {
@@ -317,8 +297,8 @@ describe('EditorPane', () => {
     const links = fakeLinkPort({ listTargets: vi.fn().mockResolvedValue([target]) })
     render(<EditorPane document={note('')} notes={fakeNotePort()} links={links} folders={[root, child]} />)
     fireEvent.contextMenu(view().contentDOM, { clientX: 80, clientY: 120 })
-    await userEvent.click(await screen.findByRole('menuitem', { name: '插入内部链接' }))
-    const tree = await screen.findByRole('tree', { name: '内部链接目标' })
+    await userEvent.click(await screen.findByRole('menuitem', { name: '引用笔记' }))
+    const tree = await screen.findByRole('tree', { name: '可引用笔记' })
     expect(within(tree).getByText(root.name)).toBeVisible()
     expect(within(tree).getByText(child.name)).toBeVisible()
     expect(within(tree).getByRole('treeitem', { name: '选择链接：子目录笔记' })).toBeVisible()
@@ -563,7 +543,6 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
     act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'draft' } }))
 
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
@@ -582,7 +561,6 @@ describe('EditorPane', () => {
     const { rerender } = render(
       <EditorPane document={note('A')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} />,
     )
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
@@ -614,7 +592,6 @@ describe('EditorPane', () => {
     const user = userEvent.setup()
     render(<EditorPane document={note('old')} notes={notes} search={search} onDocumentAdopt={onDocumentAdopt} autosaveDelayMs={10_000} />)
     act(() => view().dispatch({ changes: { from: 0, to: 3, insert: 'saved draft' } }))
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
@@ -632,7 +609,6 @@ describe('EditorPane', () => {
     const user = userEvent.setup()
     render(<EditorPane document={note('kept')} notes={fakeNotePort()} search={search} />)
 
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     await screen.findByRole('alert')
@@ -660,7 +636,6 @@ describe('EditorPane', () => {
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
 
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     expect(search.updateTags).not.toHaveBeenCalled()
@@ -680,7 +655,6 @@ describe('EditorPane', () => {
     render(<EditorPane document={note('kept')} notes={fakeNotePort()} assets={assets} search={search} onDocumentAdopt={vi.fn()} />)
     fireEvent.paste(view().contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledOnce())
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
     expect(search.updateTags).not.toHaveBeenCalled()
@@ -715,7 +689,6 @@ describe('EditorPane', () => {
     source.dispatch({ selection: EditorSelection.range(7, 13) })
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
@@ -748,7 +721,6 @@ describe('EditorPane', () => {
     source.dispatch({ selection: EditorSelection.cursor(2) })
     fireEvent.paste(source.contentDOM, { clipboardData: { files: [{ type: 'image/png', arrayBuffer: async () => pngBytes.slice().buffer }], getData: () => '' } })
     await waitFor(() => expect(assets.saveImage).toHaveBeenCalledTimes(2))
-    openMoreActions()
     await user.click(screen.getByRole('button', { name: '添加标签' }))
     await user.type(screen.getByRole('textbox', { name: '添加标签' }), 'Backend{Enter}')
 
@@ -758,4 +730,11 @@ describe('EditorPane', () => {
     await waitFor(() => expect(search.updateTags).toHaveBeenCalled())
     await waitFor(() => expect(onDocumentAdopt).toHaveBeenCalledWith(authoritative))
   })
+})
+
+it('does not load citation targets just to open a Markdown note',()=>{
+ const links=fakeLinkPort()
+ render(<EditorPane document={note('hello')} notes={fakeNotePort()} links={links}/>)
+ expect(links.listTargets).not.toHaveBeenCalled()
+ expect(screen.queryByRole('button',{name:'笔记更多操作'})).not.toBeInTheDocument()
 })

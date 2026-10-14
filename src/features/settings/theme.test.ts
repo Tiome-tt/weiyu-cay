@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS, DEFAULT_STICKY_SETTINGS, normalizeSettings, normalizeStickySettings, themeVariables } from './theme'
 
 describe('settings theme', () => {
+  it('provides distinct blue and white themes and maps system appearance to white or black', () => {
+    const blue=themeVariables({...DEFAULT_STICKY_SETTINGS,theme:'ocean'})
+    const white=themeVariables({...DEFAULT_STICKY_SETTINGS,theme:'light'})
+    expect(blue['--color-accent-strong']).not.toBe(white['--color-accent-strong'])
+    expect(themeVariables({...DEFAULT_STICKY_SETTINGS,theme:'system'},'light')['--color-surface']).toBe(white['--color-surface'])
+    expect(themeVariables({...DEFAULT_STICKY_SETTINGS,theme:'system'},'dark')['--color-surface']).toBe(themeVariables({...DEFAULT_STICKY_SETTINGS,theme:'night'})['--color-surface'])
+  })
   it('matches the canonical Rust settings defaults', () => {
     expect(DEFAULT_APP_SETTINGS).toEqual({
       theme: 'forest',
@@ -39,9 +46,9 @@ describe('settings theme', () => {
     expect(vars['--note-font-size']).toBe('16px')
     expect(vars['--note-line-height']).toBe('1.6')
   })
-  it('migrates the previous system default font to the new KaiTi default', () => {
-    expect(normalizeSettings({ ...DEFAULT_APP_SETTINGS, bodyFont: 'system-ui, sans-serif' }).bodyFont).toBe('KaiTi, STKaiti, serif')
-    expect(normalizeStickySettings({ ...DEFAULT_STICKY_SETTINGS, bodyFont: 'system-ui, sans-serif' }).bodyFont).toBe('KaiTi, STKaiti, serif')
+  it('preserves system and explicitly selected body fonts',()=>{
+    expect(normalizeSettings({...DEFAULT_APP_SETTINGS,bodyFont:'system-ui, sans-serif'}).bodyFont).toBe('system-ui, sans-serif')
+    expect(normalizeStickySettings({...DEFAULT_STICKY_SETTINGS,bodyFont:'KaiTi, STKaiti, serif'}).bodyFont).toBe('KaiTi, STKaiti, serif')
   })
 
   it('provides distinct complete forest, sand, and system palettes', () => {
@@ -57,8 +64,8 @@ describe('settings theme', () => {
 
   it('maps system theme to the live light or dark system palette', () => {
     const settings = { ...DEFAULT_APP_SETTINGS, theme: 'system' as const }
-    expect(themeVariables(settings, 'light')['--color-canvas']).toBe('#edf0f2')
-    expect(themeVariables(settings, 'dark')['--color-canvas']).toBe('#101B18')
+    expect(themeVariables(settings, 'light')['--color-canvas']).toBe('#FFFFFF')
+    expect(themeVariables(settings, 'dark')['--color-canvas']).toBe('#18191C')
     expect(themeVariables(settings, 'dark')['--sticky-color']).toBe(themeVariables(settings, 'dark')['--theme-note-accent'])
   })
 
@@ -70,12 +77,12 @@ describe('settings theme', () => {
       '--color-warm': '#D59A5E',
     })
     expect(themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme: 'night' })).toMatchObject({
-      '--color-canvas': '#101B18',
-      '--color-surface': '#172621',
-      '--color-heading': '#F1F6F3',
+      '--color-canvas': '#18191C',
+      '--color-surface': '#202124',
+      '--color-heading': '#F3F3F5',
     })
     expect(themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme: 'system' }, 'dark')).toMatchObject({
-      '--color-surface': '#172621',
+      '--color-surface': '#202124',
     })
   })
 
@@ -88,7 +95,7 @@ describe('settings theme', () => {
       '--color-muted-light', '--color-error', '--color-on-error', '--color-focus', '--color-focus-soft', '--color-border',
       '--color-border-soft', '--theme-note-accent',
     ]
-    for (const theme of ['forest', 'sand', 'night', 'system'] as const) {
+    for (const theme of ['forest', 'sand', 'ocean', 'light', 'night', 'system'] as const) {
       const palette = themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme }, 'dark')
       for (const token of requiredTokens) expect(palette[token]).toBeTruthy()
     }
@@ -108,14 +115,14 @@ describe('settings theme', () => {
   })
 
   it('keeps semantic keyword text readable on each summary surface', () => {
-    for (const theme of ['forest', 'sand', 'night', 'system'] as const) {
+    for (const theme of ['forest', 'sand', 'ocean', 'light', 'night', 'system'] as const) {
       const palette = themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme }, theme === 'system' ? 'dark' : 'light')
       expect(contrastRatio(palette['--color-ai-keyword'], palette['--color-surface'])).toBeGreaterThanOrEqual(4.5)
     }
   })
   it('provides six distinguishable and readable AI annotation colors in every palette', () => {
     const roles = ['concept', 'mechanism', 'evidence', 'conclusion', 'action', 'caveat']
-    for (const theme of ['forest', 'sand', 'night', 'system'] as const) {
+    for (const theme of ['forest', 'sand', 'ocean', 'light', 'night', 'system'] as const) {
       const palette = themeVariables({ ...DEFAULT_STICKY_SETTINGS, theme }, theme === 'system' ? 'dark' : 'light')
       const colors = roles.map((role) => palette['--color-ai-' + role])
       expect(new Set(colors).size).toBe(roles.length)
@@ -145,3 +152,14 @@ function relativeLuminance(hex: string) {
   const linear = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
   return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 }
+
+it('resolves scrollbar colors inside each theme instead of inheriting root forest tokens',()=>{
+ const colors=new Set<string>()
+ for(const theme of ['forest','sand','ocean','night','light'] as const){
+ const variables=themeVariables({...DEFAULT_APP_SETTINGS,theme})
+ expect(variables['--scrollbar-thumb']).toBe(variables['--color-accent'])
+ expect(variables['--scrollbar-track']).toBe('transparent')
+ colors.add(variables['--scrollbar-thumb'])
+ }
+ expect(colors.size).toBeGreaterThan(3)
+})

@@ -11,6 +11,9 @@ pub mod trash;
 
 pub mod entry;
 pub mod managed_files;
+pub mod office_preview;
 pub mod rich_document;
 
 mod docx;
+
+pub mod external_edit;

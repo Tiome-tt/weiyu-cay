@@ -64,9 +64,9 @@ export function InternalLinkDialog({
         <header>
           <div>
             <span className="library-pane__eyebrow">笔记引用</span>
-            <h2 id="internal-link-dialog-title">插入内部链接</h2>
+            <h2 id="internal-link-dialog-title">引用笔记</h2>
           </div>
-          <button type="button" aria-label="关闭内部链接弹窗" onClick={onCancel}>×</button>
+          <button type="button" aria-label="关闭引用笔记弹窗" onClick={onCancel}>×</button>
         </header>
         <div className="internal-link-dialog__body">
           <label>

@@ -5,6 +5,19 @@ const mainWindowCss = readFileSync('src/styles/main-window.css', 'utf8')
 const tokensCss = readFileSync('src/styles/tokens.css', 'utf8')
 
 describe('main window layout contracts', () => {
+  it('keeps the quality explanation above a single storage divider', () => {
+    const css = readFileSync('src/styles/app.css', 'utf8')
+    expect(css).toMatch(/\.settings-view__content fieldset > \.settings-view__image-quality\s*\{[^}]*border-bottom:\s*0/s)
+  })
+  it('anchors workspace search one quarter down and contains document controls below AI', () => {
+    const appCss = readFileSync('src/styles/app.css', 'utf8')
+    const searchRules = [...appCss.matchAll(/\.workspace-search-backdrop\s*\{([^}]+)\}/g)]
+    expect(searchRules.at(-1)?.[1]).toMatch(/align-items:\s*flex-start/)
+    expect(searchRules.at(-1)?.[1]).toContain('calc((100dvh - 30px) / 4)')
+    const documentCss = readFileSync('src/features/document/rich-document.css', 'utf8')
+    expect(documentCss).toMatch(/\.main-window \.rich-document\s*{[^}]*isolation:\s*isolate/s)
+  })
+
   it('reserves the flexible editor track for the document and keeps the toolbar slim', () => {
     expect(mainWindowCss).toMatch(/\.main-window \.editor-pane\s*{[^}]*grid-template-areas:\s*"toolbar"\s*"notices"\s*"document"\s*"backlinks"/s)
     expect(mainWindowCss).toMatch(/grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto/)

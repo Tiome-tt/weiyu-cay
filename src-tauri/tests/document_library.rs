@@ -567,7 +567,8 @@ fn pdf_export_replaces_an_existing_destination_atomically() {
     let note = NoteRepository::new(paths.clone())
         .create(doc(rich_content()))
         .unwrap();
-    let target = root.path().join("generated.pdf");
+    let exports = tempfile::tempdir().unwrap();
+    let target = exports.path().join("generated.pdf");
     let first = b"%PDF-1.7\nfirst";
     let second = b"%PDF-1.7\nsecond";
     save_pdf_export(&paths, note.id, &target, first).unwrap();
@@ -598,4 +599,175 @@ fn valid_docx_package_is_saved_atomically_and_malformed_xml_is_rejected() {
         save_document_export(&paths, note.id, &root.path().join("bad.docx"), &malformed).is_err()
     );
     assert!(!root.path().join("bad.docx").exists());
+}
+
+#[test]
+fn folder_listing_uses_lightweight_metadata_without_opening_payloads_or_transferring_bodies() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let repo = NoteRepository::new(paths.clone());
+    let rich = repo.create(doc(rich_content())).unwrap();
+    let text = repo
+        .create(doc(json!({"type":"text","text":"very important text"})))
+        .unwrap();
+    let listed = repo.list_in_folder(None).unwrap();
+    assert_eq!(listed.len(), 2);
+    let summary = listed.iter().find(|note| note.id == text.id).unwrap();
+    assert!(summary.excerpt.contains("very important text"));
+    assert_eq!(
+        serde_json::to_value(&summary.content).unwrap(),
+        json!({"type":"text","text":""})
+    );
+    assert_eq!(
+        serde_json::to_value(
+            &listed
+                .iter()
+                .find(|note| note.id == rich.id)
+                .unwrap()
+                .content
+        )
+        .unwrap()["document"]["root"]["content"],
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn external_edits_update_the_same_entry_and_are_not_overwritten_on_reopen() {
+    use simple_notes_lib::storage::external_edit::sync_external_file;
+    use simple_notes_lib::storage::managed_files::{
+        external_copy, import_files, read_file, ImportFilesInput,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let source = sources.path().join("blank.pptx");
+    std::fs::write(&source, []).unwrap();
+    let note = import_files(
+        &paths,
+        ImportFilesInput {
+            paths: vec![source.display().to_string()],
+            folder_id: None,
+        },
+    )
+    .unwrap()
+    .imported
+    .remove(0);
+    let copy = external_copy(&paths, note.id).unwrap();
+    assert!(std::fs::read(&copy).unwrap().starts_with(b"PK"));
+    if let Ok(directory) = std::env::var("CAY_OFFICE_SMOKE_DIRECTORY") {
+        let directory = std::path::PathBuf::from(directory);
+        assert!(
+            directory.starts_with(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("blank.pptx"), std::fs::read(&copy).unwrap()).unwrap();
+    }
+    let initialized = sync_external_file(&paths, note.id).unwrap().unwrap();
+    assert_eq!(initialized.id, note.id);
+    let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    archive
+        .start_file(
+            "ppt/presentation.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    std::io::Write::write_all(&mut archive, b"<presentation>edited</presentation>").unwrap();
+    let changed = archive.finish().unwrap().into_inner();
+    std::fs::write(&copy, &changed).unwrap();
+    let saved = sync_external_file(&paths, note.id).unwrap().unwrap();
+    assert!(saved.revision > initialized.revision);
+    assert_eq!(read_file(&paths, note.id).unwrap().bytes, changed);
+    assert_eq!(external_copy(&paths, note.id).unwrap(), copy);
+    assert_eq!(std::fs::read(&copy).unwrap(), changed);
+}
+
+#[test]
+fn interrupted_external_office_save_preserves_the_previous_payload() {
+    use simple_notes_lib::storage::{
+        external_edit::sync_external_file,
+        managed_files::{external_copy, import_files, read_file, ImportFilesInput},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let input = source.path().join("blank.xlsx");
+    std::fs::write(&input, []).unwrap();
+    let note = import_files(
+        &paths,
+        ImportFilesInput {
+            paths: vec![input.display().to_string()],
+            folder_id: None,
+        },
+    )
+    .unwrap()
+    .imported
+    .remove(0);
+    let copy = external_copy(&paths, note.id).unwrap();
+    sync_external_file(&paths, note.id).unwrap();
+    let valid = read_file(&paths, note.id).unwrap().bytes;
+    std::fs::write(&copy, b"PK interrupted archive").unwrap();
+    assert!(sync_external_file(&paths, note.id).is_err());
+    assert_eq!(read_file(&paths, note.id).unwrap().bytes, valid);
+    assert_eq!(std::fs::read(&copy).unwrap(), b"PK interrupted archive");
+}
+
+#[test]
+fn external_spreadsheet_save_survives_reopening() {
+    use simple_notes_lib::storage::{
+        external_edit::sync_external_file,
+        managed_files::{external_copy, import_files, read_file, ImportFilesInput},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::open(root.path()).unwrap();
+    let input = source.path().join("blank.xlsx");
+    std::fs::write(&input, []).unwrap();
+    let note = import_files(
+        &paths,
+        ImportFilesInput {
+            paths: vec![input.display().to_string()],
+            folder_id: None,
+        },
+    )
+    .unwrap()
+    .imported
+    .remove(0);
+    let copy = external_copy(&paths, note.id).unwrap();
+    if let Ok(directory) = std::env::var("CAY_OFFICE_SMOKE_DIRECTORY") {
+        let directory = std::path::PathBuf::from(directory);
+        assert!(
+            directory.starts_with(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("blank.xlsx"), std::fs::read(&copy).unwrap()).unwrap();
+    }
+    let initialized = sync_external_file(&paths, note.id).unwrap().unwrap();
+    let original = read_file(&paths, note.id).unwrap().bytes;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(original)).unwrap();
+    let mut changed = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut part = archive.by_index(index).unwrap();
+        changed
+            .start_file(part.name(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        if part.name() == "xl/worksheets/sheet1.xml" {
+            std::io::Write::write_all(&mut changed,br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>saved spreadsheet</t></is></c></row></sheetData></worksheet>"#).unwrap();
+        } else {
+            std::io::copy(&mut part, &mut changed).unwrap();
+        }
+    }
+    let bytes = changed.finish().unwrap().into_inner();
+    std::fs::write(&copy, &bytes).unwrap();
+    let saved = sync_external_file(&paths, note.id).unwrap().unwrap();
+    assert_eq!(saved.id, note.id);
+    assert!(saved.revision > initialized.revision);
+    assert_eq!(external_copy(&paths, note.id).unwrap(), copy);
+    assert_eq!(read_file(&paths, note.id).unwrap().bytes, bytes);
+    assert_eq!(
+        sync_external_file(&paths, note.id)
+            .unwrap()
+            .unwrap()
+            .revision,
+        saved.revision
+    );
 }

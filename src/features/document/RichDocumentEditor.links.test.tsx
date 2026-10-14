@@ -42,7 +42,7 @@ describe('RichDocumentEditor internal links', () => {
       ]) }}
     />)
     await user.click(screen.getByRole('button', { name: '插入' }))
-    await user.click(screen.getByRole('menuitem', { name: '内部链接' }))
+    await user.click(screen.getByRole('menuitem', { name: '引用笔记' }))
     const search = await screen.findByRole('searchbox', { name: '筛选笔记' })
     expect(screen.queryByRole('treeitem', { name: '选择链接：当前文档' })).not.toBeInTheDocument()
     await user.type(search, '认证')
@@ -76,9 +76,9 @@ describe('RichDocumentEditor internal links', () => {
     />)
 
     await user.click(screen.getByRole('button', { name: '插入' }))
-    await user.click(screen.getByRole('menuitem', { name: '内部链接' }))
-    const dialog = await screen.findByRole('dialog', { name: '插入内部链接' })
-    const tree = within(dialog).getByRole('tree', { name: '内部链接目标' })
+    await user.click(screen.getByRole('menuitem', { name: '引用笔记' }))
+    const dialog = await screen.findByRole('dialog', { name: '引用笔记' })
+    const tree = within(dialog).getByRole('tree', { name: '可引用笔记' })
     const rootFolder = within(tree).getByRole('treeitem', { name: '折叠文件夹：课程' })
     await user.click(rootFolder)
     expect(within(tree).queryByText('第一章')).not.toBeInTheDocument()

@@ -68,6 +68,7 @@ pnpm tauri build
 | 贡献者 | 主页 |
 | --- | --- |
 | Wiem-coder | [GitHub](https://github.com/Wiem-coder) |
+| zwt147 | [GitHub](https://github.com/zwt147) |
 
 ## 项目状态
 

@@ -1,33 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
-import { dailyLyricForDate, loadExpandedDailyLyrics, localDateKey, MAX_DAILY_LYRIC_DISPLAY_LENGTH } from './dailyLyrics'
+import { useEffect, useState } from 'react'
+import { dailyLyricForDate, loadExpandedDailyLyrics, localDateKey } from './dailyLyrics'
 
 export function DailyLyricDisplay({ enabled }: { enabled: boolean }) {
-  const container = useRef<HTMLDivElement>(null)
-  const [displayBudget, setDisplayBudget] = useState(MAX_DAILY_LYRIC_DISPLAY_LENGTH)
-  useEffect(() => {
-    const element = container.current
-    if (!enabled || element === null || typeof ResizeObserver === 'undefined') return
-    const measure = () => {
-      const size = Number.parseFloat(getComputedStyle(element).fontSize)
-      if (element.clientWidth > 0 && size > 0) {
-        // Budget every displayed character as a full-width glyph, including attribution.
-        setDisplayBudget(Math.max(19, Math.floor((element.clientWidth - 24) / size)))
-      }
-    }
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    measure()
-    return () => observer.disconnect()
-  }, [enabled])
   const [dateKey, setDateKey] = useState(() => localDateKey())
-  const [, setLibraryLoaded] = useState(false)
+  const [libraryLoaded, setLibraryLoaded] = useState(false)
 
   useEffect(() => {
     if (!enabled) return
     let active = true
     void loadExpandedDailyLyrics().then(
       () => { if (active) setLibraryLoaded(true) },
-      () => undefined,
+      () => { if (active) setLibraryLoaded(true) },
     )
     return () => { active = false }
   }, [enabled])
@@ -43,9 +26,10 @@ export function DailyLyricDisplay({ enabled }: { enabled: boolean }) {
   }, [])
 
   if (!enabled) return null
-  const lyric = dailyLyricForDate(dateKey, displayBudget)
+  if (!libraryLoaded) return <div className="daily-lyric" data-testid="daily-lyric" role="note" aria-label="每日歌词" aria-busy="true" />
+  const lyric = dailyLyricForDate(dateKey)
   return (
-    <div ref={container} className="daily-lyric" data-testid="daily-lyric" role="note" aria-label="每日歌词">
+    <div className="daily-lyric" data-testid="daily-lyric" role="note" aria-label="每日歌词" title={`“${lyric.text}” —— ${lyric.artist}《${lyric.title}》`}>
       <span className="daily-lyric__text">“{lyric.text}”</span>
       <cite>—— {lyric.artist}《{lyric.title}》</cite>
     </div>

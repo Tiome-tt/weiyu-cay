@@ -7,6 +7,8 @@ import remarkRehype from 'remark-rehype'
 import rehypeKatex from 'rehype-katex'
 import { unified } from 'unified'
 import { isTableMetadataLine, parseMarkdownTable, type MarkdownTableMerge } from './markdownActions'
+import { classHighlighter, highlightTree } from '@lezer/highlight'
+import { codeLanguage } from './codeLanguages'
 
 interface MarkdownNode {
   type?: unknown
@@ -36,6 +38,7 @@ const renderer = unified()
   .use(remarkGfm)
   .use(remarkMath)
   .use(remarkRehype)
+  .use(highlightCodeBlocks)
   .use(rehypeKatex)
   .use(rehypeSanitize, mathSanitizeSchema)
   .use(rehypeStringify)
@@ -44,10 +47,40 @@ const previewRenderer = unified()
   .use(remarkGfm)
   .use(remarkMath)
   .use(remarkRehype)
+  .use(highlightCodeBlocks)
   .use(rehypeKatex)
   .use(rehypeSanitize, mathSanitizeSchema)
   .use(hardenPreviewResources)
   .use(rehypeStringify)
+
+function highlightCodeBlocks() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (node.tagName === 'code' && Array.isArray(node.children)) {
+        const properties = node.properties as { className?: unknown } | undefined
+        const classes = Array.isArray(properties?.className) ? properties.className : []
+        const name = classes.find((value): value is string => typeof value === 'string' && value.startsWith('language-'))
+        const language = name === undefined ? null : codeLanguage(name.slice('language-'.length))
+        const children = node.children as MarkdownNode[]
+        if (language !== null && children.every((child) => child.type === 'text' && typeof child.value === 'string')) {
+          const code = children.map((child) => String(child.value)).join('')
+          const highlighted: MarkdownNode[] = []
+          let cursor = 0
+          highlightTree(language.parser.parse(code), classHighlighter, (from, to, css) => {
+            if (from > cursor) highlighted.push({ type: 'text', value: code.slice(cursor, from) })
+            highlighted.push({ type: 'element', tagName: 'span', properties: { className: css.split(' ') }, children: [{ type: 'text', value: code.slice(from, to) }] })
+            cursor = to
+          })
+          if (cursor < code.length) highlighted.push({ type: 'text', value: code.slice(cursor) })
+          node.children = highlighted
+          return
+        }
+      }
+      if (Array.isArray(node.children)) (node.children as MarkdownNode[]).forEach(visit)
+    }
+    visit(tree)
+  }
+}
 
 export interface MarkdownHeading {
   line: number

@@ -1,3 +1,4 @@
+import { parseMarkdownTable } from '../editor/markdownActions'
 import type { RichDocument, RichMark, RichNode } from '../../domain/content'
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
@@ -55,6 +56,14 @@ export function markdownToRichDocument(markdown: string): RichDocument {
   for (let index = 0; index < lines.length;) {
     const line = lines[index]
     if (!line.trim()) { index += 1; continue }
+
+    if (index + 1 < lines.length && parseMarkdownTable(lines.slice(index, index + 2).join('\n'))) {
+      const start = index
+      index += 2
+      while (index < lines.length && (lines[index].includes('|') || /^<!-- cay-table:/.test(lines[index]))) index += 1
+      content.push({ type: 'rawMarkdown', attrs: { source: lines.slice(start, index).join('\n') } })
+      continue
+    }
 
     const singleLineMath = line.match(/^\$\$(.+)\$\$\s*$/)
     if (singleLineMath) {
@@ -185,7 +194,7 @@ export function markdownToRichDocument(markdown: string): RichDocument {
 
     const paragraph = [line]
     index += 1
-    while (index < lines.length && lines[index].trim() && !isKnownBlockStart(lines[index]) && !/^:::+|^\s*<|^\[\^/.test(lines[index])) {
+    while (index < lines.length && lines[index].trim() && !isKnownBlockStart(lines[index]) && !/^:::+|^\s*<|^\[\^/.test(lines[index]) && !parseMarkdownTable(lines.slice(index, index + 2).join('\n'))) {
       paragraph.push(lines[index++])
     }
     content.push({ type: 'paragraph', content: inlineContent(paragraph.join(' ')) })

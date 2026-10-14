@@ -1,6 +1,7 @@
 .main-window .rich-document {
   --document-inline-padding: clamp(24px, 4vw, 48px);
   position: relative;
+  isolation: isolate;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -339,3 +340,18 @@
 
 /* Native task rows use a checkbox rather than an additional bullet marker. */
 .main-window .rich-document__content ul[data-type="taskList"] { list-style:none; padding-left:0; }
+
+.rich-code-block { position:relative; padding:8px 14px 10px; margin:1em 0; background:var(--color-panel-warm); border-radius:8px; font-family:var(--code-font); }
+.rich-code-block pre { background:transparent !important; margin:2px 0 0 !important; padding:0 !important; overflow-x:auto; }
+.rich-code-block .cm-code-language { display:inline-flex; }
+.rich-code-block .tok-keyword { color:var(--color-ai-evidence); }
+.rich-code-block .tok-string { color:var(--color-ai-mechanism); }
+.rich-code-block .tok-comment { color:var(--color-muted); }
+.rich-code-block .tok-number { color:var(--color-ai-action); }
+.rich-code-block .tok-typeName, .rich-code-block .tok-className { color:var(--color-ai-concept); }
+
+.rich-document__image-node[data-loading="true"] { min-height:240px; background:var(--color-panel); border-radius:6px; }
+
+.main-window .rich-document .tiptap .rich-code-block pre code { display:block; padding:0; border:0; border-radius:0; background:transparent; white-space:pre; font:inherit; }
+
+.main-window .rich-document .tiptap .rich-code-block pre { border:0; box-shadow:none; }

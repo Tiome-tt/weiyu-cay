@@ -389,6 +389,21 @@ fn publish_export(
         }
     }
 }
+fn supports_preview_conversion(note: &NoteDocument) -> bool {
+    match &note.content {
+        Some(NoteContent::File { file }) => {
+            matches!(
+                file.media_type.as_str(),
+                "image/png" | "image/jpeg" | "image/webp"
+            ) || ["docx", "xlsx", "pptx"].iter().any(|extension| {
+                file.original_name
+                    .to_ascii_lowercase()
+                    .ends_with(&format!(".{extension}"))
+            })
+        }
+        _ => true,
+    }
+}
 pub fn save_document_export(
     paths: &StoragePaths,
     id: NoteId,
@@ -396,20 +411,66 @@ pub fn save_document_export(
     bytes: &[u8],
 ) -> Result<(), CommandError> {
     let note = NoteRepository::new(paths.clone()).load(id)?;
-    if !matches!(note.content, Some(NoteContent::Document { .. }))
+    if matches!(note.content, Some(NoteContent::File { .. }))
         || !destination
             .extension()
             .and_then(|v| v.to_str())
             .is_some_and(|v| v.eq_ignore_ascii_case("docx"))
     {
         return Err(CommandError::validation(
-            "DOCX export requires a document and a .docx destination",
+            "DOCX export requires an authored note and a .docx destination",
         ));
     }
     super::docx::validate(bytes)?;
     publish_export(destination, false, |file| {
         file.write_all(bytes)
             .map_err(|_| CommandError::io("could not write DOCX export"))
+    })
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoteTextExportFormat {
+    Text,
+    Html,
+}
+pub fn save_note_text_export(
+    paths: &StoragePaths,
+    id: NoteId,
+    destination: &Path,
+    text: &str,
+    format: NoteTextExportFormat,
+) -> Result<(), CommandError> {
+    let note = NoteRepository::new(paths.clone()).load(id)?;
+    let extension = match format {
+        NoteTextExportFormat::Text => "txt",
+        NoteTextExportFormat::Html => "html",
+    };
+    if !supports_preview_conversion(&note)
+        || text.len() as u64 > MAX_TEXT_BYTES
+        || !destination
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+    {
+        return Err(CommandError::validation(
+            "text export requires a supported entry, matching extension and bounded UTF-8 content",
+        ));
+    }
+    validated_parent(destination)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CommandError::validation("export has no parent"))?
+        .canonicalize()
+        .map_err(|_| CommandError::validation("export parent is unavailable"))?;
+    if parent.starts_with(paths.root()) {
+        return Err(CommandError::validation(
+            "export must remain outside the active library",
+        ));
+    }
+    publish_export(destination, true, |file| {
+        file.write_all(text.as_bytes())
+            .map_err(|_| CommandError::io("could not write text export"))
     })
 }
 pub fn save_pdf_export(
@@ -419,7 +480,7 @@ pub fn save_pdf_export(
     bytes: &[u8],
 ) -> Result<(), CommandError> {
     let note = NoteRepository::new(paths.clone()).load(id)?;
-    if matches!(note.content, Some(NoteContent::File { .. }))
+    if !supports_preview_conversion(&note)
         || !destination
             .extension()
             .and_then(|value| value.to_str())
@@ -432,32 +493,60 @@ pub fn save_pdf_export(
     if !bytes.starts_with(b"%PDF-") {
         return Err(CommandError::validation("PDF export payload is invalid"));
     }
+    validated_parent(destination)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CommandError::validation("export has no parent"))?
+        .canonicalize()
+        .map_err(|_| CommandError::validation("export parent is unavailable"))?;
+    if parent.starts_with(paths.root()) {
+        return Err(CommandError::validation(
+            "export must remain outside the active library",
+        ));
+    }
     publish_export(destination, true, |file| {
         file.write_all(bytes)
             .map_err(|_| CommandError::io("could not write PDF export"))
     })
 }
 pub fn external_copy(paths: &StoragePaths, id: NoteId) -> Result<PathBuf, CommandError> {
-    let note = NoteRepository::new(paths.clone()).load(id)?;
-    let Some(NoteContent::File { file }) = note.content else {
-        return Err(CommandError::validation("entry is not a managed file"));
-    };
-    let extension = Path::new(&file.original_name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !matches!(
-        extension.as_str(),
-        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx"
-    ) || file.media_type == "application/octet-stream"
-    {
-        return Err(CommandError::validation(
-            "only recognized Office files can open in a system application",
-        ));
+    super::external_edit::open_copy(paths, id)
+}
+#[cfg(test)]
+mod note_text_export_tests {
+    use super::*;
+    #[test]
+    fn text_export_is_utf8_atomic_and_rejects_library_and_extension_mismatch() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(root.path().join("data")).unwrap();
+        let note: NoteDocument = serde_json::from_value(serde_json::json!({"id":NoteId::now_v7(),"kind":"formal","title":"中文","folderId":null,"tags":[],"markdown":"source","revision":0,"createdAt":"2026-10-12T00:00:00Z","updatedAt":"2026-10-12T00:00:00Z"})).unwrap();
+        let saved = NoteRepository::new(paths.clone()).create(note).unwrap();
+        let destination = root.path().join("中文.txt");
+        save_note_text_export(
+            &paths,
+            saved.id,
+            &destination,
+            "中文\n内容",
+            NoteTextExportFormat::Text,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "中文\n内容");
+        assert!(save_note_text_export(
+            &paths,
+            saved.id,
+            &root.path().join("bad.html"),
+            "text",
+            NoteTextExportFormat::Text
+        )
+        .is_err());
+        assert!(save_note_text_export(
+            &paths,
+            saved.id,
+            &paths.root().join("bad.txt"),
+            "text",
+            NoteTextExportFormat::Text
+        )
+        .is_err());
+        assert_eq!(NoteRepository::new(paths).load(saved.id).unwrap(), saved);
     }
-    let directory = SafeDirectory::open(paths.root(), &["external-cache"], true)?;
-    let destination = directory.child_path(&format!("{}.{extension}", NoteId::now_v7()))?;
-    export_file(paths, id, &destination)?;
-    Ok(destination)
 }

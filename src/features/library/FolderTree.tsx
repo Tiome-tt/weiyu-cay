@@ -478,7 +478,7 @@ export function FolderTree(props: FolderTreeProps) {
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => void dropFolder(event, folder.id)}
               >
-                <Icon name="folder" size={16} />
+                <Icon name="folder" size={22} />
                 <span>{folder.name}</span>
                 {expandable && (
                   <span
@@ -570,7 +570,7 @@ export function FolderTree(props: FolderTreeProps) {
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => void dropFolder(event, null)}
           >
-            <Icon name="folder" size={16} />
+            <Icon name="folder" size={22} />
             <span>未归档笔记</span>
           </button>
         </li>}
@@ -587,7 +587,7 @@ export function FolderTree(props: FolderTreeProps) {
               onKeyDown={(event) => handleTreeKey(event, 'temporary-inbox')}
               onClick={props.onTemporaryInbox}
             >
-              <Icon name="inbox" size={16} />
+              <Icon name="inbox" size={22} />
               <span>临时便笺</span>
             </button>
           </li>
@@ -605,7 +605,7 @@ export function FolderTree(props: FolderTreeProps) {
               onKeyDown={(event) => handleTreeKey(event, 'trash')}
               onClick={props.onTrash}
             >
-              <Icon name="trash" size={16} />
+              <Icon name="trash" size={22} />
               <span>回收站</span>
             </button>
           </li>

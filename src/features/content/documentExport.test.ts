@@ -24,3 +24,22 @@ it('exports Chinese text and merged table cells into real DOCX XML',async()=>{
  expect(xml).toContain('w:gridSpan w:val="2"')
  expect(xml).toContain('w:highlight')
 })
+it('exports Markdown tables as actual DOCX tables and keeps plain-text notes', async () => {
+ const bytes=await buildDocumentDocx({...note('| A | B |\n| --- | --- |\n| 1 | 2 |'),title:'Markdown'})
+ const xml=documentXml(bytes)
+ expect(xml).toContain('<w:tbl>')
+ expect(xml).toContain('A')
+ const textBytes=await buildDocumentDocx({...note(''),content:{type:'text',text:'a < b\n中文'}})
+ expect(documentXml(textBytes)).toContain('中文')
+})
+function documentXml(bytes:Uint8Array):string {
+ const data=Buffer.from(bytes)
+ for(let i=0;i+30<data.length;){
+  if(data.readUInt32LE(i)!==0x04034b50)break
+  const method=data.readUInt16LE(i+8),size=data.readUInt32LE(i+18),nameLength=data.readUInt16LE(i+26),extra=data.readUInt16LE(i+28)
+  const name=data.subarray(i+30,i+30+nameLength).toString(),start=i+30+nameLength+extra
+  if(name==='word/document.xml'){const value=data.subarray(start,start+size);return (method===8?inflateRawSync(value):value).toString()}
+  i=start+size
+ }
+ throw new Error('DOCX XML missing')
+}

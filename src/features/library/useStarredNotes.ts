@@ -37,18 +37,21 @@ export function useStarredNotes(system: SystemPort, links: LinkPort | undefined,
     const entry = visible.find((note) => note.id === id) ?? resolved.find((note) => note.id === id)
     return entry?.kind === 'formal' ? [entry] : []
   }), [ids, visible, resolved])
-  const toggle = async (note: NoteSummary) => {
-    if (!ready || busy.current || note.kind !== 'formal' || !isCanonicalUuidV7(note.id)) return
-    busy.current = true
-    const next = ids.includes(note.id) ? ids.filter((id) => id !== note.id) : [...ids, note.id]
+  const setStars = async (entries: NoteSummary[], enabled: boolean) => {
+    const eligible=entries.filter(note=>note.kind==='formal'&&isCanonicalUuidV7(note.id))
+    if(!ready||busy.current||eligible.length===0)return
+    busy.current=true
+    const selected=new Set(eligible.map(note=>note.id))
+    const next=enabled ? [...new Set([...ids,...selected])] : ids.filter(id=>!selected.has(id))
     try {
-      await system.setWindowPreference('library-starred-notes', next)
-      if (!mounted.current) return
+      await system.setWindowPreference('library-starred-notes',next)
+      if(!mounted.current)return
       setIds(next)
-      setResolved((entries) => [...entries.filter((entry) => entry.id !== note.id), note])
+      setResolved(current=>[...current.filter(note=>!selected.has(note.id)),...eligible])
       setError(null)
-    } catch { if (mounted.current) setError('无法保存星标，请重试。') }
-    finally { busy.current = false }
+    } catch {if(mounted.current)setError('无法保存星标，请重试。')}
+    finally {busy.current=false}
   }
-  return { ids, notes, ready, error, toggle }
+  const toggle=(note:NoteSummary)=>setStars([note],!ids.includes(note.id))
+  return { ids, notes, ready, error, toggle, setStars }
 }

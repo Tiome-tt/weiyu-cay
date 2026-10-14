@@ -1,6 +1,8 @@
+import * as documentSchema from './schema'
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { Editor } from '@tiptap/core'
 import { createRef } from 'react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { emptyRichDocument } from '../../domain/content'
@@ -263,9 +265,19 @@ describe('RichDocumentEditor', () => {
     const table = document.querySelector('table')!
     const cells = Array.from(table.querySelectorAll<HTMLTableCellElement>('td,th'))
     const surface = document.querySelector('.rich-document__surface')!
-    fireEvent.mouseDown(cells[0])
-    fireEvent.mouseMove(cells[3])
-    fireEvent.mouseUp(surface)
+    const editor = (document.querySelector('.tiptap') as HTMLElement & { editor: Editor }).editor
+    const positions: number[] = []
+    editor.state.doc.descendants((node, pos) => { if (node.type.name === 'tableCell') positions.push(pos) })
+    // jsdom has no layout; supply the coordinates consumed by the native table
+    // plugin. Real text-versus-cell dragging is covered in Playwright.
+    const coordinates = vi.spyOn(editor.view, 'posAtCoords').mockImplementation(point => ({
+      pos: positions[point.left < 20 ? 0 : 3] + 2,
+      inside: positions[point.left < 20 ? 0 : 3],
+    }))
+    fireEvent.mouseDown(cells[0], { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(cells[3], { clientX: 30, clientY: 30 })
+    fireEvent.mouseUp(surface, { clientX: 30, clientY: 30 })
+    coordinates.mockRestore()
     expect(table.querySelectorAll('.selectedCell').length).toBe(4)
   })
 
@@ -351,4 +363,50 @@ it('retains both concurrently pasted images after writes complete out of order',
  await act(async()=>{pending[0]({relativePath:'assets/screenshot-019c0000-0000-7000-8000-000000000003.png',width:2,height:2});await handle.current?.commitComposition()})
  expect(body.querySelectorAll('img')).toHaveLength(2)
  expect(onChange.mock.lastCall?.[0].root.content.filter((node:{type:string})=>node.type==='image')).toHaveLength(2)
+})
+
+it('offers rich code languages with lexical color, preserves text and supports undo',async()=>{
+ const onChange=vi.fn()
+ render(<RichDocumentEditor value={{schemaVersion:1,root:{type:'doc',content:[{type:'codeBlock',attrs:{language:'java'},content:[{type:'text',text:'public class Demo { String value = "Cay"; }'}]}]}}} onChange={onChange}/>)
+ const picker=await screen.findByRole('combobox',{name:'代码块语言'})
+ expect(picker).toHaveValue('java')
+ expect(document.querySelector('.rich-code-block .tok-keyword')).toHaveTextContent('public')
+ fireEvent.change(picker,{target:{value:'python'}})
+ await waitFor(()=>expect(onChange).toHaveBeenCalled())
+ expect(screen.getByRole('textbox',{name:'文档正文'})).toHaveTextContent('public class Demo')
+})
+
+it('leaves the rich plain code language label empty',()=>{
+ render(<RichDocumentEditor value={{schemaVersion:1,root:{type:'doc',content:[{type:'codeBlock',content:[{type:'text',text:'hello'}]}]}}} onChange={vi.fn()}/>)
+ const picker=screen.getByRole('combobox',{name:'代码块语言'}) as HTMLInputElement
+ expect(picker).toHaveValue('')
+})
+
+it('keeps Tab in the final paragraph and inserts indentation',()=>{
+ const onChange=vi.fn()
+ render(<RichDocumentEditor value={{schemaVersion:1,root:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'last'}]}]}}} onChange={onChange}/>)
+ const body=screen.getByRole('textbox',{name:'文档正文'})
+ fireEvent.focus(body)
+ // The native key handler must consume Tab rather than moving focus to an earlier language field.
+ expect(fireEvent.keyDown(body,{key:'Tab'})).toBe(false)
+ expect(body).toHaveTextContent('last')
+ expect(onChange.mock.lastCall?.[0].root.content[0].content[0].text).toContain('\t')
+})
+it('focuses the language input after creating a code block with Enter',async()=>{
+ render(<RichDocumentEditor value={{schemaVersion:1,root:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'```'}]}]}}} onChange={vi.fn()}/>)
+ const body=screen.getByRole('textbox',{name:'文档正文'})
+ fireEvent.keyDown(body,{key:'Enter'})
+ await waitFor(()=>expect(screen.getByRole('combobox',{name:'代码块语言'})).toHaveFocus())
+ fireEvent.change(screen.getByRole('combobox',{name:'代码块语言'}),{target:{value:'java'}})
+ fireEvent.keyDown(screen.getByRole('combobox',{name:'代码块语言'}),{key:'Enter'})
+ await waitFor(()=>expect(body).toHaveFocus())
+})
+
+it('does not reproject the document when only the formatting toolbar changes',()=>{
+ const projection=vi.spyOn(documentSchema,'toTiptapJson')
+ render(<RichDocumentEditor value={{schemaVersion:1,root:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'large document'}]}]}}} onChange={vi.fn()}/>)
+ const count=projection.mock.calls.length
+ fireEvent.click(screen.getByRole('button',{name:'收起格式工具栏'}))
+ expect(projection.mock.calls.length).toBe(count)
+ projection.mockRestore()
 })

@@ -32,6 +32,8 @@ const MUTATION_LOCK: &str = ".index-mutation.lock";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppTheme {
+    Ocean,
+    Light,
     Forest,
     Sand,
     Night,
@@ -41,6 +43,8 @@ pub enum AppTheme {
 impl AppTheme {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Ocean => "ocean",
+            Self::Light => "light",
             Self::Forest => "forest",
             Self::Sand => "sand",
             Self::Night => "night",
@@ -199,6 +203,7 @@ pub struct SettingsPatch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageInfo {
+    pub default_migration_pending: bool,
     pub root: String,
     pub note_bytes: u64,
     pub asset_bytes: u64,
@@ -269,6 +274,81 @@ pub fn load_bootstrap_settings<S: SettingsStore>(store: &S) -> Result<AppSetting
         }
         None => Ok(AppSettings::default()),
     }
+}
+
+/// Installer preferences initialize only a fresh profile, never relocate durable data.
+#[doc(hidden)]
+pub fn initialize_installer_storage<S: SettingsStore>(
+    store: &S,
+    default_root: &Path,
+    choice: Option<&Path>,
+) -> Result<(), CommandError> {
+    if store.load()?.is_some() {
+        return Ok(());
+    }
+    if matches!(
+        store.load_data_root_backup()?,
+        Some(DataRootSetting::Custom { .. })
+    ) {
+        return Err(CommandError::conflict(
+            "existing custom library settings require recovery",
+        ));
+    }
+    if [
+        "notes",
+        "temporary",
+        "trash",
+        "folders.json",
+        "index.sqlite",
+    ]
+    .iter()
+    .any(|name| fs::symlink_metadata(default_root.join(name)).is_ok())
+    {
+        return Ok(());
+    }
+    let Some(choice) = choice else {
+        return Ok(());
+    };
+    let source = default_root
+        .canonicalize()
+        .unwrap_or_else(|_| default_root.to_path_buf());
+    let destination = validate_fresh_destination(&source, choice)?;
+    // Validate through the same no-link directory adapter as storage migration.
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CommandError::validation("initial library directory requires a parent"))?;
+    let leaf = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| CommandError::validation("invalid initial library directory name"))?;
+    let directory = SafeDirectory::open(parent, &[leaf], true)?;
+    if !directory.entry_names()?.is_empty() {
+        return Err(CommandError::conflict(
+            "initial library directory must be empty",
+        ));
+    }
+    // Prove write access before publishing settings; no note data exists yet.
+    let probe = format!(".simple-notes-install-probe-{}", uuid::Uuid::now_v7());
+    let file = directory.create_new(&probe)?;
+    let synced = file.sync_all().map_err(|source| {
+        CommandError::io(format!("could not verify initial library write: {source}"))
+    });
+    drop(file);
+    let removed = directory.remove_checked(&probe);
+    synced?;
+    removed?;
+    let settings = AppSettings {
+        data_root: DataRootSetting::Custom {
+            path: destination.to_string_lossy().into_owned(),
+        },
+        ..AppSettings::default()
+    };
+    let settings = validate_settings(settings)?;
+    store.save_bundle(
+        &serde_json::to_value(&settings)
+            .map_err(|source| CommandError::validation(source.to_string()))?,
+        &settings.data_root,
+    )
 }
 
 pub trait SystemSettings: Clone + Send + Sync + 'static {
@@ -497,6 +577,7 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
         let trash_bytes = count_tree_bytes(self.paths.trash())?;
         let relocation = read_relocation_marker(&self.paths)?;
         Ok(StorageInfo {
+            default_migration_pending: false,
             root: self.paths.root().to_string_lossy().into_owned(),
             note_bytes,
             asset_bytes,
@@ -513,14 +594,26 @@ impl<S: SettingsStore, Y: SystemSettings> SettingsService<S, Y> {
     }
 
     pub fn move_storage_root(&self, destination: impl AsRef<Path>) -> Result<(), CommandError> {
+        self.move_storage_root_inner(destination.as_ref(), false)
+    }
+
+    fn move_storage_root_inner(
+        &self,
+        destination: &Path,
+        before_windows_restore: bool,
+    ) -> Result<(), CommandError> {
         let _transaction = self
             .transaction
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.reject_active_relocation()?;
-        let destination = validate_fresh_destination(self.paths.root(), destination.as_ref())?;
+        let destination = validate_fresh_destination(self.paths.root(), destination)?;
         let guard = IndexMutationLock::acquire(self.paths.root())?;
-        reject_visible_sticky_windows(&self.paths)?;
+        // Startup migration runs before any editor/window is restored. Persisted
+        // visibility describes windows to restore, not currently live editors.
+        if !before_windows_restore {
+            reject_visible_sticky_windows(&self.paths)?;
+        }
         let operation_id = Uuid::now_v7().to_string();
         let parent_path = destination
             .parent()
@@ -2060,6 +2153,7 @@ impl SystemSettings for TauriSystemSettings {
 }
 
 pub struct SettingsCommandState {
+    default_migration_pending: bool,
     paths: StoragePaths,
     store: TauriSettingsStore,
     app: tauri::AppHandle,
@@ -2101,10 +2195,30 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         store: app.store("settings.json")?,
     };
     let default_root = app.path().app_data_dir()?;
-    let settings = load_bootstrap_settings(&store)?;
-    let paths = open_configured_storage(default_root, &settings)?;
-    recover_interrupted_source_relocation(&paths)?;
+    // Read installer input only before an application profile/library exists.
+    if store.load()?.is_none()
+        && store.load_data_root_backup()?.is_none()
+        && !contains_library_data(&default_root)
+        && !contains_library_data(&default_library_root(&default_root)?)
+    {
+        let choice = crate::platform::installer_data_path()?;
+        initialize_installer_storage(&store, &default_root, choice.as_deref())?;
+    }
+    let paths = open_startup_storage(
+        &default_root,
+        store.clone(),
+        TauriSystemSettings {
+            app: app.handle().clone(),
+        },
+    )?;
+    let default_migration_pending = matches!(
+        load_bootstrap_settings(&store)?.data_root,
+        DataRootSetting::Default
+    ) && default_root
+        .canonicalize()
+        .is_ok_and(|root| root == paths.root());
     app.manage(SettingsCommandState {
+        default_migration_pending,
         paths,
         store,
         app: app.handle().clone(),
@@ -2112,6 +2226,65 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         transaction: Arc::new(Mutex::new(())),
     });
     Ok(())
+}
+
+fn contains_library_data(root: &Path) -> bool {
+    [
+        "notes",
+        "temporary",
+        "trash",
+        "folders.json",
+        "index.sqlite",
+    ]
+    .iter()
+    .any(|name| fs::symlink_metadata(root.join(name)).is_ok())
+}
+
+fn default_library_root(bootstrap_root: &Path) -> Result<PathBuf, CommandError> {
+    bootstrap_root
+        .parent()
+        .map(|parent| parent.join("app.cay"))
+        .ok_or_else(|| CommandError::validation("application data directory has no parent"))
+}
+
+/// Bootstrap settings retain their compatibility path; only default durable
+/// libraries move. Never infer a custom directory's intent from its basename.
+fn open_startup_storage<S: SettingsStore, Y: SystemSettings>(
+    bootstrap_root: &Path,
+    store: S,
+    system: Y,
+) -> Result<StoragePaths, CommandError> {
+    let settings = load_bootstrap_settings(&store)?;
+    let destination = default_library_root(bootstrap_root)?;
+    if matches!(settings.data_root, DataRootSetting::Custom { .. }) {
+        let paths = open_configured_storage(&destination, &settings)?;
+        recover_interrupted_source_relocation(&paths)?;
+        return Ok(paths);
+    }
+    if !contains_library_data(bootstrap_root) {
+        reject_existing_path_links(&destination)?;
+        return open_configured_storage(&destination, &settings);
+    }
+    let source = open_configured_storage(bootstrap_root, &settings)?;
+    recover_interrupted_source_relocation(&source)?;
+    let migration = SettingsService::new(source.clone(), store.clone(), system);
+    if let Err(error) = migration.move_storage_root_inner(&destination, true) {
+        // A cosmetic default-directory migration must not strand an accessible
+        // library. Fall back only while settings still select the source; after
+        // destination publication, never resume edits against a stale source.
+        if matches!(
+            load_bootstrap_settings(&store)?.data_root,
+            DataRootSetting::Default
+        ) {
+            return Ok(source);
+        }
+        return Err(error);
+    }
+    let migrated = load_bootstrap_settings(&store)?;
+    let reopened = open_configured_storage(&destination, &migrated)?;
+    // Source content survives until startup recovery/index verification accepts
+    // the reopened destination and finalize_reopened_relocation performs cleanup.
+    Ok(reopened)
 }
 
 #[doc(hidden)]
@@ -2214,7 +2387,9 @@ pub fn get_storage_info(
     state: tauri::State<'_, SettingsCommandState>,
 ) -> Result<StorageInfo, CommandError> {
     authorize_settings_caller(window.label())?;
-    state.service().get_storage_info()
+    let mut info = state.service().get_storage_info()?;
+    info.default_migration_pending = state.default_migration_pending;
+    Ok(info)
 }
 
 #[tauri::command]
@@ -2271,5 +2446,302 @@ mod search_shortcut_contract {
             serde_json::from_value(serde_json::to_value(&loaded).unwrap()).unwrap();
         assert_eq!(saved.search_shortcut, "Control+K");
         assert_eq!(saved.shortcut, capture);
+    }
+}
+
+#[cfg(test)]
+mod installer_storage_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone, Default)]
+    struct MemoryStore {
+        value: Arc<Mutex<Option<Value>>>,
+        root_backup: Arc<Mutex<Option<DataRootSetting>>>,
+        fail_save: Arc<Mutex<bool>>,
+        fail_custom: Arc<Mutex<bool>>,
+    }
+    impl MemoryStore {
+        fn fail_next_save(&self) {
+            *self.fail_save.lock().unwrap() = true;
+        }
+    }
+    impl SettingsStore for MemoryStore {
+        fn load(&self) -> Result<Option<Value>, CommandError> {
+            Ok(self.value.lock().unwrap().clone())
+        }
+        fn load_data_root_backup(&self) -> Result<Option<DataRootSetting>, CommandError> {
+            Ok(self.root_backup.lock().unwrap().clone())
+        }
+        fn save_bundle(&self, value: &Value, root: &DataRootSetting) -> Result<(), CommandError> {
+            if matches!(root, DataRootSetting::Custom { .. }) && *self.fail_custom.lock().unwrap() {
+                return Err(CommandError::io("injected custom root save failure"));
+            }
+            if std::mem::take(&mut *self.fail_save.lock().unwrap()) {
+                return Err(CommandError::io("injected save failure"));
+            }
+            *self.value.lock().unwrap() = Some(value.clone());
+            *self.root_backup.lock().unwrap() = Some(root.clone());
+            Ok(())
+        }
+    }
+    #[derive(Clone)]
+    struct StartupSystem;
+    impl SystemSettings for StartupSystem {
+        fn shortcut(&self) -> Result<String, CommandError> {
+            Ok(AppSettings::default().shortcut)
+        }
+        fn rebind_shortcut(&self, _: &str) -> Result<(), CommandError> {
+            Ok(())
+        }
+        fn launch_at_startup(&self) -> Result<bool, CommandError> {
+            Ok(false)
+        }
+        fn set_launch_at_startup(&self, _: bool) -> Result<(), CommandError> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn default_library_uses_cay_and_preserves_custom_directories() {
+        let parent = tempfile::tempdir().unwrap();
+        let bootstrap = parent.path().join("app.simplenotes.desktop");
+        fs::create_dir(&bootstrap).unwrap();
+        let store = MemoryStore::default();
+        let paths = open_startup_storage(&bootstrap, store.clone(), StartupSystem).unwrap();
+        assert_eq!(
+            paths.root(),
+            parent.path().join("app.cay").canonicalize().unwrap()
+        );
+        let custom = parent.path().join("custom").join("app.simplenotes.desktop");
+        fs::create_dir_all(&custom).unwrap();
+        let settings = AppSettings {
+            data_root: DataRootSetting::Custom {
+                path: custom.to_string_lossy().into_owned(),
+            },
+            ..AppSettings::default()
+        };
+        store
+            .save_bundle(
+                &serde_json::to_value(&settings).unwrap(),
+                &settings.data_root,
+            )
+            .unwrap();
+        let paths = open_startup_storage(&bootstrap, store.clone(), StartupSystem).unwrap();
+        assert_eq!(paths.root(), custom.canonicalize().unwrap());
+        assert_eq!(
+            load_bootstrap_settings(&store).unwrap().data_root,
+            settings.data_root
+        );
+    }
+    #[test]
+    fn default_library_migration_keeps_source_until_verified_reopen() {
+        let parent = tempfile::tempdir().unwrap();
+        let bootstrap = parent.path().join("app.simplenotes.desktop");
+        let old = StoragePaths::open(&bootstrap).unwrap();
+        let temporary = crate::windows::sticky::TemporaryRepository::new(old.clone())
+            .create()
+            .unwrap();
+        let id = crate::domain::NoteId::now_v7();
+        let document = crate::domain::NoteDocument {
+            id,
+            kind: crate::domain::NoteKind::Formal,
+            title: "中文笔记".into(),
+            folder_id: None,
+            tags: vec!["test".into()],
+            markdown: format!("正文 [[便笺|{}]]", temporary.id),
+            content: None,
+            revision: 0,
+            created_at: "2026-10-12T00:00:00Z".into(),
+            updated_at: "2026-10-12T00:00:00Z".into(),
+        };
+        let saved = crate::storage::repository::NoteRepository::new(old.clone())
+            .create(document)
+            .unwrap();
+        let assets = old.assets_dir(id, crate::domain::NoteKind::Formal).unwrap();
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("image.png"), b"asset fixture").unwrap();
+        let database = Database::open(old.database()).unwrap();
+        database.connection().execute("INSERT INTO temporary_windows (note_id, visible, x, y, width, height, always_on_top) VALUES (?1, 1, 17, 23, 411, 433, 1)", [Uuid::parse_str(&temporary.id.to_string()).unwrap().as_bytes().to_vec()]).unwrap();
+        database.close().unwrap();
+        fs::write(old.root().join("settings.json"), "bootstrap").unwrap();
+        fs::write(old.root().join("unknown.txt"), "keep").unwrap();
+        let store = MemoryStore::default();
+        let paths = open_startup_storage(&bootstrap, store.clone(), StartupSystem).unwrap();
+        assert_eq!(
+            paths.root(),
+            parent.path().join("app.cay").canonicalize().unwrap()
+        );
+        assert!(old.notes().exists());
+        assert_eq!(
+            fs::read(
+                paths
+                    .assets_dir(id, crate::domain::NoteKind::Formal)
+                    .unwrap()
+                    .join("image.png")
+            )
+            .unwrap(),
+            b"asset fixture"
+        );
+        finalize_reopened_relocation(&paths).unwrap();
+        assert_eq!(
+            crate::storage::repository::NoteRepository::new(paths.clone())
+                .load(id)
+                .unwrap(),
+            saved
+        );
+        let database = Database::open(paths.database()).unwrap();
+        let visible: bool = database
+            .connection()
+            .query_row("SELECT visible FROM temporary_windows", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(visible);
+        database.close().unwrap();
+        assert_eq!(
+            fs::read_to_string(old.root().join("settings.json")).unwrap(),
+            "bootstrap"
+        );
+        assert_eq!(
+            fs::read_to_string(old.root().join("unknown.txt")).unwrap(),
+            "keep"
+        );
+        assert_eq!(
+            open_startup_storage(&bootstrap, store, StartupSystem)
+                .unwrap()
+                .root(),
+            paths.root()
+        );
+    }
+    #[test]
+    fn default_library_migration_does_not_overwrite_an_occupied_cay_directory() {
+        let parent = tempfile::tempdir().unwrap();
+        let bootstrap = parent.path().join("app.simplenotes.desktop");
+        let old = StoragePaths::open(&bootstrap).unwrap();
+        let target = parent.path().join("app.cay");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), "keep").unwrap();
+        let store = MemoryStore::default();
+        assert_eq!(
+            open_startup_storage(&bootstrap, store.clone(), StartupSystem)
+                .unwrap()
+                .root(),
+            old.root()
+        );
+        assert!(old.notes().exists());
+        assert!(matches!(
+            load_bootstrap_settings(&store).unwrap().data_root,
+            DataRootSetting::Default
+        ));
+        assert_eq!(fs::read_to_string(target.join("keep.txt")).unwrap(), "keep");
+    }
+    #[test]
+    fn default_library_migration_save_failure_preserves_source_and_can_retry() {
+        let parent = tempfile::tempdir().unwrap();
+        let bootstrap = parent.path().join("app.simplenotes.desktop");
+        let old = StoragePaths::open(&bootstrap).unwrap();
+        fs::write(old.notes().join("durable.bin"), b"source").unwrap();
+        let store = MemoryStore::default();
+        *store.fail_custom.lock().unwrap() = true;
+        assert_eq!(
+            open_startup_storage(&bootstrap, store.clone(), StartupSystem)
+                .unwrap()
+                .root(),
+            old.root()
+        );
+        assert_eq!(
+            fs::read(old.notes().join("durable.bin")).unwrap(),
+            b"source"
+        );
+        assert!(matches!(
+            load_bootstrap_settings(&store).unwrap().data_root,
+            DataRootSetting::Default
+        ));
+        *store.fail_custom.lock().unwrap() = false;
+        let moved = open_startup_storage(&bootstrap, store, StartupSystem).unwrap();
+        assert_eq!(
+            fs::read(moved.notes().join("durable.bin")).unwrap(),
+            b"source"
+        );
+    }
+    #[test]
+    fn installer_data_path_initializes_only_a_new_empty_library() {
+        let default = tempfile::tempdir().unwrap();
+        let target_parent = tempfile::tempdir().unwrap();
+        let target = target_parent.path().join("new library");
+        let store = MemoryStore::default();
+        initialize_installer_storage(&store, default.path(), Some(&target)).unwrap();
+        let settings = load_bootstrap_settings(&store).unwrap();
+        assert!(matches!(settings.data_root, DataRootSetting::Custom { .. }));
+        assert!(target.is_dir());
+        // Reinstallation choices must never redirect an existing profile.
+        initialize_installer_storage(&store, default.path(), Some(&PathBuf::from("relative")))
+            .unwrap();
+        assert_eq!(
+            load_bootstrap_settings(&store).unwrap().data_root,
+            settings.data_root
+        );
+    }
+
+    #[test]
+    fn installer_data_path_rejects_nonempty_relative_and_nested_targets() {
+        let default = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        fs::write(target.path().join("keep.txt"), "keep").unwrap();
+        let store = MemoryStore::default();
+        assert!(initialize_installer_storage(&store, default.path(), Some(target.path())).is_err());
+        assert!(initialize_installer_storage(
+            &store,
+            default.path(),
+            Some(&PathBuf::from("relative"))
+        )
+        .is_err());
+        assert!(store.load().unwrap().is_none());
+        assert!(initialize_installer_storage(
+            &store,
+            default.path(),
+            Some(&default.path().join("nested"))
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(target.path().join("keep.txt")).unwrap(),
+            "keep"
+        );
+        assert!(initialize_installer_storage(
+            &store,
+            default.path(),
+            Some(&target.path().join(".."))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn installer_data_path_preserves_legacy_default_libraries_and_missing_custom_settings() {
+        let default = tempfile::tempdir().unwrap();
+        fs::create_dir(default.path().join("notes")).unwrap();
+        let store = MemoryStore::default();
+        initialize_installer_storage(&store, default.path(), Some(&PathBuf::from("invalid")))
+            .unwrap();
+        assert!(store.load().unwrap().is_none());
+        *store.root_backup.lock().unwrap() = Some(DataRootSetting::Custom {
+            path: "preserved".into(),
+        });
+        assert!(initialize_installer_storage(
+            &store,
+            default.path(),
+            Some(&PathBuf::from("invalid"))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn installer_data_path_save_failure_keeps_profile_unpublished() {
+        let default = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let store = MemoryStore::default();
+        store.fail_next_save();
+        assert!(initialize_installer_storage(&store, default.path(), Some(target.path())).is_err());
+        assert!(store.load().unwrap().is_none());
+        assert!(store.load_data_root_backup().unwrap().is_none());
+        assert_eq!(fs::read_dir(target.path()).unwrap().count(), 0);
     }
 }

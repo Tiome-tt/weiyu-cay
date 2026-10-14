@@ -1,3 +1,4 @@
+import { parseTsv } from './tableClipboard'
 import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent } from 'react'
 import { tableMarkdownFromCells, type MarkdownTableAlignment } from './markdownActions'
@@ -47,7 +48,7 @@ function isSelectionAnchor(range: CellRange | null, row: number, column: number)
 }
 
 function parsePastedCells(value: string) {
-  return value.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map((row) => row.split('\t'))
+  return parseTsv(value).map(row => row.map(value => value.replace(/\r\n?|\n/g, '<br>')))
 }
 
 export function TableEditorDialog({

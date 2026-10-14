@@ -59,11 +59,11 @@ fn fresh_storage_creates_the_getting_started_guide_once() {
     assert!(guide.markdown.contains("设置中修改全局快捷键"));
     assert!(guide.markdown.contains("钉在桌面最上层"));
     assert!(guide.markdown.contains("转为正式笔记"));
-    assert!(guide.markdown.contains("## 富文档与多格式文件"));
-    assert!(guide
-        .markdown
-        .contains("标题、行内格式、列表、任务、链接、图片和表格"));
-    assert!(guide.markdown.contains("纯文本、PDF、图片和 DOCX"));
+    assert!(!guide.markdown.contains("## 富文档与多格式文件"));
+    assert_eq!(guide.markdown.matches("## 文档导入与笔记类型").count(), 1);
+    assert!(guide.markdown.contains("标题、列表、图片和表格"));
+    assert!(guide.markdown.contains("Word、Excel、PowerPoint"));
+    assert!(guide.markdown.contains("原始文件仍会保留"));
     assert!(guide.markdown.contains("- [ ] 任务项"));
     assert!(guide.markdown.contains("> 引用一段重要内容"));
     assert!(guide.markdown.contains("[显示文字](https://example.com)"));
@@ -316,4 +316,23 @@ fn startup_upgrades_unmodified_previous_guides() {
         assert!(!upgraded.markdown.contains("这篇引导笔记也可以随时删除。"));
         assert!(upgraded.revision > 0);
     }
+}
+
+#[test]
+fn guide_describes_import_types_and_optional_ai_without_future_feature_copy() {
+    let guide = getting_started_markdown();
+    for text in [
+        "文档导入与笔记类型",
+        "Markdown 笔记",
+        "文档笔记",
+        "纯文本笔记",
+        "文件条目",
+        "AI 辅助",
+        "AI 总结",
+        "DeepSeek API Key",
+        "主动操作",
+    ] {
+        assert!(guide.contains(text))
+    }
+    assert!(!guide.contains("后续可能"));
 }

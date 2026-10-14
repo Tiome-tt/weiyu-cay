@@ -21,6 +21,45 @@ use std::{
 };
 use uuid::Uuid;
 
+pub(super) fn installer_data_path() -> Result<Option<PathBuf>, CommandError> {
+    installer_data_path_from_key("Software\\app.simplenotes.desktop")
+}
+
+fn installer_data_path_from_key(key_name: &str) -> Result<Option<PathBuf>, CommandError> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    let key: Vec<u16> = key_name.encode_utf16().chain(Some(0)).collect();
+    let name: Vec<u16> = "InstallDataPath\0".encode_utf16().collect();
+    let mut buffer = vec![0u16; 4096];
+    let mut bytes = (buffer.len() * 2) as u32;
+    // Fixed-size REG_SZ read bounds untrusted installer input and avoids handle ownership.
+    let result = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut bytes,
+        )
+    };
+    if result == 2 {
+        return Ok(None);
+    }
+    if result != 0 {
+        return Err(CommandError::io(
+            "could not read installer data directory preference",
+        ));
+    }
+    let length = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
+    let value = String::from_utf16(&buffer[..length])
+        .map_err(|_| CommandError::validation("invalid installer directory encoding"))?;
+    Ok((!value.trim().is_empty()).then(|| PathBuf::from(value)))
+}
+
 const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
 const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
 const ERROR_UNABLE_TO_REMOVE_REPLACED: i32 = 1175;
@@ -1540,6 +1579,76 @@ fn wide(value: &OsStr) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn installer_preference_windows_registry_smoke() {
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegCreateKeyW, RegDeleteTreeW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+            REG_DWORD, REG_SZ,
+        };
+        struct Fixture {
+            key: Vec<u16>,
+            handle: HKEY,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                unsafe {
+                    RegCloseKey(self.handle);
+                    RegDeleteTreeW(HKEY_CURRENT_USER, self.key.as_ptr());
+                }
+            }
+        }
+        // An isolated per-test key; never read, write or remove the application's key.
+        let key = format!(
+            "Software\\.simple-notes-installer-test-{}",
+            uuid::Uuid::now_v7()
+        );
+        let key_wide: Vec<u16> = key.encode_utf16().chain(Some(0)).collect();
+        let mut handle = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { RegCreateKeyW(HKEY_CURRENT_USER, key_wide.as_ptr(), &mut handle) },
+            0
+        );
+        let fixture = Fixture {
+            key: key_wide,
+            handle,
+        };
+        assert_eq!(super::installer_data_path_from_key(&key).unwrap(), None);
+        let name: Vec<u16> = "InstallDataPath\0".encode_utf16().collect();
+        let value = "D:\\资料库 Ω\\微屿";
+        let wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
+        assert_eq!(
+            unsafe {
+                RegSetValueExW(
+                    fixture.handle,
+                    name.as_ptr(),
+                    0,
+                    REG_SZ,
+                    wide.as_ptr().cast(),
+                    (wide.len() * 2) as u32,
+                )
+            },
+            0
+        );
+        assert_eq!(
+            super::installer_data_path_from_key(&key).unwrap(),
+            Some(std::path::PathBuf::from(value))
+        );
+        let invalid = 1u32;
+        assert_eq!(
+            unsafe {
+                RegSetValueExW(
+                    fixture.handle,
+                    name.as_ptr(),
+                    0,
+                    REG_DWORD,
+                    (&invalid as *const u32).cast(),
+                    4,
+                )
+            },
+            0
+        );
+        assert!(super::installer_data_path_from_key(&key).is_err());
+    }
     use super::{
         classify_replace_error, persist_recovery_descriptor_using, replace_file_with_backup_using,
         FileIdentity, ReplaceFailureAction, ReplaceOperations,

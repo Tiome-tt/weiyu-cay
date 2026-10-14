@@ -6,6 +6,15 @@ import { note } from '../../test/fakes'
 import { NoteList, reorderNoteIds } from './NoteList'
 
 afterEach(cleanup)
+it('shows only the extension for attachments and keeps multiselection controls out of the list', () => {
+ const item={...note(''),excerpt:'',content:{type:'file' as const,file:{storageName:'x',originalName:'照片.png',mediaType:'image/png',size:1,sha256:'x'}}}
+ const second={...item,id:'019c0000-0000-7000-8000-000000000321' as NoteId,title:'Second'}
+ render(<NoteList notes={[item,second]} activeId={null} state="ready" onSelect={vi.fn()} />)
+ expect(within(screen.getByRole('button',{name:item.title})).getByText('PNG')).toBeInTheDocument()
+ fireEvent.click(screen.getByRole('button',{name:item.title}),{ctrlKey:true})
+ fireEvent.click(screen.getByRole('button',{name:'Second'}),{ctrlKey:true})
+ expect(screen.queryByText(/已选择/)).not.toBeInTheDocument()
+})
 describe('reorderNoteIds', () => {
   const ids = ['a', 'b', 'c', 'd'] as NoteId[]
   it('inserts before or after the target according to the drop half', () => {
@@ -65,8 +74,8 @@ it('identifies mixed library entries and exposes the original file extension', (
  const officeEntry={...entry,id:'019c0000-0000-7000-8000-000000000212' as typeof entry.id,title:'预算',content:{type:'file' as const,file:{storageName:'payload',originalName:'预算.final.xlsx',mediaType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',size:12,sha256:'abc'}}}
  render(<NoteList notes={[documentEntry,officeEntry]} activeId={null} state="ready" onSelect={vi.fn()}/>)
  expect(screen.getByRole('button',{name:'方案'})).toHaveAccessibleDescription('文档')
- expect(within(screen.getByRole('button',{name:'预算'})).getByText('Office · XLSX')).toBeVisible()
- expect(screen.getByRole('button',{name:'预算'})).toHaveAccessibleDescription('Office · XLSX')
+ expect(within(screen.getByRole('button',{name:'预算'})).getByText('XLSX')).toBeVisible()
+ expect(screen.getByRole('button',{name:'预算'})).toHaveAccessibleDescription('XLSX')
 })
 
 it('does not offer PDF export for non-PDF attachments', () => {
@@ -88,6 +97,22 @@ it('does not offer PDF export for non-PDF attachments', () => {
   fireEvent.contextMenu(screen.getByRole('button', { name: entry.title }))
   expect(screen.queryByRole('menuitem', { name: '导出 PDF' })).not.toBeInTheDocument()
   expect(screen.queryByRole('menuitem', { name: '另存 PDF' })).not.toBeInTheDocument()
+})
+it('exports an authored note in all supported formats from the context menu', () => {
+  const onExport = vi.fn()
+  render(<NoteList notes={[entry]} activeId={null} state="ready" onSelect={vi.fn()} onExport={onExport} />)
+  fireEvent.contextMenu(screen.getByRole('button', { name: entry.title }))
+  fireEvent.click(screen.getByRole('menuitem', { name: '另存为' }))
+  expect(screen.getAllByRole('option')).toHaveLength(5)
+  fireEvent.change(screen.getByRole('combobox', {name:'另存格式'}),{target:{value:'html'}})
+  fireEvent.click(screen.getByRole('button',{name:'另存为'}))
+  expect(onExport).toHaveBeenCalledWith(entry, 'html', expect.objectContaining({filename:expect.any(String)}))
+})
+it('uses a readable 20px entry icon without making it a separate focus target', () => {
+  render(<NoteList notes={[entry]} activeId={entry.id} state="ready" onSelect={vi.fn()} />)
+  const icon = screen.getByRole('button', { name: entry.title }).querySelector('svg')!
+  expect(icon).toHaveAttribute('width', '20')
+  expect(icon).toHaveAttribute('aria-hidden', 'true')
 })
 it('supports keyboard multi-selection and moves or deletes the selected set', () => {
   const second = {
@@ -114,16 +139,17 @@ it('supports keyboard multi-selection and moves or deletes the selected set', ()
   fireEvent.keyDown(secondCard, { key: ' ', ctrlKey: true })
   expect(firstCard).toHaveAttribute('aria-pressed', 'true')
   expect(secondCard).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByRole('status')).toHaveTextContent('已选择 2 项')
+  expect(screen.queryByText('已选择 2 项')).not.toBeInTheDocument()
 
   fireEvent.contextMenu(secondCard)
-  expect(screen.queryByRole('menuitem', { name: '移动 2 项' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('combobox', { name: '移动所选条目到' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('menuitem', { name: '移动到' }))
   fireEvent.change(screen.getByRole('combobox', { name: '移动所选条目到' }), { target: { value: targetFolder } })
-  fireEvent.submit(screen.getByRole('form', { name: '移动所选条目' }))
+  fireEvent.submit(screen.getByRole('dialog', { name: '移动所选条目' }))
   expect(onMoveSelection).toHaveBeenCalledWith([entry.id, second.id], targetFolder)
 
   fireEvent.contextMenu(secondCard)
-  fireEvent.click(screen.getByRole('menuitem', { name: '删除 2 项' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: '删除笔记' }))
   expect(onDeleteSelection).toHaveBeenCalledWith([entry, second])
 })
 
@@ -142,4 +168,18 @@ it('reorders by the pointer drop half and exposes a visible drop marker', async 
   fireEvent.pointerUp(window, { clientX: 10, clientY: 30 })
   await waitFor(() => expect(onReorder).toHaveBeenCalledWith(null, [second.id, entry.id]))
   vi.restoreAllMocks()
+})
+
+it('clears multiselection when clicking the editor and exposes batch stars with a stable delete label',()=>{
+ const second={...entry,id:'019c0000-0000-7000-8000-000000000321' as NoteId,title:'Second'}
+ const onSetStars=vi.fn()
+ render(<><NoteList notes={[entry,second]} activeId={entry.id} state="ready" onSelect={vi.fn()} onSetStars={onSetStars} onDeleteSelection={vi.fn()}/><div data-testid="editor-outside" onPointerDown={event=>event.stopPropagation()}>Editor</div></>)
+ fireEvent.click(screen.getByRole('button',{name:'Second'}),{ctrlKey:true})
+ fireEvent.contextMenu(screen.getByRole('button',{name:'Second'}))
+ fireEvent.click(screen.getByRole('menuitem',{name:'添加星标'}))
+ expect(onSetStars).toHaveBeenCalledWith([entry,second],true)
+ fireEvent.contextMenu(screen.getByRole('button',{name:'Second'}))
+ expect(screen.getByRole('menuitem',{name:'删除笔记'})).toBeInTheDocument()
+ fireEvent.pointerDown(screen.getByTestId('editor-outside'))
+ expect(screen.getByRole('button',{name:'Second'})).toHaveAttribute('aria-pressed','false')
 })

@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test'
 
-test('keeps settings compact and API actions inline with themed checkbox targets', async ({page}, info) => {
+test('keeps settings compact and API actions inline with themed switch targets', async ({page}, info) => {
  await page.setViewportSize({width:1180,height:760}); await page.goto('/')
  await page.getByRole('button',{name:'打开设置',exact:true}).click()
  await expect(page.getByText('ms',{exact:true})).toBeVisible()
  await expect(page.getByText('只调整应用界面，不影响笔记正文')).toHaveCount(0)
  await page.getByRole('tab',{name:'系统',exact:true}).click()
- const box=page.getByRole('checkbox',{name:'开机启动'}), tray=page.getByRole('checkbox',{name:'关闭主窗口时隐藏到托盘'})
+ const box=page.getByRole('switch',{name:'开机启动'}), tray=page.getByRole('switch',{name:'关闭主窗口时隐藏到托盘'})
  const before=await box.isChecked()
  await page.getByText('开机启动',{exact:true}).click();expect(await box.isChecked()).toBe(before)
  await box.check();await tray.check()
@@ -28,13 +28,13 @@ test('centers compact search and shows matched context',async ({page},info)=>{
  await page.keyboard.press(process.platform==='darwin'?'Meta+f':'Control+f');const dialog=page.getByRole('dialog',{name:'搜索资料库'})
  let box=(await dialog.boundingBox())!
  expect(Math.abs(box.x+box.width/2-590)).toBeLessThan(2)
- expect(Math.abs(box.y+box.height/2-395)).toBeLessThan(2)
+ expect(Math.abs(box.y-(30+(760-30)/4))).toBeLessThan(2)
  expect(box.height).toBeLessThan(70)
  await page.getByRole('searchbox',{name:'搜索资料库'}).fill('认证')
  await expect(dialog.getByRole('option',{name:/用户认证/})).toBeVisible()
  await expect(dialog.locator('.workspace-search__excerpt').first()).toBeVisible()
  box=(await dialog.boundingBox())!
- expect(Math.abs(box.y+box.height/2-395)).toBeLessThan(2)
+ expect(Math.abs(box.y-(30+(760-30)/4))).toBeLessThan(2)
  await page.screenshot({path:info.outputPath('search.png')})
 })
 

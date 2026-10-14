@@ -130,12 +130,99 @@ pub fn open_managed_file(
         .open_path(path.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|_| CommandError::io("could not open the external Office copy"))
 }
+#[tauri::command(rename_all = "camelCase")]
+pub async fn sync_external_file(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    note_id: NoteId,
+    force: Option<bool>,
+) -> Result<Option<crate::domain::NoteDocument>, CommandError> {
+    main_window(&window)?;
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::storage::external_edit::sync_external_file_checked(
+            &paths,
+            note_id,
+            force.unwrap_or(true),
+        )
+    })
+    .await
+    .map_err(|_| CommandError::io("external edit synchronization failed"))?
+}
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DocumentExportInput {
     pub note_id: NoteId,
     pub destination: String,
     pub bytes: Vec<u8>,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteTextExportInput {
+    pub note_id: NoteId,
+    pub destination: String,
+    pub text: String,
+    pub format: managed_files::NoteTextExportFormat,
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn save_note_text_export(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    input: NoteTextExportInput,
+) -> Result<(), CommandError> {
+    main_window(&window)?;
+    if !window
+        .fs_scope()
+        .is_allowed(std::path::Path::new(&input.destination))
+    {
+        return Err(CommandError::validation(
+            "export destination must be selected by the user",
+        ));
+    }
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        managed_files::save_note_text_export(
+            &paths,
+            input.note_id,
+            std::path::Path::new(&input.destination),
+            &input.text,
+            input.format,
+        )
+    })
+    .await
+    .map_err(|_| CommandError::io("text export task did not complete"))?
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn export_note_markdown(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    note_id: NoteId,
+    destination: String,
+    markdown: String,
+    export_name: Option<String>,
+) -> Result<crate::storage::export::ExportReport, CommandError> {
+    main_window(&window)?;
+    if !window
+        .fs_scope()
+        .is_allowed(std::path::Path::new(&destination))
+    {
+        return Err(CommandError::validation(
+            "export directory must be selected by the user",
+        ));
+    }
+    let paths = state.paths_for(StorageConsumer::Export)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::storage::export::export_markdown_note_named(
+            &paths,
+            std::path::Path::new(&destination),
+            env!("CARGO_PKG_VERSION"),
+            note_id,
+            &markdown,
+            export_name.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| CommandError::io("Markdown export task did not complete"))?
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_pdf_export(
@@ -180,4 +267,18 @@ pub fn save_document_export(
         std::path::Path::new(&input.destination),
         &input.bytes,
     )
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn read_office_preview_parts(
+    window: tauri::WebviewWindow,
+    state: State<'_, StorageCommandState>,
+    note_id: NoteId,
+) -> Result<Vec<crate::storage::office_preview::OfficeXmlPart>, CommandError> {
+    main_window(&window)?;
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::storage::office_preview::read_parts(&paths, note_id)
+    })
+    .await
+    .map_err(|_| CommandError::io("Office preview did not complete"))?
 }

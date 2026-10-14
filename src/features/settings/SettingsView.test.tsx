@@ -8,6 +8,19 @@ import { DEFAULT_APP_SETTINGS } from './theme'
 import type { UpdateController } from './UpdateSettings'
 
 afterEach(cleanup)
+it('shows a persistent notice when the default library migration is pending', async () => {
+  render(<SettingsView settings={settingsPort({ getStorageInfo: async () => ({ root: 'old library', noteBytes: 0, assetBytes: 0, trashBytes: 0, defaultMigrationPending: true }) })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+  await userEvent.click(screen.getByRole('tab', { name: '存储' }))
+  expect(await screen.findByRole('status')).toHaveTextContent('默认资料库迁移尚未完成')
+  expect(screen.getByText(/当前位置：old library/)).toBeVisible()
+})
+it('uses standard font names and includes common body and code families', () => {
+  render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
+  expect(screen.getByRole('option', { name: '楷体（默认）' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: '微软雅黑' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'Times New Roman' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'JetBrains Mono' })).toBeInTheDocument()
+})
 
 it('saves the selected image quality from Storage settings', async () => {
   const update = vi.fn().mockImplementation(async (patch: Partial<AppSettings>) => ({ ...DEFAULT_APP_SETTINGS, ...patch }))
@@ -107,10 +120,10 @@ describe('SettingsView', () => {
     expect(screen.getByRole('dialog', { name: '设置' })).toHaveTextContent('微屿')
     expect(screen.queryByText('Simple Notes')).not.toBeInTheDocument()
     expect(screen.getByLabelText('主题')).toHaveValue('forest')
-    expect(screen.getByRole('option', { name: '夜海深色' })).toHaveValue('night')
+    expect(screen.getByRole('option', { name: '夜礁黑' })).toHaveValue('night')
     expect(screen.getByLabelText('正文字体')).toHaveRole('combobox')
     expect(screen.getByLabelText('代码字体')).toHaveRole('combobox')
-    expect(screen.getByRole('option', { name: '苹方' })).toHaveValue('PingFang SC, PingFang TC, sans-serif')
+    expect(screen.getByRole('option', { name: '苹方-简' })).toHaveValue('PingFang SC, PingFang TC, sans-serif')
     expect(screen.getByRole('option', { name: '等线' })).toHaveValue('DengXian, sans-serif')
     expect(screen.getByRole('option', { name: 'Cascadia Mono' })).toHaveValue('Cascadia Mono')
     expect(screen.getByRole('option', { name: 'Menlo' })).toHaveValue('Menlo')
@@ -434,7 +447,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-it('toggles only the checkbox and lists the search shortcut', async () => {
+it('toggles only the switch and lists the search shortcut', async () => {
  const settings=settingsPort(); const user=userEvent.setup()
  render(<SettingsView settings={settings} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async()=>()=>undefined}/>)
  expect(screen.queryByText('只调整应用界面，不影响笔记正文')).not.toBeInTheDocument()
@@ -442,7 +455,7 @@ it('toggles only the checkbox and lists the search shortcut', async () => {
  await user.click(screen.getByRole('tab',{name:'系统'}))
  await user.click(screen.getByText('开机启动'))
  expect(settings.update).not.toHaveBeenCalled()
- await user.click(screen.getByRole('checkbox',{name:'开机启动'}))
+ await user.click(screen.getByRole('switch',{name:'开机启动'}))
  expect(settings.update).toHaveBeenCalledWith({launchAtStartup:true})
  await user.click(screen.getByRole('tab',{name:'按键'}))
  expect(screen.getByRole('textbox',{name:'搜索快捷键'})).toHaveValue('Ctrl+F')
@@ -460,3 +473,11 @@ it('chooses a storage directory and preserves the previous choice on cancellatio
  await user.click(screen.getByRole('button',{name:'选择数据目录'}))
  expect(field).toHaveValue('D:\\Notes')
 })
+
+ it('uses adaptive selectors, descriptions and accessible switches',()=>{
+ render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async()=>()=>undefined}/>)
+ expect(screen.getByRole('combobox',{name:'主题'}).parentElement).toHaveClass('settings-view__select')
+ expect(screen.getByRole('switch',{name:'每日歌词'})).toBeChecked()
+ expect(screen.getByText('ms').parentElement).toHaveClass('settings-view__number-unit')
+ expect(screen.getByLabelText('主题')).toHaveAccessibleDescription('跟随系统使用 Windows 或 macOS 的浅色、深色外观。')
+ })

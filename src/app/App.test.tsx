@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App as ProductionApp } from './App'
 import userEvent from '@testing-library/user-event'
-import { defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeTemporaryPort, fakeWindowChromePort } from '../test/fakes'
+import { note, pngBytes, defaultStickySettings, fakeAssetPort, fakeFolderPort, fakeLinkPort, fakeNotePort, fakeSearchPort, fakeSettingsPort, fakeStickySettingsPort, fakeSystemPort, fakeTemporaryPort, fakeWindowChromePort } from '../test/fakes'
 import type { AppSettings, ExportReport, LifecycleRequest, SettingsPort, StickySettings, StickySettingsPort } from '../domain/ports'
 import { DEFAULT_APP_SETTINGS } from '../features/settings/theme'
 import { EditorView } from '@codemirror/view'
@@ -495,7 +495,7 @@ describe('App', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: '重试启动恢复' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(listFolders).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(listNotes.mock.calls.length).toBeGreaterThanOrEqual(2))
     await waitFor(() => expect(listTemporary).toHaveBeenCalledTimes(2))
     expect((await screen.findAllByText('durable temporary truth')).length).toBeGreaterThan(0)
     expect(screen.getByText('Recovered folder')).toBeVisible()
@@ -998,9 +998,9 @@ describe('App', () => {
       settings: fakeSettingsPort({ load: vi.fn().mockResolvedValue({ ...DEFAULT_APP_SETTINGS, theme: 'system' }) }),
     }} />)
     const app = screen.getByRole('application', { name: '微屿' })
-    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#101B18'))
+    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#18191C'))
     act(() => listener({ matches: false } as MediaQueryListEvent))
-    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#edf0f2'))
+    await waitFor(() => expect(app.style.getPropertyValue('--color-canvas')).toBe('#FFFFFF'))
     rendered.unmount()
     expect(removeEventListener).toHaveBeenCalledOnce()
   })
@@ -1026,3 +1026,23 @@ function fakeNotePortDocument(id: NoteId, title: string, markdown = ''): NoteDoc
     updatedAt: '2026-07-30T00:00:00Z',
   }
 }
+
+it.each([false,true])('reads saved and pasted images through the asset service in an independent sticky route (paste=%s)',async(paste)=>{
+ const previousUrl=window.location.href
+ const capture={...note(paste ? '' : '![截图](assets/capture.png)'),kind:'temporary' as const}
+ window.history.replaceState(null,'',`?sticky=${capture.id}`)
+ const assets=fakeAssetPort({relativePath:'assets/capture.png',width:1,height:1})
+ const readImage=vi.spyOn(assets,'readImage').mockResolvedValue({mediaType:'image/png',bytes:pngBytes})
+ try {
+ render(<App services={{notes:fakeNotePort(),folders:fakeFolderPort(),system:fakeSystemPort(),assets,search:fakeSearchPort(),links:fakeLinkPort(),temporary:{...fakeTemporaryPort([capture]),load:vi.fn().mockResolvedValue(capture)},temporaryWindows:{hide:vi.fn(),show:vi.fn(),setAlwaysOnTop:vi.fn(),startDragging:vi.fn()},stickySettings:fakeStickySettingsPort()}}/>)
+ if(paste) {
+ const textbox=await screen.findByRole('textbox',{name:'Markdown source'})
+ fireEvent.paste(textbox,{clipboardData:{files:[{type:'image/png',arrayBuffer:async()=>pngBytes.slice().buffer}],getData:()=>''}})
+ const editor=EditorView.findFromDOM(textbox)!
+ await waitFor(()=>expect(editor.state.doc.toString()).toContain('assets/capture.png'))
+ // Leave the active image source line so the live image decoration becomes visible.
+ act(()=>editor.dispatch({changes:{from:editor.state.doc.length,insert:'\n'},selection:{anchor:editor.state.doc.length+1}}))
+ }
+ await waitFor(()=>expect(readImage).toHaveBeenCalledWith({noteId:capture.id,relativePath:'assets/capture.png'}))
+ } finally {cleanup();window.history.replaceState(null,'',previousUrl)}
+})

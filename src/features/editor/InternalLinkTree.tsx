@@ -56,7 +56,7 @@ export function InternalLinkTree({ folders, targets, selectedId, onSelect }: Int
 
   const rendered = renderLevel(null, 1, childrenByParent, targetsByFolder, new Set(), collapsedFolders, selectedId, onSelect, toggleFolder)
   return (
-    <div className="internal-link-tree" role="tree" aria-label="内部链接目标">
+    <div className="internal-link-tree" role="tree" aria-label="可引用笔记">
       {rendered}
     </div>
   )
@@ -94,7 +94,7 @@ function renderLevel(
       >
         {hasChildren && <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} />}
         {!hasChildren && <span className="internal-link-tree__folder-spacer" aria-hidden="true" />}
-        <Icon name="folder" size={14} />
+        <Icon name="folder" size={20} />
         <span>{folder.name}</span>
       </button>,
     )
@@ -113,7 +113,7 @@ function renderLevel(
         style={{ paddingLeft: `${6 + (level - 1) * 14}px` }}
         onClick={() => onSelect(note.id)}
       >
-        <Icon name="note" size={14} />
+        <Icon name="note" size={20} />
         <span>{note.title}</span>
       </button>,
     )

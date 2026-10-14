@@ -234,6 +234,35 @@ impl NoteRepository {
         Ok(document)
     }
 
+    pub(crate) fn replace_managed_payload_locked(
+        &self,
+        id: NoteId,
+        expected_hash: &str,
+        file: crate::domain::ManagedFile,
+        guard: &crate::platform::IndexMutationLock,
+    ) -> Result<NoteDocument, CommandError> {
+        let mut note = self.load_locked(id, guard)?;
+        let Some(crate::domain::NoteContent::File { file: current }) = note.content.as_ref() else {
+            return Err(CommandError::conflict("entry is not a file"));
+        };
+        if current.sha256 != expected_hash || current.original_name != file.original_name {
+            return Err(CommandError::conflict(
+                "managed file changed; editing copy retained",
+            ));
+        }
+        crate::storage::entry::validate_file(&file)?;
+        note.content = Some(crate::domain::NoteContent::File { file });
+        note.revision = note
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| CommandError::validation("revision overflow"))?;
+        note.updated_at = chrono::Utc::now().to_rfc3339();
+        let database = self.database()?;
+        self.write_document(&note)?;
+        self.persist_after_content(&database, &note)?;
+        Ok(note)
+    }
+
     pub fn list(&self) -> Result<Vec<NoteSummary>, CommandError> {
         let guard = crate::platform::IndexMutationLock::acquire(self.paths.root())?;
         let database = self.database()?;
@@ -278,37 +307,99 @@ impl NoteRepository {
         let database = self.database()?;
         self.validate_folder_exists(&database, folder_id)?;
         let folder = folder_id.map(folder_id_blob);
-        let mut statement = database
-            .connection()
-            .prepare(
-                "SELECT id FROM notes WHERE folder_id IS ?1 AND kind = 'formal' AND deleted_at IS NULL \
-                 ORDER BY sort_order, updated_at DESC, id",
-            )
-            .map_err(database_error("could not prepare folder note list"))?;
-        let ids = statement
-            .query_map(params![folder], |row| row.get::<_, Vec<u8>>(0))
+        // The list is an index projection; opening an entry remains the durable-content validation boundary.
+        let mut statement=database.connection().prepare(
+            "SELECT n.id,n.title,n.created_at,n.updated_at,n.revision,n.content_type, \
+             coalesce(substr(s.plain_text,1,160),''), \
+             (SELECT json_group_array(t.display_name) FROM note_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.note_id=n.id) \
+             FROM notes n LEFT JOIN search_documents s ON s.note_id=n.id \
+             WHERE n.folder_id IS ?1 AND n.kind='formal' AND n.deleted_at IS NULL \
+             ORDER BY n.sort_order,n.updated_at DESC,n.id"
+        ).map_err(database_error("could not prepare folder note list"))?;
+        let rows = statement
+            .query_map(params![folder], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })
             .map_err(database_error("could not query folder note list"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(database_error("could not read folder note list"))?;
-        let mut summaries = Vec::with_capacity(ids.len());
-        for bytes in ids {
+        let mut summaries = Vec::with_capacity(rows.len());
+        for (bytes, title, created_at, updated_at, revision, format, excerpt, tags) in rows {
             let id = note_id_from_blob(&bytes)?;
-            let document = self.load_locked(id, &guard)?;
-            let excerpt = super::rich_document::plain_text(&document)
-                .chars()
-                .take(160)
-                .collect();
+            let revision = u64::try_from(revision)
+                .map_err(|_| CommandError::database("indexed revision is invalid"))?;
+            let content = match format.as_str() {
+                "markdown" => None,
+                "text" => Some(crate::domain::NoteContent::Text {
+                    text: String::new(),
+                }),
+                "document" => Some(crate::domain::NoteContent::Document {
+                    document: crate::domain::RichDocument {
+                        schema_version: 1,
+                        root: crate::domain::RichNode {
+                            node_type: "doc".into(),
+                            attrs: None,
+                            content: None,
+                            text: None,
+                            marks: None,
+                        },
+                    },
+                }),
+                "file" => {
+                    let directory = crate::platform::SafeDirectory::open(
+                        self.paths.root(),
+                        &["notes", &id.to_string()],
+                        false,
+                    )?;
+                    let note = if directory
+                        .regular_file_exists(".entry.json.replace-recovery.json")?
+                    {
+                        self.load_locked(id, &guard)?
+                    } else {
+                        let note =
+                            super::entry::parse(&directory.read("entry.json", 1024 * 1024)?, None)?;
+                        validate_document(&note)?;
+                        if note.id != id || note.kind != NoteKind::Formal {
+                            return Err(CommandError::validation(
+                                "entry identity differs from its indexed location",
+                            ));
+                        }
+                        note
+                    };
+                    if !matches!(note.content, Some(crate::domain::NoteContent::File { .. })) {
+                        return Err(CommandError::validation(
+                            "indexed file entry has a different content type",
+                        ));
+                    }
+                    note.content
+                }
+                _ => {
+                    return Err(CommandError::validation(
+                        "indexed entry type is unsupported",
+                    ))
+                }
+            };
             summaries.push(NoteSummary {
-                id: document.id,
-                kind: document.kind,
-                title: document.title,
-                folder_id: document.folder_id,
-                tags: document.tags,
-                revision: document.revision,
-                created_at: document.created_at,
-                updated_at: document.updated_at,
+                id,
+                kind: NoteKind::Formal,
+                title,
+                folder_id,
+                tags: serde_json::from_str(&tags)
+                    .map_err(|_| CommandError::database("indexed tags are invalid"))?,
+                revision,
+                created_at,
+                updated_at,
                 excerpt,
-                content: document.content,
+                content,
             });
         }
         Ok(summaries)

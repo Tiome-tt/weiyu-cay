@@ -41,7 +41,8 @@ describe('Icon', () => {
 
     const icon = screen.getByTestId('icon-settings')
     expect(icon.querySelector('circle')).toBeInTheDocument()
-    expect(icon.querySelector('path')).toHaveAttribute('d', 'M19.43 12.98a7.7 7.7 0 0 0 .05-.98 7.7 7.7 0 0 0-.05-.98l2.11-1.65-2-3.46-2.49 1a7.6 7.6 0 0 0-1.69-.98L15 3.5h-4l-.38 2.43a7.6 7.6 0 0 0-1.69.98l-2.49-1-2 3.46 2.11 1.65a7.7 7.7 0 0 0-.05.98 7.7 7.7 0 0 0 .05.98l-2.11 1.65 2 3.46 2.49-1c.52.4 1.09.73 1.69.98L11 20.5h4l.38-2.43a7.6 7.6 0 0 0 1.69-.98l2.49 1 2-3.46-2.13-1.65Z')
+    expect(icon.querySelector('circle')).toHaveAttribute('cx', '12')
+    expect(icon.querySelector('circle')).toHaveAttribute('cy', '12')
   })
 
   it.each(REQUIRED_ICON_NAMES)('renders the approved %s glyph with the shared stroke treatment', (name) => {

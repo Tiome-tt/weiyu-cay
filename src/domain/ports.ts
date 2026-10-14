@@ -303,7 +303,7 @@ export interface TrashPort {
 }
 
 export interface AppSettings {
-  theme: 'forest' | 'sand' | 'night' | 'system'
+  theme: 'forest' | 'sand' | 'night' | 'system' | 'ocean' | 'light'
   stickyColorMode: 'follow-theme'
   bodyFont: string
   codeFont: string
@@ -342,6 +342,7 @@ export interface StickySettingsPort {
 }
 
 export interface StorageInfo {
+  defaultMigrationPending?: boolean
   root: string
   noteBytes: number
   assetBytes: number
@@ -409,15 +410,21 @@ export interface FileImportResult {
   imported: NoteDocument[]
   failed: Array<{ name: string; message: string }>
 }
+export interface ExportSelection { filename: string; directory?: string }
 export interface FilePort {
-  saveDocumentExport?(noteId: NoteId, bytes: Uint8Array, title: string): Promise<boolean>
-  savePdfExport?(noteId: NoteId, bytes: Uint8Array, title: string): Promise<boolean>
+  chooseExportDirectory?(): Promise<string | null>
+  readOfficeParts?(noteId: NoteId): Promise<Array<{ name: string; text: string }>>
+  saveTextExport?(noteId: NoteId, text: string, title: string, format: 'text' | 'html', selection?: ExportSelection): Promise<boolean>
+  exportMarkdownNote?(noteId: NoteId, markdown: string, selection?: ExportSelection): Promise<boolean>
+  saveDocumentExport?(noteId: NoteId, bytes: Uint8Array, title: string, selection?: ExportSelection): Promise<boolean>
+  savePdfExport?(noteId: NoteId, bytes: Uint8Array, title: string, selection?: ExportSelection): Promise<boolean>
   onDroppedFiles?(handler: (paths: string[], position?: { x: number; y: number }) => void): Promise<() => void>
   chooseFiles(): Promise<string[]>
   importFiles(input: { paths: string[]; folderId: FolderId | null }): Promise<FileImportResult>
   readFile(noteId: NoteId): Promise<{ mediaType: string; bytes: Uint8Array }>
   /** Reads only the payload through Tauri's binary IPC response. */
   readFileBytes?(noteId: NoteId): Promise<Uint8Array>
-  saveFileAs(noteId: NoteId): Promise<boolean>
+  saveFileAs(noteId: NoteId, selection?: ExportSelection): Promise<boolean>
+  syncExternalFile?(noteId: NoteId, force?: boolean): Promise<NoteDocument | null>
   openFile(noteId: NoteId): Promise<void>
 }

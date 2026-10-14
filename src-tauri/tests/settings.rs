@@ -29,7 +29,7 @@ fn canonical_tempdir_path(directory: &tempfile::TempDir) -> PathBuf {
 
 #[test]
 fn night_theme_round_trips_without_changing_existing_defaults() {
-    for existing in ["forest", "sand", "system"] {
+    for existing in ["forest", "sand", "system", "ocean", "light"] {
         let theme: AppTheme = serde_json::from_str(&format!("\"{existing}\"")).unwrap();
         assert_eq!(theme.as_str(), existing);
     }

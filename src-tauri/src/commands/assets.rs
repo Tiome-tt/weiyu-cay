@@ -54,31 +54,33 @@ pub fn save_image(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn read_image_asset(
+pub async fn read_image_asset(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,
     input: ReadImageAssetInput,
 ) -> Result<ReadImageAsset, CommandError> {
     authorize_asset_caller(window.label(), input.note_id)?;
-    read_image_asset_from(
-        state.paths_for(StorageConsumer::Assets)?,
-        input.note_id,
-        &input.relative_path,
-    )
+    let paths = state.paths_for(StorageConsumer::Assets)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_image_asset_from(&paths, input.note_id, &input.relative_path)
+    })
+    .await
+    .map_err(|_| CommandError::io("image read did not complete"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn read_image_assets(
+pub async fn read_image_assets(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,
     input: ReadImageAssetsInput,
 ) -> Result<Vec<ReadImageAssetBatchItem>, CommandError> {
     authorize_asset_caller(window.label(), input.note_id)?;
-    read_image_assets_from(
-        state.paths_for(StorageConsumer::Assets)?,
-        input.note_id,
-        &input.relative_paths,
-    )
+    let paths = state.paths_for(StorageConsumer::Assets)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_image_assets_from(&paths, input.note_id, &input.relative_paths)
+    })
+    .await
+    .map_err(|_| CommandError::io("image batch read did not complete"))?
 }
 
 pub fn read_image_asset_from(
@@ -119,6 +121,8 @@ pub fn read_image_assets_from(
     };
     let note_id = note_id.to_string();
     let directory = SafeDirectory::open(paths.root(), &[collection, &note_id, "assets"], false)?;
+    // Pin the validated asset directory, then release the metadata lock before image I/O and decoding.
+    drop(guard);
     labels
         .into_iter()
         .zip(relative_paths.iter())

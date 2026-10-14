@@ -9,6 +9,19 @@ afterEach(() => {
 })
 
 describe('image asset loader', () => {
+  it('bounds cached image memory while keeping recently used images', async () => {
+    const bytes = new Uint8Array(12 * 1024 * 1024)
+    const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes }))
+    const reader = { readImage }
+    await readImageAsset(reader, noteId, 'assets/a.png')
+    await readImageAsset(reader, noteId, 'assets/b.png')
+    await readImageAsset(reader, noteId, 'assets/a.png')
+    await readImageAsset(reader, noteId, 'assets/c.png')
+    await readImageAsset(reader, noteId, 'assets/a.png')
+    expect(readImage).toHaveBeenCalledTimes(3)
+    await readImageAsset(reader, noteId, 'assets/b.png')
+    expect(readImage).toHaveBeenCalledTimes(4)
+  })
   it('coalesces same-tick image requests into one batch and preserves each path', async () => {
     const readImages = vi.fn(async ({ relativePaths }: { relativePaths: string[] }) => relativePaths.map((relativePath) => ({
       relativePath,
@@ -129,4 +142,22 @@ it('drains a new image request added while the previous batch is loading',async(
  finish()
  await expect(Promise.all([first,second])).resolves.toHaveLength(2)
  expect(readImages).toHaveBeenCalledTimes(2)
+})
+
+it('uses a bounded parallel queue so a slow image batch does not hold up all later images',async()=>{
+ const active:number[]=[];let running=0,peak=0
+ let release!:()=>void
+ const gate=new Promise<void>(resolve=>{release=resolve})
+ const readImages=vi.fn(async({relativePaths}:{relativePaths:string[]})=>{
+  running++;peak=Math.max(peak,running);active.push(relativePaths.length)
+  if(relativePaths.includes('assets/0.png'))await gate
+  running--
+  return relativePaths.map(relativePath=>({relativePath,mediaType:'image/png',bytes:new Uint8Array([1])}))
+ })
+ const reader={readImage:vi.fn(),readImages}
+ const requests=Array.from({length:8},(_,index)=>readImageAsset(reader,noteId,`assets/${index}.png`))
+ await requests[7]
+ expect(peak).toBeLessThanOrEqual(3)
+ expect(readImages.mock.calls.length).toBeGreaterThan(1)
+ release();await Promise.all(requests)
 })

@@ -23,7 +23,7 @@
 .ai-summary-widget:not(.ai-summary-widget--open) {
   top: 16px;
   bottom: auto;
-  width: 48px;
+  width: 52px;
 }
 
 .ai-summary-widget__rail,
@@ -36,7 +36,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  width: 48px;
+  width: 52px;
   min-height: 44px;
   gap: 7px;
   padding: 8px 13px;

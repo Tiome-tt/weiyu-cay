@@ -131,16 +131,98 @@ fn export_library_with_operations(
     create_staging: &mut StagingCreator<'_>,
     read_entries: &mut EntryReader<'_>,
 ) -> Result<ExportReport, CommandError> {
+    export_selected_with_operations(
+        paths,
+        destination,
+        app_version,
+        write_file,
+        create_staging,
+        read_entries,
+        None,
+    )
+}
+
+struct SelectedMarkdown<'a> {
+    id: NoteId,
+    source: &'a str,
+    filename: Option<&'a str>,
+}
+
+pub fn export_markdown_note(
+    paths: &StoragePaths,
+    destination: &Path,
+    app_version: &str,
+    id: NoteId,
+    markdown: &str,
+) -> Result<ExportReport, CommandError> {
+    export_markdown_note_named(paths, destination, app_version, id, markdown, None)
+}
+
+pub fn export_markdown_note_named(
+    paths: &StoragePaths,
+    destination: &Path,
+    app_version: &str,
+    id: NoteId,
+    markdown: &str,
+    filename: Option<&str>,
+) -> Result<ExportReport, CommandError> {
+    if filename.is_some_and(|name| name.is_empty() || sanitize_component(name) != name) {
+        return Err(CommandError::validation(
+            "export filename must be a safe single component",
+        ));
+    }
+    if markdown.len() > 64 * 1024 * 1024 {
+        return Err(CommandError::validation(
+            "Markdown export exceeds the content limit",
+        ));
+    }
+    let document = super::repository::NoteRepository::new(paths.clone()).load(id)?;
+    if matches!(
+        document.content,
+        Some(crate::domain::NoteContent::File { .. })
+    ) {
+        return Err(CommandError::validation(
+            "managed files require original file export",
+        ));
+    }
+    export_selected_with_operations(
+        paths,
+        destination,
+        app_version,
+        &mut write_owned_file,
+        &mut |parent, name| parent.create_child_no_replace_stateful(name),
+        &mut SafeDirectory::entry_names,
+        Some(&SelectedMarkdown {
+            id,
+            source: markdown,
+            filename,
+        }),
+    )
+}
+
+fn export_selected_with_operations(
+    paths: &StoragePaths,
+    destination: &Path,
+    app_version: &str,
+    write_file: &mut ExportFileWriter<'_>,
+    create_staging: &mut StagingCreator<'_>,
+    read_entries: &mut EntryReader<'_>,
+    selected: Option<&SelectedMarkdown<'_>>,
+) -> Result<ExportReport, CommandError> {
     let destination = validate_destination(paths.root(), destination)?;
     let destination_parent = SafeDirectory::open(&destination, &[], false)?;
     let source_root = SafeDirectory::open(paths.root(), &[], false)?;
     let folder_paths = load_folder_paths(&source_root)?;
     let notes_root = source_root.open_child("notes", false)?;
-    let mut note_ids = notes_root
-        .entry_names()?
-        .into_iter()
-        .filter_map(|name| NoteId::parse_str(&name).ok())
-        .collect::<Vec<_>>();
+    let mut note_ids = if let Some(selected) = selected {
+        vec![selected.id]
+    } else {
+        notes_root
+            .entry_names()?
+            .into_iter()
+            .filter_map(|name| NoteId::parse_str(&name).ok())
+            .collect::<Vec<_>>()
+    };
     note_ids.sort_by_key(ToString::to_string);
 
     let staging_name = format!("{STAGING_PREFIX}{}.partial", Uuid::now_v7());
@@ -180,6 +262,9 @@ fn export_library_with_operations(
     logical_folders
         .sort_by(|left, right| left.len().cmp(&right.len()).then_with(|| left.cmp(right)));
     for folder in logical_folders {
+        if selected.is_some() {
+            break;
+        }
         if open_or_create(&output, &folder).is_err() {
             return Ok(incomplete_report(
                 report,
@@ -190,7 +275,14 @@ fn export_library_with_operations(
     }
 
     for note_id in note_ids {
-        let result = prepare_note(&notes_root, note_id, &folder_paths, &mut allocated_notes);
+        let result = prepare_projected_note(
+            &notes_root,
+            note_id,
+            &folder_paths,
+            &mut allocated_notes,
+            selected.map(|selected| selected.source),
+            selected.and_then(|selected| selected.filename),
+        );
         match result {
             Ok(prepared) => {
                 if write_prepared_note(&output, &prepared, write_file).is_err() {
@@ -345,11 +437,13 @@ fn published_or_staging_path(
     }
 }
 
-fn prepare_note(
+fn prepare_projected_note(
     notes_root: &SafeDirectory,
     note_id: NoteId,
     folder_paths: &HashMap<FolderId, FolderPaths>,
     allocated_notes: &mut HashMap<Vec<String>, HashSet<String>>,
+    markdown: Option<&str>,
+    filename: Option<&str>,
 ) -> Result<PreparedNote, CommandError> {
     let note_id_string = note_id.to_string();
     let source_note = notes_root.open_child(&note_id_string, false)?;
@@ -358,6 +452,10 @@ fn prepare_note(
         return Err(CommandError::validation(
             "export source is not a matching formal note",
         ));
+    }
+    if let Some(markdown) = markdown {
+        document.content = None;
+        document.markdown = markdown.to_owned();
     }
     let folder = match document.folder_id {
         Some(folder_id) => folder_paths.get(&folder_id).ok_or_else(|| {
@@ -368,7 +466,7 @@ fn prepare_note(
             portable: Vec::new(),
         },
     };
-    let stem = sanitize_component(&document.title);
+    let stem = sanitize_component(filename.unwrap_or(&document.title));
     let used = allocated_notes.entry(folder.portable.clone()).or_default();
     let portable_stem = allocate_unique_with_limits(
         &stem,
@@ -1249,6 +1347,104 @@ mod tests {
         domain::{NoteDocument, NoteKind},
         storage::repository::NoteRepository,
     };
+    #[test]
+    fn selected_markdown_export_preserves_assets_and_excludes_other_notes() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
+        let destination = sandbox.path().join("exports");
+        fs::create_dir(&destination).unwrap();
+        let mut selected = None;
+        for title in ["中文", "Other"] {
+            let document = NoteDocument {
+                id: NoteId::now_v7(),
+                kind: NoteKind::Formal,
+                title: title.into(),
+                folder_id: None,
+                tags: vec![],
+                content: None,
+                markdown: "original".into(),
+                revision: 0,
+                created_at: "2026-10-12T00:00:00Z".into(),
+                updated_at: "2026-10-12T00:00:00Z".into(),
+            };
+            let saved = NoteRepository::new(paths.clone()).create(document).unwrap();
+            if title == "中文" {
+                selected = Some(saved);
+            }
+        }
+        let selected = selected.unwrap();
+        let assets = paths.assets_dir(selected.id, NoteKind::Formal).unwrap();
+        fs::create_dir(&assets).unwrap();
+        fs::write(assets.join("a.png"), b"image").unwrap();
+        let report = export_markdown_note(
+            &paths,
+            &destination,
+            "1.1.4",
+            selected.id,
+            "![图](assets/a.png)",
+        )
+        .unwrap();
+        assert!(report.completed);
+        assert_eq!(report.notes_exported, 1);
+        let output = PathBuf::from(report.output_root.unwrap());
+        let markdown = fs::read_to_string(output.join("中文.md")).unwrap();
+        assert!(markdown.contains("中文-assets/a.png"));
+        assert_eq!(
+            fs::read(output.join("中文-assets/a.png")).unwrap(),
+            b"image"
+        );
+        assert!(!output.join("Other.md").exists());
+        assert_eq!(
+            NoteRepository::new(paths).load(selected.id).unwrap(),
+            selected
+        );
+    }
+
+    #[test]
+    fn selected_markdown_export_accepts_a_copy_name_and_rejects_traversal() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let paths = StoragePaths::open(sandbox.path().join("data")).unwrap();
+        let destination = sandbox.path().join("exports");
+        fs::create_dir(&destination).unwrap();
+        let document = NoteDocument {
+            id: NoteId::now_v7(),
+            kind: NoteKind::Formal,
+            title: "Original".into(),
+            folder_id: None,
+            tags: vec![],
+            content: None,
+            markdown: "body".into(),
+            revision: 0,
+            created_at: "2026-10-13T00:00:00Z".into(),
+            updated_at: "2026-10-13T00:00:00Z".into(),
+        };
+        let note = NoteRepository::new(paths.clone()).create(document).unwrap();
+        let report = export_markdown_note_named(
+            &paths,
+            &destination,
+            "1.1.4",
+            note.id,
+            "body",
+            Some("Copy"),
+        )
+        .unwrap();
+        assert!(PathBuf::from(report.output_root.unwrap())
+            .join("Copy.md")
+            .exists());
+        assert_eq!(
+            NoteRepository::new(paths.clone()).load(note.id).unwrap(),
+            note
+        );
+        assert!(export_markdown_note_named(
+            &paths,
+            &destination,
+            "1.1.4",
+            note.id,
+            "body",
+            Some("../escape")
+        )
+        .is_err());
+    }
 
     #[test]
     fn manifest_write_failure_returns_an_incomplete_report_without_publishing_or_temp_files() {

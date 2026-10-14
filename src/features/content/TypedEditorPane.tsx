@@ -1,6 +1,9 @@
+import { selectedExportPort } from '../../domain/exportSelection'
+import type { ExportSelection } from '../../domain/ports'
 import { ErrorNotification } from '../../shared/notifications'
+import type { NoteExportKind } from '../../domain/noteExport'
 import {documentBlockCount} from '../document/documentBlockCount'
-import {forwardRef,lazy,Suspense,useCallback,useEffect,useImperativeHandle,useRef,useState} from 'react'
+import {forwardRef,lazy,Suspense,useCallback,useEffect,useImperativeHandle,useMemo,useRef,useState} from 'react'
 import {flushSync} from 'react-dom'
 import {contentText,contentOutlineMarkdown,contentSummaryMarkdown,type NoteContent} from '../../domain/content'
 import type {EditorPaneHandle,EditorPaneProps} from '../editor/EditorPane'
@@ -19,7 +22,9 @@ const RichDocumentEditor=lazy(()=>import('../document/RichDocumentEditor').then(
 export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(function TypedEditorPane(props,ref){
  const {document,notes,files,assets,assetReader,links,folders,onNavigateNote,search,onDocumentAdopt,onConvertFileToDocument,onSaveStateChange,onDraftChange,autosaveDelayMs,external,ai,deepseekModel,onOpenSettings}=props
  const save=useContentAutosave(document,notes,autosaveDelayMs)
- const aiMarkdown=save.content.type==='text' ? save.content.text : save.content.type==='document' ? contentSummaryMarkdown({ content: save.content }) : document.title
+ const aiMarkdown=useMemo(()=>save.content.type==='text' ? save.content.text : save.content.type==='document' ? contentSummaryMarkdown({ content: save.content }) : document.title,[save.content,document.title])
+ const statusText=useMemo(()=>save.content.type==='file'?null:contentText({content:save.content}),[save.content])
+ const initialBlockCount=useMemo(()=>save.content.type==='document'?documentBlockCount(save.content.document):undefined,[save.content])
  const rich=useRef<RichDocumentEditorHandle>(null)
  const text=useRef<PlainTextEditorHandle>(null)
  const [selectedText,setSelectedText]=useState('')
@@ -28,10 +33,11 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  const [exporting,setExporting]=useState(false)
  const exportingRef=useRef(false)
  const [error,setError]=useState<string|null>(null)
- const exportRef=useRef<(kind:'word'|'pdf')=>Promise<boolean>>(()=>Promise.resolve(false))
+ const exportRef=useRef<(kind:NoteExportKind,selection?:ExportSelection)=>Promise<boolean>>(()=>Promise.resolve(false))
  const [title,setTitle]=useState(document.title)
  const waitForImages=assetReader?()=>waitForImageAssets(assetReader,document.id):undefined
  const body=useRef<HTMLDivElement>(null)
+ const [fileActions,setFileActions]=useState<HTMLDivElement|null>(null)
  const commit=useCallback(async()=>{await rich.current?.commitComposition();await text.current?.commitComposition()},[])
  const flush=useCallback(async()=>{try{await commit();return await save.flush()}catch{setError('请先完成当前输入，再重试保存。');return false}},[commit,save.flush]); const reloadLatest=useCallback(async()=>{const latest=await save.reloadLatest();if(latest){onDocumentAdopt?.(latest)}else setError('无法载入最新版本，请重试。')},[onDocumentAdopt,save.reloadLatest])
  useImperativeHandle(ref,()=>({
@@ -39,7 +45,7 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
    beginEditBarrier:async()=>{await commit();flushSync(()=>setBlocked(true))},
    endEditBarrier:()=>setBlocked(false),
    navigateToHeading:(_line,index)=>rich.current?.navigateToHeading(index),
-   exportDocument:(kind)=>exportRef.current(kind),
+   exportDocument:(kind,selection)=>exportRef.current(kind,selection),
  }),[commit,flush])
  useEffect(()=>onSaveStateChange?.(save.state.status),[save.state.status,onSaveStateChange])
  useEffect(()=>{
@@ -54,29 +60,36 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  const update=(content:NoteContent)=>{save.update(content);onDraftChange?.(contentOutlineMarkdown({content}))}
  const action=async(fn:()=>Promise<boolean|void>):Promise<boolean>=>{setError(null);try{return (await fn())!==false}catch{setError('操作未完成，请检查保存状态后重试。');return false}}
  const readOnly=blocked||exporting
- const exportDocument=async(kind:'word'|'pdf'):Promise<boolean>=>{
+ const exportDocument=async(kind:NoteExportKind,selection?:ExportSelection):Promise<boolean>=>{
   if(readOnly)return false
+  const targetFiles=files?selectedExportPort(files,selection):undefined
   exportingRef.current=true
   setExporting(true)
   try {
    return await action(async()=>{
     if(!await flush())throw new Error('Save failed')
+    if(kind==='original')return await targetFiles?.saveFileAs(document.id) ?? false
+   if(save.content.type==='file'){
+    if(!targetFiles)return false
+    const {convertManagedFile}=await import('./fileConversion')
+    return convertManagedFile({...document,content:save.content},kind,targetFiles)
+   }
+    if(kind==='markdown'||kind==='text'||kind==='html'){
+     if(!targetFiles)return false
+     const current=await notes.loadNote(document.id)
+     const {exportPortableNote}=await import('./noteExport')
+     return await exportPortableNote(current,kind,targetFiles,assetReader,kind==='html' ? body.current?.querySelector<HTMLElement>('.tiptap')??undefined : undefined)
+    }
     if(kind==='word'){
      const current=await notes.loadNote(document.id)
      const {buildDocumentDocx}=await import('./documentExport')
      const bytes=await buildDocumentDocx(current,assetReader)
-     return await files?.saveDocumentExport?.(document.id,bytes,current.title) ?? false
-    }
-    if(save.content.type==='file'){
-     const isPdf = save.content.file.mediaType === 'application/pdf' || /\.pdf$/i.test(save.content.file.originalName)
-     if(!isPdf) throw new Error('Only PDF files can be exported as PDF')
-     if(!files?.saveFileAs) throw new Error('PDF export is unavailable')
-     return await files.saveFileAs(document.id)
+     return await targetFiles?.saveDocumentExport?.(document.id,bytes,current.title) ?? false
     }
     if(!body.current) throw new Error('Document preview is not ready')
     const { exportTypedDocumentToPdf } = await import('./pdfExport')
-    if (!files?.savePdfExport) throw new Error('Direct PDF export is unavailable')
-    return await exportTypedDocumentToPdf(document.id, title, body.current.querySelector<HTMLElement>('.tiptap')??body.current, files, assetReader)
+    if (!targetFiles?.savePdfExport) throw new Error('Direct PDF export is unavailable')
+    return await exportTypedDocumentToPdf(document.id, title, body.current.querySelector<HTMLElement>('.tiptap')??body.current, targetFiles, assetReader)
    })
   } finally {
    exportingRef.current=false
@@ -88,16 +101,17 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
   return <div className="typed-editor">
   <div className="typed-editor__header">
    <input className="typed-editor__title" aria-label="笔记标题" value={title} readOnly={readOnly||!props.onRenameNote} onChange={e=>setTitle(e.target.value)} onBlur={()=>{if(title.trim()&&title!==document.title&&props.onRenameNote)void action(async()=>{if(!await flush())throw new Error();await props.onRenameNote!(title.trim())})}}/>
+   {save.content.type==='file'&&<div className="typed-editor__file-actions" ref={setFileActions}/>}
   </div>
   <div className="typed-editor__metadata">{search&&<TagsEditor tags={document.tags} onChange={async tags=>{if(blocked||!await flush())throw new Error('save');await search.updateTags(document.id,tags);onDocumentAdopt?.(await notes.loadNote(document.id))}}/>}</div>
   <ErrorNotification error={error} />
   {save.state.status==='error'&&<><ErrorNotification error={save.state.message} /><div className="typed-editor__recovery"><button type="button" onClick={save.state.retry}>重试保存</button>{save.state.message.includes('其他窗口')&&<button type="button" onClick={()=>void reloadLatest()}>载入最新版本</button>}</div></>}
   <div className="typed-editor__body" ref={body}>
    {save.content.type==='text'&&<PlainTextEditor onSelectionChange={setSelectedText} ref={text} value={save.content.text} editable={!readOnly} onChange={value=>update({type:'text',text:value})}/>}
-   {save.content.type==='file'&&<FileViewer document={{...document,content:save.content}} files={files} onConvertToDocument={onConvertFileToDocument}/>}
+   {save.content.type==='file'&&<FileViewer actionsContainer={fileActions} onDocumentAdopt={onDocumentAdopt} document={{...document,content:save.content}} files={files} onSaveAs={exportDocument} onConvertToDocument={onConvertFileToDocument}/>}
    {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor onSelectionChange={setSelectedText} onBlockCountChange={setLiveBlockCount} ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
   </div>
   <AiSummaryWidget noteId={document.id} title={title} markdown={aiMarkdown} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages}/>
-  <EditorStatusBar blockCount={save.content.type==='document'?liveBlockCount??documentBlockCount(save.content.document):undefined} text={save.content.type==='file'?null:contentText({content:save.content})} selectedText={selectedText} updatedAt={save.updatedAt} state={save.state} related={links&&onNavigateNote?<Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>:undefined}/>
+  <EditorStatusBar blockCount={save.content.type==='document'?liveBlockCount??initialBlockCount:undefined} text={statusText} selectedText={selectedText} updatedAt={save.updatedAt} state={save.state} related={links&&onNavigateNote?<Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>:undefined}/>
  </div>
 })

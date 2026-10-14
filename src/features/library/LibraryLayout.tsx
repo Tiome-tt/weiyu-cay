@@ -5,10 +5,10 @@ import { WorkspaceSearchDialog } from '../search/WorkspaceSearchDialog'
 import { SearchBox } from '../search/SearchBox'
 import { contentOutlineMarkdown, type NewNoteFormat } from '../../domain/content'
 import { emptyRichDocument } from '../../domain/content'
-import { docxToRichDocument, materializeDocumentImages } from '../content/officeConversion'
+import type { NoteExportKind } from '../../domain/noteExport'
 import { forwardRef, startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { EditorMode, FolderId, NoteId } from '../../domain/model'
-import type { AiPort, AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LibraryOutlineCollapsedPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
+import type { ExportSelection, AiPort, AssetPort, FilePort, FolderPort, ImageReadPort, LibraryCollapsedPreference, LibraryColumnPreference, LibraryOutlineCollapsedPreference, LinkPort, LinkRepairReport, SearchPort, StartupGuidePort, SystemPort, TemporaryPort, TemporaryWindowPort, TrashPort } from '../../domain/ports'
 import { SplitPane, type SplitPaneSizes } from '../../shared/SplitPane'
 import { EditorPane, type EditorPaneHandle } from '../editor/EditorPane'
 import type { SaveState } from '../editor/useAutosave'
@@ -85,7 +85,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   const [trashFeedback, setTrashFeedback] = useState<string | null>(null)
   const [recentTrashOperationId, setRecentTrashOperationId] = useState<string | null>(null)
   const [outlineDraft, setOutlineDraft] = useState<{ noteId: NoteId; markdown: string } | null>(null)
-  const [pendingEditorAction, setPendingEditorAction] = useState<{ noteId: NoteId; kind: 'word' | 'pdf' } | null>(null)
+  const [pendingEditorAction, setPendingEditorAction] = useState<{ noteId: NoteId; kind: NoteExportKind; selection?:ExportSelection } | null>(null)
   const [columnPreference, setColumnPreference] = useState<LibraryColumnPreference | null>(null)
   const manualCollapsedRef = useRef<LibraryCollapsedPreference>({ folder: false, noteList: false })
   const [manualCollapsed, setManualCollapsed] = useState<LibraryCollapsedPreference>(manualCollapsedRef.current)
@@ -190,7 +190,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     const pending = pendingEditorAction
     if (pending === null || library.documentState !== 'ready' || library.document?.id !== pending.noteId) return
     setPendingEditorAction(null)
-    void editorRef.current?.exportDocument(pending.kind).then((success) => {
+    void editorRef.current?.exportDocument(pending.kind,pending.selection).then((success) => {
       if (!success && mountedRef.current) setMetadataNotice(pending.kind === 'word' ? '此笔记无法导出为 Word。' : '导出未完成，原笔记已保留。')
     }).catch(() => {
       if (mountedRef.current) setMetadataNotice('导出未完成，原笔记已保留。')
@@ -549,7 +549,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }
   }, [files])
 
-  const requestNoteExport = (note: { id: NoteId; folderId: FolderId | null }, kind: 'word' | 'pdf') => {
+  const requestNoteExport = (note: { id: NoteId; folderId: FolderId | null }, kind: NoteExportKind, selection?:ExportSelection) => {
     const reuseActiveNote = activeView === 'library'
       && library.activeNoteId === note.id
       && activeFolderIdRef.current === note.folderId
@@ -563,7 +563,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         setPendingEditorAction(null)
         return
       }
-      setPendingEditorAction({ noteId: note.id, kind })
+      setPendingEditorAction({ noteId: note.id, kind, selection })
     }).catch(() => setPendingEditorAction(null))
   }
   const convertWordFile = async (source: Awaited<ReturnType<typeof notes.loadNote>>, bytes: Uint8Array) => {
@@ -575,7 +575,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     try {
       const converted = bytes.byteLength === 0
         ? emptyRichDocument()
-        : await docxToRichDocument(bytes)
+        : await (await import('../content/officeConversion')).docxToRichDocument(bytes)
+      const { materializeDocumentImages } = await import('../content/officeConversion')
       const document = await materializeDocumentImages(converted, copy.id, assets)
       await notes.saveNote({
         ...copy,
@@ -637,7 +638,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         setMetadataNotice(`${noteIds.length} 项已移动。`)
       }}
       starredIds={starred.ids}
+      onSetStars={starred.ready ? (notes,enabled)=>void starred.setStars(notes,enabled) : undefined}
       onToggleStar={starred.ready ? (note) => void starred.toggle(note) : undefined}
+      files={files}
       onExport={requestNoteExport}
     />
   }

@@ -20,6 +20,7 @@ export function useLibrary(
   const [notesByFolder, setNotesByFolder] = useState<Record<string, NoteSummary[]>>({})
   const notesByFolderRef = useRef<Record<string, NoteSummary[]>>({})
   const documentCacheRef = useRef(new Map<NoteId, NoteDocument>())
+  const pendingNoteReads = useRef(new Map<NoteId, Promise<NoteDocument>>())
   const [folderNoteErrors, setFolderNoteErrors] = useState<Record<string, boolean>>({})
   const [noteListState, setNoteListState] = useState<LoadState>('loading')
   const [documentState, setDocumentState] = useState<LoadState>('ready')
@@ -135,9 +136,16 @@ export function useLibrary(
         setDocument(cached)
         setDocumentState('ready')
       }
-      void notesPort
-        .loadNote(id)
-        .then((result) => {
+      let pending = pendingNoteReads.current.get(id)
+      if (pending === undefined) {
+        pending = notesPort.loadNote(id)
+        pendingNoteReads.current.set(id, pending)
+        const completed = pending
+        void pending.finally(() => { if (pendingNoteReads.current.get(id) === completed) pendingNoteReads.current.delete(id) }).catch(() => undefined)
+      }
+      void pending.then((loaded) => {
+          const latest = documentCacheRef.current.get(id)
+          const result = latest !== undefined && (latest.revision > loaded.revision || sameDocumentSnapshot(latest, loaded)) ? latest : loaded
           rememberDocument(documentCacheRef.current, result)
           if (!mountedRef.current || noteRequest.current !== request) return
           setDocument(result)
@@ -427,4 +435,8 @@ function rememberDocument(cache: Map<NoteId, NoteDocument>, document: NoteDocume
 }
 function folderKey(folderId: FolderId | null): string {
   return folderId ?? '__unfiled__'
+}
+
+function sameDocumentSnapshot(left: NoteDocument, right: NoteDocument): boolean {
+  return left.revision === right.revision && left.updatedAt === right.updatedAt && left.title === right.title && left.folderId === right.folderId && left.markdown === right.markdown && left.tags.join('\0') === right.tags.join('\0') && JSON.stringify(left.content) === JSON.stringify(right.content)
 }

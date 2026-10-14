@@ -18,6 +18,7 @@ interface PendingBatch {
   noteId: NoteId
   requests: Map<string, PendingRequest[]>
   scheduled: boolean
+  inFlight: Set<string>
 }
 
 interface CacheEntry {
@@ -25,7 +26,10 @@ interface CacheEntry {
   value: LoadedImageAsset
 }
 
-const cacheByReader = new WeakMap<object, Map<string, CacheEntry>>()
+interface ImageCache { generation: number; bytes: number; entries: Map<string, CacheEntry> }
+const cacheByReader = new WeakMap<object, ImageCache>()
+const MAX_CACHED_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_CACHED_IMAGES = 128
 const pendingByReader = new WeakMap<object, Map<string, PendingBatch>>()
 let cacheGeneration = 0
 
@@ -33,12 +37,27 @@ function cacheKey(noteId: NoteId, relativePath: string): string {
   return `${noteId}\u0000${relativePath}`
 }
 
-function readerCache(reader: object): Map<string, CacheEntry> {
+function readerCache(reader: object): ImageCache {
   const existing = cacheByReader.get(reader)
-  if (existing !== undefined) return existing
-  const created = new Map<string, CacheEntry>()
+  if (existing !== undefined) {
+    if (existing.generation !== cacheGeneration) { existing.entries.clear(); existing.bytes = 0; existing.generation = cacheGeneration }
+    return existing
+  }
+  const created = { generation: cacheGeneration, bytes: 0, entries: new Map<string, CacheEntry>() }
   cacheByReader.set(reader, created)
   return created
+}
+function cacheImage(cache: ImageCache, key: string, value: LoadedImageAsset, generation: number) {
+  if (generation !== cacheGeneration || value.bytes.byteLength > MAX_CACHED_IMAGE_BYTES) return
+  const previous = cache.entries.get(key)
+  if (previous) { cache.bytes -= previous.value.bytes.byteLength; cache.entries.delete(key) }
+  while (cache.entries.size >= MAX_CACHED_IMAGES || cache.bytes + value.bytes.byteLength > MAX_CACHED_IMAGE_BYTES) {
+    const oldest = cache.entries.entries().next().value
+    if (!oldest) break
+    cache.bytes -= oldest[1].value.bytes.byteLength
+    cache.entries.delete(oldest[0])
+  }
+  cache.entries.set(key, { generation, value }); cache.bytes += value.bytes.byteLength
 }
 
 function settleRequests(requests: PendingRequest[], value: LoadedImageAsset): void {
@@ -58,6 +77,15 @@ function yieldToBrowser(): Promise<void> {
   })
 }
 
+const readSlots=new WeakMap<object,{active:number;waiting:Array<()=>void>}>()
+async function withReadSlot<T>(reader:object,read:()=>Promise<T>):Promise<T>{
+ let slots=readSlots.get(reader)
+ if(!slots){slots={active:0,waiting:[]};readSlots.set(reader,slots)}
+ if(slots.active>=3)await new Promise<void>(resolve=>slots!.waiting.push(resolve))
+ else slots.active++
+ try{return await read()}
+ finally {const next=slots.waiting.shift();if(next)next();else slots.active--}
+}
 async function readImagePaths(
   reader: BatchImageReadPort,
   noteId: NoteId,
@@ -77,42 +105,39 @@ async function readImagePaths(
 }
 
 async function flushBatch(reader: BatchImageReadPort, batch: PendingBatch, batchKey: string): Promise<void> {
-  const cache = readerCache(reader)
-  try {
-    while (batch.requests.size > 0) {
-      const chunk = [...batch.requests.keys()].slice(0, MAX_IMAGE_BATCH_SIZE)
+  const cache=readerCache(reader),generation=cacheGeneration
+  const worker=async()=>{
+    while(true){
+      const chunk=[...batch.requests.keys()].filter(path=>!batch.inFlight.has(path)).slice(0,MAX_IMAGE_BATCH_SIZE)
+      if(chunk.length===0)return
+      for(const path of chunk)batch.inFlight.add(path)
       try {
-        const loaded = await readImagePaths(reader, batch.noteId, chunk)
-        const loadedByPath = new Map(loaded.map((image) => [image.relativePath, image]))
-        for (const relativePath of chunk) {
-          const requests = batch.requests.get(relativePath) ?? []
-          const image = loadedByPath.get(relativePath)
-          if (image === undefined) {
-            for (const request of requests) request.reject(new Error(`Image asset was not returned: ${relativePath}`))
-            continue
-          }
-          const value = { mediaType: image.mediaType, bytes: image.bytes }
-          cache.set(cacheKey(batch.noteId, relativePath), { generation: cacheGeneration, value })
-          settleRequests(requests, value)
+        const loaded=await withReadSlot(reader,()=>readImagePaths(reader,batch.noteId,chunk))
+        const loadedByPath=new Map(loaded.map(image=>[image.relativePath,image]))
+        for(const path of chunk){
+          const requests=batch.requests.get(path)??[],image=loadedByPath.get(path)
+          if(!image){for(const request of requests)request.reject(new Error('Image asset was not returned'));continue}
+          const value={mediaType:image.mediaType,bytes:image.bytes}
+          cacheImage(cache,cacheKey(batch.noteId,path),value,generation)
+          settleRequests(requests,value)
         }
-      } catch (error) {
-        for (const relativePath of chunk) {
-          for (const request of batch.requests.get(relativePath) ?? []) request.reject(error)
-        }
-      }
-      for (const path of chunk) batch.requests.delete(path)
-      if (batch.requests.size > 0) await yieldToBrowser()
+      }catch(error){for(const path of chunk)for(const request of batch.requests.get(path)??[])request.reject(error)}
+      for(const path of chunk){batch.requests.delete(path);batch.inFlight.delete(path)}
+      if(batch.requests.size>0)await yieldToBrowser()
     }
-  } finally {
-    pendingByReader.get(reader)?.delete(batchKey)
   }
+  try {do {await Promise.all([worker(),worker(),worker()])} while(batch.requests.size>0)}
+  finally {pendingByReader.get(reader)?.delete(batchKey)}
 }
 
 export function readImageAsset(reader: ImageReadPort, noteId: NoteId, relativePath: string): Promise<LoadedImageAsset> {
   const key = cacheKey(noteId, relativePath)
   const cache = readerCache(reader)
-  const cached = cache.get(key)
-  if (cached?.generation === cacheGeneration) return Promise.resolve(cached.value)
+  const cached = cache.entries.get(key)
+  if (cached?.generation === cacheGeneration) {
+    cache.entries.delete(key); cache.entries.set(key, cached)
+    return Promise.resolve(cached.value)
+  }
 
   let batches = pendingByReader.get(reader)
   if (batches === undefined) {
@@ -122,7 +147,7 @@ export function readImageAsset(reader: ImageReadPort, noteId: NoteId, relativePa
   const batchKey = String(noteId)
   let batch = batches.get(batchKey)
   if (batch === undefined) {
-    batch = { noteId, requests: new Map(), scheduled: false }
+    batch = { noteId, requests: new Map(), scheduled: false, inFlight: new Set() }
     batches.set(batchKey, batch)
   }
   const existing = batch.requests.get(relativePath)

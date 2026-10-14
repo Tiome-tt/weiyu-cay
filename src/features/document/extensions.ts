@@ -1,4 +1,5 @@
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { RichCodeBlock, RichCodeHighlight } from './codeBlock'
 import { BlockNumbers } from './blockNumbers'
 import { Extension, Mark, Node, mergeAttributes, type Editor, type NodeViewRendererProps } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
@@ -239,6 +240,8 @@ export const RawMarkdownNode = Node.create({
     return ['pre', mergeAttributes(HTMLAttributes, {
       'data-raw-markdown': '',
       class: 'rich-document__raw-markdown',
+      title: '保留的 Markdown 原文，尚未转换为可编辑内容',
+      'aria-label': '保留的 Markdown 原文，尚未转换为可编辑内容',
       contenteditable: 'false',
     }), ['code', {}, node.attrs.source]]
   },
@@ -273,6 +276,7 @@ function managedImage(reader: RichAssetReader | undefined, noteId: NoteId | unde
         const image = document.createElement('img')
         image.draggable = false
         image.decoding = 'async'
+        image.loading = 'lazy'
         const handle = document.createElement('button')
         handle.type = 'button'
         handle.className = 'rich-document__image-resize-handle'
@@ -367,7 +371,13 @@ function managedImage(reader: RichAssetReader | undefined, noteId: NoteId | unde
         })
         container.append(image)
         if (props.editor.isEditable) container.append(handle)
-        requestLoad()
+        let observer:IntersectionObserver|undefined
+        if(typeof IntersectionObserver==='function'&&reader){
+          container.dataset.loading='true'
+          observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){observer?.disconnect();requestLoad()}},{rootMargin:'800px'})
+          observer.observe(container)
+        }else requestLoad()
+        image.addEventListener('load',()=>delete container.dataset.loading)
 
         return {
           dom: container,
@@ -386,6 +396,7 @@ function managedImage(reader: RichAssetReader | undefined, noteId: NoteId | unde
           },
           destroy() {
             destroyed = true
+            observer?.disconnect()
             generation += 1
             stopResize()
             if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
@@ -406,7 +417,7 @@ function clipboardExtension(): Extension {
             const clipboard = event.clipboardData
             const html = clipboard?.getData('text/html') ?? ''
             const text = clipboard?.getData('text/plain') ?? ''
-            if (html || !text.includes('\t')) return false
+            if (html || !/[\t\r\n]/.test(text)) return false
             return pasteTsvAtSelection(this.editor, text)
           },
         },
@@ -562,10 +573,12 @@ export function richEditorExtensions(options: RichEditorExtensionOptions = {}) {
   return [
     StarterKit.configure({
       heading: false,
+      codeBlock: false,
       link: { openOnClick: false, autolink: true, linkOnPaste: true },
     }),
     RichHeading.configure({ levels: [1, 2, 3, 4, 5, 6], HTMLAttributes: { 'data-rich-heading': 'true' } }),
     Highlight.configure({ multicolor: true }),
+    RichCodeBlock.configure({ enableTabIndentation: true, tabSize: 2 }), RichCodeHighlight,
     richHeadingLevelExtension,
     BlockNumbers,
     managedImage(options.assetReader, options.noteId),

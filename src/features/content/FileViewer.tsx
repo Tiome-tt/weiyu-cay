@@ -1,8 +1,13 @@
 import { ErrorNotification } from '../../shared/notifications'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import {createPortal} from 'react-dom'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
+import { selectedExportPort } from '../../domain/exportSelection'
+import type { ExportSelection } from '../../domain/ports'
+import type { NoteExportKind } from '../../domain/noteExport'
 import type { FilePort } from '../../domain/ports'
-import { Icon, type IconName } from '../../shared/Icon'
+import { SaveAsDialog } from './SaveAsDialog'
+const OfficePreview = lazy(() => import('./OfficePreview').then(module => ({ default: module.OfficePreview })))
 import './content.css'
 const loadPdfViewer = () => import('./PdfViewer')
 const PdfViewer = lazy(loadPdfViewer)
@@ -35,7 +40,7 @@ function rememberPreview(cache: Map<string, { mediaType: string; bytes: Uint8Arr
     cache.delete(oldest)
   }
 }
-export function FileViewer({document,files,onConvertToDocument}:{document:NoteDocument;files?:FilePort;onConvertToDocument?: (document:NoteDocument, bytes:Uint8Array)=>Promise<void>}) {
+export function FileViewer({document,files,onConvertToDocument,onSaveAs,onDocumentAdopt,actionsContainer}:{onDocumentAdopt?:(document:NoteDocument)=>void;actionsContainer?:HTMLElement|null;document:NoteDocument;files?:FilePort;onSaveAs?:(kind:NoteExportKind,selection?:ExportSelection)=>Promise<boolean>;onConvertToDocument?: (document:NoteDocument, bytes:Uint8Array)=>Promise<void>}) {
   const file = document.content?.type === 'file' ? document.content.file : null
   const [data,setData] = useState<{mediaType:string;bytes:Uint8Array}|null>(null)
   const [error,setError] = useState<string|null>(null)
@@ -43,6 +48,18 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
   const [attempt,setAttempt] = useState(0)
   const [forceStructuredRead,setForceStructuredRead] = useState(false)
   const [converting,setConverting] = useState(false)
+  const [saving,setSaving] = useState(false)
+  const adoptRef=useRef(onDocumentAdopt)
+  adoptRef.current=onDocumentAdopt
+  useEffect(()=>{
+    if(!files?.syncExternalFile||!file||! /\.(docx?|xlsx?|pptx?)$/i.test(file.originalName)) return
+    let active=true,busy=false
+    const sync=async(force:boolean)=>{if(busy)return;busy=true;try{const updated=await files.syncExternalFile!(document.id,force);if(active&&updated)adoptRef.current?.(updated)}catch{if(active&&force)setError('无法同步外部修改；笔记和编辑副本均已保留，请完成保存后重试。')}finally{busy=false}}
+    void sync(true)
+    const focus=()=>void sync(true),timer=window.setInterval(()=>void sync(false),2000)
+    window.addEventListener('focus',focus)
+    return()=>{active=false;window.clearInterval(timer);window.removeEventListener('focus',focus)}
+  },[files,document.id,document.revision])
   const mediaType=file?.mediaType
   useEffect(()=>{
     if (mediaType === 'application/pdf') void loadPdfViewer().catch(() => undefined)
@@ -53,7 +70,7 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
   useEffect(()=>{
     let active=true
     setData(null);setError(null)
-    if (files && file && (mediaType==='application/pdf'||['image/png','image/jpeg','image/webp'].includes(mediaType??''))) {
+    if (files && file && file.size > 0 && (mediaType==='application/pdf'||['image/png','image/jpeg','image/webp'].includes(mediaType??''))) {
       const cache = previewCacheFor(files)
       const cacheKey = previewCacheKey(document, file)
       const cached = cache.get(cacheKey)
@@ -87,15 +104,13 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
     return ()=>URL.revokeObjectURL(url)
   },[data])
   if (!file) return null
-  const extension = file.originalName.includes('.') ? file.originalName.split('.').pop()?.toUpperCase() ?? '' : ''
-  const canOpen=file.size>0&&/\.(docx?|xlsx?|pptx?)$/i.test(file.originalName)
-  const officeLabel = /\.(docx?|doc)$/i.test(file.originalName) ? 'Word 文档' : /\.(xlsx?|xls)$/i.test(file.originalName) ? 'Excel 工作簿' : /\.(pptx?|ppt)$/i.test(file.originalName) ? 'PowerPoint 演示文稿' : null
-  const iconName = fileIconName(file.originalName, file.mediaType)
+  const extension = file.originalName.split('.').pop()?.toLowerCase() ?? ''
+  const office = /^(docx?|xlsx?|pptx?)$/.test(extension)
+  const canOpen = office && (file.size > 0 || ['docx','xlsx','pptx'].includes(extension))
   const action=async(fn:()=>Promise<unknown>)=>{try{await fn()}catch(cause){setError(cause instanceof Error&&cause.message ? cause.message : '文件操作失败，原文件已保留。')}}
-  return <section className="file-viewer" aria-label="文件预览">
-    <div className={`file-viewer__info${officeLabel ? ' file-viewer__info--office' : ''}`}><span className="file-viewer__icon"><Icon name={iconName} size={22} decorative={false} /></span><div className="file-viewer__name"><strong>{file.originalName}</strong><span>{(officeLabel ?? extension) || '文件'} · {formatSize(file.size)}</span></div>
-      <button type="button" disabled={!files} onClick={()=>void action(()=>files!.saveFileAs(document.id))}>另存文件</button>
-      {canOpen&&<button type="button" disabled={!files} onClick={()=>void action(()=>files!.openFile(document.id))}>用系统应用打开</button>}
+  const actions=(<header className="file-viewer__actions">
+      {office&&<button type="button" disabled={!files||!canOpen} title="在系统应用中编辑；保存后自动同步到此笔记" onClick={()=>void action(()=>files!.openFile(document.id))}>打开进行编辑</button>}
+      <button type="button" disabled={!files} onClick={()=>setSaving(true)}>另存为</button>
       {/\.docx$/i.test(file.originalName) && onConvertToDocument && <button type="button" disabled={!files || converting} onClick={() => void action(async () => {
         setConverting(true)
         try {
@@ -107,10 +122,10 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
           setConverting(false)
         }
       })}>{converting ? '正在转换…' : '转为可编辑文档'}</button>}
-    </div>
-    {officeLabel&&<p className={`file-viewer__hint${file.size===0?' file-viewer__hint--warning':''}`}>{file.size===0?`文件内容为空，无法直接用系统应用打开；可以先转换为可编辑的${officeLabel}笔记。`:`这是一个完整的 ${officeLabel} 文件。微屿保留原始文件内容，打开或编辑请使用系统应用；修改后可重新导入以更新笔记。`}</p>}
-    {file.size === 0 && !officeLabel && <p className="file-viewer__hint file-viewer__hint--warning">文件内容为空，转换后会创建一个空白的可编辑文档。</p>}
-    {canOpen&&!officeLabel&&<p className="file-viewer__hint">打开的是独立副本，外部修改不会自动同步；修改后可重新导入。</p>}
+    </header>)
+  return <section className="file-viewer" aria-label="文件预览">
+    {actionsContainer?createPortal(actions,actionsContainer):actions}
+    <div className="file-viewer__content">
     {error&&<><ErrorNotification error={error} /><button type="button" onClick={()=>setAttempt(n=>n+1)}>重试加载文件</button></>}
     {imageUrl&&<img className="file-viewer__image" src={imageUrl} alt={file.originalName}/>}
     {data?.mediaType==='application/pdf'&&<Suspense fallback={<p role="status">正在打开 PDF…</p>}><PdfViewer bytes={data.bytes} cacheKey={file ? previewCacheKey(document, file) : undefined} onDocumentError={()=>{
@@ -118,19 +133,9 @@ export function FileViewer({document,files,onConvertToDocument}:{document:NoteDo
       previewCacheFor(files).delete(previewCacheKey(document, file))
       setForceStructuredRead(true)
     }}/></Suspense>}
-    {!data&&!error&&(mediaType==='application/pdf'||mediaType?.startsWith('image/'))&&<p role="status">正在读取文件…</p>}
-    {!canOpen&&!officeLabel&&mediaType!=='application/pdf'&&!mediaType?.startsWith('image/')&&<p className="file-viewer__hint">此文件已完整保存在资料库，可另存后使用对应应用查看。</p>}
+    {file.size>0&&!data&&!error&&(mediaType==='application/pdf'||mediaType?.startsWith('image/'))&&<p role="status">正在读取文件…</p>}
+    {['docx','xlsx','pptx'].includes(extension)&&<Suspense fallback={null}><OfficePreview noteId={document.id} extension={extension} files={files} empty={file.size===0} revision={document.revision}/></Suspense>}
+    </div>
+    {saving&&<SaveAsDialog files={files} note={{...document,excerpt:''}} onClose={()=>setSaving(false)} onSave={(kind,selection)=>{setSaving(false);void action(async()=>{if(onSaveAs)return onSaveAs(kind,selection);const {convertManagedFile}=await import('./fileConversion');return convertManagedFile(document,kind,selectedExportPort(files!,selection))})}}/>}
   </section>
 }
-function fileIconName(name:string, mediaType:string):IconName {
- const extension=name.split('.').pop()?.toLowerCase() ?? ''
- const type=mediaType.toLowerCase()
- if(type==='application/pdf'||extension==='pdf')return 'file-pdf'
- if(type.includes('word')||['doc','docx'].includes(extension))return 'file-word'
- if(type.includes('spreadsheet')||type.includes('excel')||['xls','xlsx'].includes(extension))return 'file-excel'
- if(type.includes('presentation')||type.includes('powerpoint')||['ppt','pptx'].includes(extension))return 'file-powerpoint'
- if(type.startsWith('image/')||['png','jpg','jpeg','webp','gif'].includes(extension))return 'file-image'
- if(extension==='md'||extension==='txt')return 'file-text'
- return 'file'
-}
-function formatSize(bytes:number){return bytes<1024?`${bytes} B`:bytes<1024*1024?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1024/1024).toFixed(1)} MB`}

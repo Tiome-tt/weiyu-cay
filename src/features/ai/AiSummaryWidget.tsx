@@ -169,14 +169,14 @@ export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, on
     <aside className={`ai-summary-widget${open ? ' ai-summary-widget--open' : ''}`} data-testid="ai-summary-widget" data-boundary="editor">
       {!open && (
         <button className="ai-summary-widget__rail" type="button" aria-label="打开 AI 总结" onClick={openPanel}>
-          <Icon name="ai-fusion" size={18} />
+          <Icon name="ai-fusion" size={24} />
           <span>AI 总结</span>
         </button>
       )}
       {open && (
         <section className="ai-summary-widget__panel" role="dialog" aria-label="AI 总结" aria-modal="false">
           <header className="ai-summary-widget__header">
-            <div className="ai-summary-widget__title"><Icon name="ai-fusion" size={19} /><strong>AI 总结</strong><span className="ai-summary-widget__model">{model === 'deepseek-v4-pro' ? 'V4 Pro' : 'V4.1 Flash'}</span></div>
+            <div className="ai-summary-widget__title"><Icon name="ai-fusion" size={22} /><strong>AI 总结</strong><span className="ai-summary-widget__model">{model === 'deepseek-v4-pro' ? 'V4 Pro' : 'V4.1 Flash'}</span></div>
             <div className="ai-summary-widget__header-actions">
               <button type="button" className="ai-summary-widget__filter-toggle" aria-label="筛选标注" title="筛选标注" aria-expanded={filterOpen} onClick={() => setFilterOpen((current) => !current)}>☷</button>
               <button type="button" className="ai-summary-widget__view-toggle" aria-label={showEmphasis ? '隐藏重点标注' : '显示重点标注'} title={showEmphasis ? '隐藏重点标注' : '显示重点标注'} aria-pressed={showEmphasis} onClick={() => setShowEmphasis((current) => !current)}><Icon name="preview" size={17} /></button>

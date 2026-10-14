@@ -1,3 +1,4 @@
+import * as contentDomain from '../../domain/content'
 import '@testing-library/jest-dom/vitest'
 import {act,cleanup,render,screen} from '@testing-library/react'
 import {afterEach,expect,it,vi} from 'vitest'
@@ -66,4 +67,16 @@ it.each<[string, NoteContent, string]>([
  expect(screen.getByLabelText('笔记状态栏')).toHaveTextContent(expected)
  expect(screen.getByLabelText('笔记状态栏').querySelector('time')).toHaveAttribute('dateTime')
  expect(screen.getByRole('status',{name:'保存状态'})).toHaveTextContent('已保存')
+})
+
+it('reuses large document summary projections across unrelated UI updates',async()=>{
+ const summary=vi.spyOn(contentDomain,'contentSummaryMarkdown')
+ const document={...note(''),content:{type:'document' as const,document:{schemaVersion:1 as const,root:{type:'doc' as const,content:[{type:'paragraph',content:[{type:'text',text:'large body'}]}]}}}}
+ const notes=fakeNotePort()
+ const rendered=render(<TypedEditorPane document={document} notes={notes}/>)
+ await act(async()=>undefined)
+ const count=summary.mock.calls.length
+ rendered.rerender(<TypedEditorPane document={document} notes={notes} onSaveStateChange={()=>undefined}/>)
+ expect(summary.mock.calls.length).toBe(count)
+ summary.mockRestore()
 })

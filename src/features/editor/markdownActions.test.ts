@@ -58,6 +58,18 @@ describe('markdown insertion actions', () => {
     )).toBe('| Name | Note |\n| :--- | ---: |\n| A\\|B | C\\\\D |')
   })
 
+  it('preserves original cell source escapes when another cell is changed', () => {
+    const source = '| A | B |\n| --- | --- |\n| \\\\*literal* \\*escaped\\* `a\\|b` | old |'
+    const table = parseMarkdownTable(source)!
+    expect(tableMarkdownFromModel(tableWithCell(table, 1, 1, 'new')).split('\n')[2])
+      .toBe(source.split('\n')[2].replace('old', 'new'))
+  })
+  it('preserves an existing empty header when another cell is changed', () => {
+    const source = '|  | B |\n| --- | --- |\n| one | two |'
+    expect(tableMarkdownFromModel(tableWithCell(parseMarkdownTable(source)!, 1, 1, 'new')))
+      .toBe(source.replace('two', 'new'))
+  })
+
   it('rejects a malformed table separator', () => {
     expect(parseMarkdownTable('| A | B |\n| not a separator |')).toBeNull()
   })

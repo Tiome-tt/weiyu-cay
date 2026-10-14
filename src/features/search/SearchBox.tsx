@@ -144,7 +144,7 @@ export function SearchBox({ search, onSelect, onSubmit, resultsContainer, onQuer
 
   return (
     <div ref={rootRef} className="library-search" onKeyDown={onKeyDown}>
-      <div className="library-search__field"><Icon name="search" size={14} /><input
+      <div className="library-search__field"><Icon name="search" size={18} /><input
         ref={inputRef}
         type="search"
         role="searchbox"

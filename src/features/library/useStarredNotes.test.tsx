@@ -35,3 +35,13 @@ describe('note stars', () => {
   })
 
 })
+
+it('adds multiple stars in a single persisted operation without toggling existing stars off',async()=>{
+ const first={...fakeNote(),excerpt:''},second={...fakeNote(),id:'019c0000-0000-7000-8000-000000000222' as typeof first.id,excerpt:''}
+ const system=fakeSystemPort({getWindowPreference:vi.fn().mockResolvedValue([first.id])})
+ const {result}=renderHook(()=>useStarredNotes(system,undefined,[first,second]))
+ await waitFor(()=>expect(result.current.ready).toBe(true))
+ await act(async()=>{await result.current.setStars([first,second],true)})
+ expect(system.setWindowPreference).toHaveBeenCalledWith('library-starred-notes',[first.id,second.id])
+ expect(result.current.ids).toEqual([first.id,second.id])
+})

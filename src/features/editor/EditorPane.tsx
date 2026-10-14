@@ -1,4 +1,7 @@
+import { selectedExportPort } from '../../domain/exportSelection'
+import type { ExportSelection } from '../../domain/ports'
 import { ErrorNotification } from '../../shared/notifications'
+import type { NoteExportKind } from '../../domain/noteExport'
 import { TypedEditorPane } from '../content/TypedEditorPane'
 import {
   forwardRef,
@@ -15,7 +18,6 @@ import type { AiPort, AssetPort, ImageReadPort, LinkPort, NotePort, RenameNoteRe
 import { TagsEditor } from '../search/TagsEditor'
 import { EditorStatusBar, type EditorStatusBarHandle } from './EditorStatusBar'
 import { Backlinks } from './Backlinks'
-import { EditorActionsMenu } from './EditorActionsMenu'
 import { InternalLinkDialog } from './InternalLinkDialog'
 import { MarkdownPreview } from './MarkdownPreview'
 import { MarkdownSource, type MarkdownSourceHandle } from './MarkdownSource'
@@ -55,7 +57,7 @@ export interface EditorPaneHandle {
   beginEditBarrier: () => Promise<void>
   endEditBarrier: () => void
   navigateToHeading: (line: number, headingIndex: number) => void
-  exportDocument: (kind: 'word' | 'pdf') => Promise<boolean>
+  exportDocument: (kind: NoteExportKind, selection?:ExportSelection) => Promise<boolean>
 }
 
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
@@ -82,7 +84,6 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
     onNavigateNote,
     folders,
     onRenameNote,
-    onMoveNote,
     external,
     onDocumentAdopt,
     onSaveStateChange,
@@ -98,6 +99,19 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   const statisticsRef = useRef<EditorStatusBarHandle>(null)
   const [selectedText, setSelectedText] = useState('')
   const [mode, setMode] = useState<EditorMode>(initialMode)
+  const [contentZoom, setContentZoom] = useState(1)
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const element = contentRef.current
+    if (element === null) return
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey || event.deltaY === 0 || !Number.isFinite(event.deltaY)) return
+      event.preventDefault()
+      setContentZoom(current => Math.round(Math.max(.5, Math.min(2, current + (event.deltaY < 0 ? .1 : -.1))) * 10) / 10)
+    }
+    element.addEventListener('wheel', wheel, { passive: false })
+    return () => element.removeEventListener('wheel', wheel)
+  }, [])
   useEffect(() => setSelectedText(''), [mode])
   const [splitPercent, setSplitPercent] = useState(defaultSplitPercent)
   const [imageError, setImageError] = useState<string | null>(null)
@@ -124,9 +138,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   const previousModeRef = useRef(mode)
   const modeRef = useRef(mode)
   const tagRequestRef = useRef(0)
-  const exportRef = useRef<(kind: 'word' | 'pdf') => Promise<boolean>>(() => Promise.resolve(false))
-  const hasSecondaryActions = (folders !== undefined && onMoveNote !== undefined)
-    || search !== undefined
+  const exportRef = useRef<(kind: NoteExportKind, selection?:ExportSelection) => Promise<boolean>>(() => Promise.resolve(false))
   const breadcrumbs = documentBreadcrumb(document, folders)
   const displayTitle = localizedDocumentTitle(document)
   modeRef.current = mode
@@ -179,16 +191,16 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
   useEffect(() => {
     let current = true
     setLinkTargets([])
-    if (links === undefined) return () => { current = false }
+    if (links === undefined || !linkDialogOpen) return () => { current = false }
     void links.listTargets().then(
       (targets) => {
         if (!current) return
         setLinkTargets(targets)
       },
-      () => { if (current) setLinkActionError('无法加载内部链接目标。') },
+      () => { if (current) setLinkActionError('无法加载可引用笔记。') },
     )
     return () => { current = false }
-  }, [document.id, links])
+  }, [document.id, links, linkDialogOpen])
   useEffect(() => {
     tagRequestRef.current += 1
     return () => {
@@ -205,10 +217,11 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       const heading = previewRef.current?.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6').item(headingIndex)
       heading?.scrollIntoView({ block: 'center' })
     },
-    exportDocument: (kind) => exportRef.current(kind),
+    exportDocument: (kind,selection) => exportRef.current(kind,selection),
   }), [autosave.flush])
 
-  const exportMarkdownPdf = async (): Promise<boolean> => {
+  const exportMarkdownPdf = async (kind: NoteExportKind, selection?:ExportSelection): Promise<boolean> => {
+    const targetFiles=files?selectedExportPort(files,selection):undefined
     if (metadataBusy) return false
     setMetadataBusy(true)
     setMetadataError(null)
@@ -217,9 +230,18 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       await source?.beginEditBarrier()
       if (!await autosave.flush()) throw new Error('Save failed')
       const current = await notes.loadNote(document.id)
+      if (!targetFiles) throw new Error('Export is unavailable')
+      if (kind === 'markdown' || kind === 'text' || kind === 'html') {
+        const { exportPortableNote } = await import('../content/noteExport')
+        return await exportPortableNote(current, kind, targetFiles, assetReader)
+      }
+      if (kind === 'word') {
+        const { buildDocumentDocx } = await import('../content/documentExport')
+        return await targetFiles.saveDocumentExport?.(current.id, await buildDocumentDocx(current, assetReader), current.title) ?? false
+      }
       const { exportMarkdownDocumentToPdf } = await import('../content/pdfExport')
-      if (!files?.savePdfExport) throw new Error('Direct PDF export is unavailable')
-      return await exportMarkdownDocumentToPdf(current, assetReader, files)
+      if (!targetFiles?.savePdfExport) throw new Error('Direct PDF export is unavailable')
+      return await exportMarkdownDocumentToPdf(current, assetReader, targetFiles)
     } catch {
       setMetadataError('操作未完成，原笔记已保留。请检查保存状态后重试。')
       return false
@@ -228,7 +250,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       setMetadataBusy(false)
     }
   }
-  exportRef.current = (kind) => kind === 'pdf' ? exportMarkdownPdf() : Promise.resolve(false)
+  exportRef.current = exportMarkdownPdf
 
   const updateTags = async (tags: string[]) => {
     if (search === undefined) return
@@ -273,20 +295,6 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
     }
   }
 
-  const moveNote = async (folderId: FolderId | null) => {
-    if (onMoveNote === undefined || metadataBusy || folderId === document.folderId) return
-    setMetadataBusy(true)
-    setMetadataError(null)
-    setMetadataNotice(null)
-    try {
-      await onMoveNote(folderId)
-    } catch {
-      setMetadataError('无法移动笔记，请解决保存错误后重试。')
-    } finally {
-      setMetadataBusy(false)
-    }
-  }
-
   const openInternalLinkDialog = () => {
     setLinkActionError(null)
     setLinkDialogOpen(true)
@@ -294,7 +302,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
 
   const insertInternalLinkFromDialog = (target: NoteSummary) => {
     const applied = sourceRef.current?.insertInternalLink(target) === true
-    setLinkActionError(applied ? null : '无法在当前位置插入内部链接。')
+    setLinkActionError(applied ? null : '无法在当前位置引用笔记。')
     return applied
   }
   const syncSourceToPreview = useCallback((scrollTop: number) => {
@@ -356,33 +364,6 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
         </nav>
         <div className="editor-toolbar__actions">
           <div className="editor-toolbar__primary">
-            {hasSecondaryActions && (
-              <EditorActionsMenu>
-                {() => (
-                  <>
-                    {folders && onMoveNote && (
-                      <div className="editor-actions-menu__section" role="group" aria-label="目录">
-                        <span className="editor-actions-menu__heading">目录</span>
-                        <label>
-                          <span className="sr-only">笔记文件夹</span>
-                          <select
-                            aria-label="笔记文件夹"
-                            value={document.folderId ?? ''}
-                            disabled={metadataBusy}
-                            onChange={(event) => { if (event.target.value !== '') void moveNote(event.target.value as FolderId) }}
-                          >
-                            <option value="" disabled hidden>请选择文件夹</option>
-                            {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                          </select>
-                        </label>
-                      </div>
-                    )}
-
-                  </>
-                )}
-              </EditorActionsMenu>
-            )}
-
             {modes.map((item) => (
               <button
                 key={item.mode}
@@ -436,10 +417,9 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
         </div>
         <div
           className={`editor-document__body editor-document__body--${mode}`}
+          ref={contentRef}
           style={
-            mode === 'split'
-              ? { gridTemplateColumns: `${splitPercent}fr 8px ${100 - splitPercent}fr` }
-              : undefined
+            { zoom: contentZoom, ...(mode === 'split' ? { gridTemplateColumns: `${splitPercent}fr 8px ${100 - splitPercent}fr` } : {}) }
           }
         >
           <div className="editor-document__source" hidden={mode === 'preview'}>
@@ -462,6 +442,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
             onNavigateLink={handleNavigateLink}
             presentation={mode === 'split' ? 'source' : 'document'}
             external={external}
+            showLineNumbers={document.kind === 'formal'}
             onInsertInternalLinkRequest={links ? openInternalLinkDialog : undefined}
           />
           </div>

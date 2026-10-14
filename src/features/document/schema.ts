@@ -232,40 +232,7 @@ export function documentOutline(document: RichDocument): DocumentHeading[] {
   return result
 }
 
-/** Parse clipboard TSV, including Excel-style quoted fields and empty trailing cells. */
-export function parseTsv(source: string): string[][] {
-  const rows: string[][] = [[]]
-  let field = ''
-  let quoted = false
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index]
-    if (character === '"') {
-      if (quoted && source[index + 1] === '"') {
-        field += '"'
-        index += 1
-      } else {
-        quoted = !quoted
-      }
-    } else if (character === '\t' && !quoted) {
-      rows[rows.length - 1]?.push(field)
-      field = ''
-    } else if ((character === '\n' || character === '\r') && !quoted) {
-      if (character === '\r' && source[index + 1] === '\n') index += 1
-      rows[rows.length - 1]?.push(field)
-      rows.push([])
-      field = ''
-    } else {
-      field += character
-    }
-  }
-
-  rows[rows.length - 1]?.push(field)
-  if (rows.length > 1 && rows[rows.length - 1]?.length === 1 && rows[rows.length - 1]?.[0] === '' && /(?:\r\n|\r|\n)$/.test(source)) {
-    rows.pop()
-  }
-  return rows
-}
+export { parseTsv } from '../editor/tableClipboard'
 
 export function tsvTableContent(rows: string[][]): JSONContent {
   const width = Math.max(1, ...rows.map((row) => row.length))

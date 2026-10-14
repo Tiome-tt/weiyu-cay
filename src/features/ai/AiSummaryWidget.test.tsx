@@ -335,3 +335,8 @@ describe('AiSummaryWidget', () => {
     expect(onOpenSettings).toHaveBeenCalledOnce()
   })
 })
+
+it('uses a larger original summary icon in the rail',()=>{
+ render(<AiSummaryWidget noteId="icon-note" title="笔记" markdown="正文" />)
+ expect(screen.getByRole('button',{name:'打开 AI 总结'}).querySelector('svg')).toHaveAttribute('width','24')
+})

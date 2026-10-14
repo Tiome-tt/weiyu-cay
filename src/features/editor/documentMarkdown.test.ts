@@ -12,6 +12,13 @@ import {
 } from './documentMarkdown'
 
 describe('document Markdown line classification', () => {
+  it('analyzes a visible range without materializing the whole document', () => {
+    const state = EditorState.create({ doc: '# 标题\n\n' + 'paragraph\n\n'.repeat(1000), extensions: markdown({ extensions: GFM }) })
+    const snapshot = vi.spyOn(state.doc, 'toString')
+    expect(analyzeLiveMarkdown(state, [{ from: 0, to: 6 }]).some(node => node.kind === 'heading')).toBe(true)
+    expect(snapshot).not.toHaveBeenCalled()
+    snapshot.mockRestore()
+  })
   it.each([
     ['# 一级标题', false, { kind: 'heading', level: 1, nextInFence: false, hiddenPrefixLength: 2 }],
     ['### 三级标题', false, { kind: 'heading', level: 3, nextInFence: false, hiddenPrefixLength: 4 }],

@@ -1,5 +1,6 @@
 import { ErrorNotification } from '../../shared/notifications'
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { BODY_FONT_OPTIONS, CODE_FONT_OPTIONS } from './fontOptions'
+import { useCallback, useEffect, useRef, useState, type ComponentProps, useLayoutEffect, type ChangeEvent } from 'react'
 import type { AiPort, AppSettings, SettingsPort, StorageInfo, WindowChromePort } from '../../domain/ports'
 import { ExportLibrary, type ExportLibraryController } from './ExportLibrary'
 import { normalizeSettings } from './theme'
@@ -309,19 +310,19 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
               event.preventDefault()
               setSection(sections[nextIndex].id)
               event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus()
-            }}>{item.label}</button>)}
+            }}><Icon name={item.id === 'appearance' ? 'settings' : item.id === 'system' ? 'monitor' : item.id === 'keys' ? 'keyboard' : item.id === 'storage' ? 'folder' : 'ai-fusion'} size={18} /><span>{item.label}</span></button>)}
           </nav>
           <div className="settings-view__content">
           <fieldset className="settings-view__appearance" disabled={operationBusy} id="settings-section-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" hidden={section !== 'appearance'}>
             <legend>常规</legend>
-            <label>主题<select aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">潮汐浅色</option><option value="sand">沙岸暖色</option><option value="night">夜海深色</option><option value="system">跟随系统</option></select></label>
-            <label>正文字体<select aria-label="正文字体" value={draft.bodyFont} onChange={(event) => void update({ bodyFont: event.target.value })}><option value="KaiTi, STKaiti, serif">系统默认（楷体）</option><option value="PingFang SC, PingFang TC, sans-serif">苹方</option><option value="Hiragino Sans GB, Hiragino Sans, sans-serif">冬青黑体</option><option value="Microsoft YaHei, Microsoft YaHei UI, sans-serif">微软雅黑 UI</option><option value="DengXian, sans-serif">等线</option><option value="SimSun, NSimSun, serif">宋体</option><option value="SimHei, sans-serif">黑体</option><option value="FangSong, STFangsong, serif">仿宋</option><option value="Georgia, serif">Georgia</option><option value="serif">Serif</option></select></label>
-            <label>代码字体<select aria-label="代码字体" value={draft.codeFont} onChange={(event) => void update({ codeFont: event.target.value })}><option value="ui-monospace, SFMono-Regular, Consolas, monospace">系统等宽</option><option value="Cascadia Code">Cascadia Code</option><option value="Cascadia Mono">Cascadia Mono</option><option value="Segoe UI Mono">Segoe UI Mono</option><option value="SFMono-Regular, Menlo, Monaco, monospace">SF Mono</option><option value="Menlo">Menlo</option><option value="Monaco">Monaco</option><option value="Consolas">Consolas</option><option value="Courier New">Courier New</option></select></label>
-            <label>默认编辑视图<select aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">文档编辑</option><option value="split">分栏校对</option><option value="preview">阅读视图</option></select></label>
-            <label>界面字号<input aria-label="界面字号" type="number" min="12" max="28" value={draft.fontSize} onChange={updateNumberDraft('fontSize')} onBlur={() => void update({ fontSize: draftRef.current.fontSize })} /></label>
+            <label><span>主题<small id="theme-description">跟随系统使用 Windows 或 macOS 的浅色、深色外观。</small></span><AdaptiveSelect aria-describedby="theme-description" aria-label="主题" value={draft.theme} onChange={(event) => void update({ theme: event.target.value as AppSettings['theme'] })}><option value="forest">潮汐绿</option><option value="sand">沙岸黄</option><option value="ocean">晴湾蓝</option><option value="night">夜礁黑</option><option value="light">云屿白</option><option value="system">跟随系统</option></AdaptiveSelect></label>
+            <label>正文字体<AdaptiveSelect aria-label="正文字体" value={draft.bodyFont} onChange={(event) => void update({ bodyFont: event.target.value })}>{BODY_FONT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</AdaptiveSelect></label>
+            <label><span>代码字体<small>使用本机字体，未安装时自动回退。</small></span><AdaptiveSelect aria-label="代码字体" title="使用本机字体；未安装时使用系统回退字体" value={draft.codeFont} onChange={(event) => void update({ codeFont: event.target.value })}>{CODE_FONT_OPTIONS.filter(option => option.value !== 'Segoe UI Mono' || draft.codeFont === option.value).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</AdaptiveSelect></label>
+            <label>默认编辑视图<AdaptiveSelect aria-label="默认编辑视图" value={draft.defaultEditorMode} onChange={(event) => void update({ defaultEditorMode: event.target.value as AppSettings['defaultEditorMode'] })}><option value="source">文档编辑</option><option value="split">分栏校对</option><option value="preview">阅读视图</option></AdaptiveSelect></label>
+            <label>界面字号<div className="settings-view__number-unit"><input aria-label="界面字号" type="number" min="12" max="28" value={draft.fontSize} onChange={updateNumberDraft('fontSize')} onBlur={() => void update({ fontSize: draftRef.current.fontSize })} /><span>px</span></div></label>
             <label>行高<input aria-label="行高" type="number" min="1.2" max="2.2" step="0.1" value={draft.lineHeight} onChange={updateNumberDraft('lineHeight')} onBlur={() => void update({ lineHeight: draftRef.current.lineHeight })} /></label>
-            <label>自动保存延迟<div className="settings-view__number-unit"><input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumberDraft('autosaveDelayMs')} onBlur={() => void update({ autosaveDelayMs: draftRef.current.autosaveDelayMs })} /><span>ms</span></div></label>
-            <div className="settings-view__check settings-view__check--described"><input aria-label="每日歌词" type="checkbox" checked={draft.dailyLyrics !== false} onChange={(event) => void update({ dailyLyrics: event.target.checked })} /><span><strong>每日歌词</strong></span></div>
+            <label><span>自动保存延迟<small>停止输入后等待多久保存。</small></span><div className="settings-view__number-unit"><input aria-label="自动保存延迟" type="number" min="150" max="2000" step="50" value={draft.autosaveDelayMs} onChange={updateNumberDraft('autosaveDelayMs')} onBlur={() => void update({ autosaveDelayMs: draftRef.current.autosaveDelayMs })} /><span>ms</span></div></label>
+            <div className="settings-view__check settings-view__check--described"><input aria-label="每日歌词" type="checkbox" role="switch" checked={draft.dailyLyrics !== false} onChange={(event) => void update({ dailyLyrics: event.target.checked })} /><span><strong>每日歌词</strong></span></div>
           </fieldset>
           <fieldset className="settings-view__ai-settings" disabled={operationBusy || credentialBusy} id="settings-section-ai" role="tabpanel" aria-labelledby="settings-tab-ai" hidden={section !== 'ai'}>
             <legend>AI</legend>
@@ -330,16 +331,16 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
               <span className="settings-view__ai-key-label">DeepSeek API Key</span><div className="settings-view__key-control"><input aria-label="DeepSeek API Key" type="password" value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} autoComplete="off" placeholder={credentialConfigured ? "已配置，输入新 Key 可替换" : "粘贴 DeepSeek API Key"} />
               <button type="button" disabled={ai === undefined || apiKeyDraft.trim().length === 0} onClick={() => void saveApiKey()}>保存</button></div>
             </div>
-            <label className="settings-view__ai-model">总结模型<select aria-label="总结模型" value={draft.deepseekModel ?? "deepseek-flash"} onChange={(event) => void update({ deepseekModel: event.target.value })}><option value="deepseek-flash">DeepSeek V4.1 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option></select></label>
+            <label className="settings-view__ai-model">总结模型<AdaptiveSelect aria-label="总结模型" value={draft.deepseekModel ?? "deepseek-flash"} onChange={(event) => void update({ deepseekModel: event.target.value })}><option value="deepseek-flash">DeepSeek V4.1 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option></AdaptiveSelect></label>
           </fieldset>
           <fieldset disabled={operationBusy} id="settings-section-system" role="tabpanel" aria-labelledby="settings-tab-system" hidden={section !== 'system'}>
             <legend>系统</legend>
 
-            <div className="settings-view__check"><input aria-label="开机启动" type="checkbox" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} /><span>开机启动</span></div>
+            <div className="settings-view__check"><input aria-label="开机启动" type="checkbox" role="switch" checked={draft.launchAtStartup} onChange={(event) => void update({ launchAtStartup: event.target.checked })} /><span>开机启动</span></div>
             {platform === 'windows'
               ? <div className="settings-view__close-behavior">
                   <div className="settings-view__check settings-view__check--described">
-                    <input aria-label="关闭主窗口时隐藏到托盘" type="checkbox" checked={draft.closeToTray} onChange={(event) => void update({ closeToTray: event.target.checked, closeBehaviorConfirmed: true })} />
+                    <input aria-label="关闭主窗口时隐藏到托盘" type="checkbox" role="switch" checked={draft.closeToTray} onChange={(event) => void update({ closeToTray: event.target.checked, closeBehaviorConfirmed: true })} />
                     <span><strong>关闭主窗口时隐藏到托盘</strong><small>托盘菜单仍可打开窗口或安全退出。</small></span>
                   </div>
                   <button
@@ -352,7 +353,7 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
                   </button>
                 </div>
               : <div className="settings-view__check settings-view__check--described">
-                  <input aria-label="在菜单栏显示微屿图标" type="checkbox" checked={draft.showMenuBarIcon} onChange={(event) => void update({ showMenuBarIcon: event.target.checked })} />
+                  <input aria-label="在菜单栏显示微屿图标" type="checkbox" role="switch" checked={draft.showMenuBarIcon} onChange={(event) => void update({ showMenuBarIcon: event.target.checked })} />
                   <span><strong>在菜单栏显示微屿图标</strong><small>关闭窗口仍遵循 macOS 的原生行为。</small></span>
                 </div>}
           </fieldset>
@@ -369,12 +370,13 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
           )}
           <fieldset disabled={operationBusy} id="settings-section-storage" role="tabpanel" aria-labelledby="settings-tab-storage" hidden={section !== 'storage'}>
             <legend>存储</legend>
-            <label className="settings-view__image-quality">图片保存质量<select aria-label="图片保存质量" aria-describedby="image-save-quality-description" value={draft.imageSaveQuality} onChange={(event) => void update({ imageSaveQuality: event.target.value as AppSettings['imageSaveQuality'] })}><option value="webp-q95">高清压缩（推荐）</option><option value="webp-q85">省空间压缩</option><option value="original">保留原图</option></select></label>
+            <label className="settings-view__image-quality">图片保存质量<AdaptiveSelect aria-label="图片保存质量" aria-describedby="image-save-quality-description" value={draft.imageSaveQuality} onChange={(event) => void update({ imageSaveQuality: event.target.value as AppSettings['imageSaveQuality'] })}><option value="webp-q95">高清压缩（推荐）</option><option value="webp-q85">省空间压缩</option><option value="original">保留原图</option></AdaptiveSelect></label>
             <p id="image-save-quality-description">{draft.imageSaveQuality === 'webp-q85' ? '文件更小、细节可能减少；仅处理新插入的静态图片，动图或变大时保留原图。' : draft.imageSaveQuality === 'original' ? '保留原有格式与画质；新插入的 PNG 可能无损瘦身，动图保持原样。' : '高清压缩可能微损画质；仅处理新插入的静态图片，动图或变大时保留原图。'}</p>
             <div className="settings-view__storage-divider" role="separator" aria-label="图片保存与数据位置分隔" />
             <h3 className="settings-view__storage-heading">存储位置与迁移</h3>
             <p>{storage ? `当前位置：${displayStoragePath(storage.root)} · ${formatBytes(storage.noteBytes + storage.assetBytes + storage.trashBytes)}` : '正在读取存储信息…'}</p>
             {storage?.previousStorageCleanup && <p role="status">新位置已启用。旧数据未完成清理，仍为你保留；下次启动会重新检查。</p>}
+            {storage?.defaultMigrationPending && <p role="status">默认资料库迁移尚未完成，当前继续使用原位置。请确认 app.cay 目标目录为空且可写，或通过下方控件选择新的位置；下次启动会重试。</p>}
             <p>选择空文件夹后再移动数据。微屿会检查空间并校验复制结果，重启确认后清理旧笔记；系统启动配置和未知文件保留。</p>
             <label className="settings-view__shortcut settings-view__migration-target">迁移目标文件夹<input aria-label="迁移目标文件夹" readOnly value={destination} placeholder="选择目标文件夹" onClick={() => void chooseStorageDirectory()} /><button type="button" className="settings-view__directory-pick" aria-label="选择数据目录" onClick={() => void chooseStorageDirectory()}><Icon name="folder" size={16} /></button><button type="button" disabled={destination.trim().length === 0 || busy === 'move'} onClick={() => void moveStorage()}>移动数据</button></label>
           </fieldset>
@@ -422,4 +424,12 @@ function formatRecordedShortcut(keys: Set<string>) {
   const modifiers = order.filter((modifier) => keys.has(modifier))
   const normalKeys = [...keys].filter((key) => !isShortcutModifier(key))
   return [...modifiers, ...normalKeys].join('+')
+}
+
+/** The hidden text uses the same font as the control, so CJK and font changes size correctly. */
+function AdaptiveSelect({children,value,...props}:ComponentProps<'select'>) {
+ const ref=useRef<HTMLSelectElement>(null)
+ const [label,setLabel]=useState('')
+ useLayoutEffect(()=> {setLabel(ref.current?.selectedOptions[0]?.textContent ?? '')},[value,children])
+ return <span className="settings-view__select"><span aria-hidden="true">{label}</span><select ref={ref} value={value} {...props}>{children}</select></span>
 }

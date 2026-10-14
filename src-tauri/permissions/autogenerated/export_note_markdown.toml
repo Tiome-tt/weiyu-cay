@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-note-markdown"
+description = "Enables the export_note_markdown command without any pre-configured scope."
+commands.allow = ["export_note_markdown"]
+
+[[permission]]
+identifier = "deny-export-note-markdown"
+description = "Denies the export_note_markdown command without any pre-configured scope."
+commands.deny = ["export_note_markdown"]

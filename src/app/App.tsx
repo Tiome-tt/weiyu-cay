@@ -458,6 +458,7 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
       temporary={services.temporary}
       windows={services.temporaryWindows}
       assets={services.assets}
+      assetReader={services.assets}
       initialWindowState={route.state}
       autosaveDelayMs={autosaveDelayMs}
       lifecycle={services.lifecycle}

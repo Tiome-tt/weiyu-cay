@@ -4,7 +4,7 @@ import settingsDefaults from '../../shared/settings-defaults.json'
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = settingsDefaults as AppSettings
 export const DEFAULT_NOTE_FONT_SIZE = 16
-const LEGACY_DEFAULT_BODY_FONT = 'system-ui, sans-serif'
+
 export const DEFAULT_STICKY_SETTINGS: Readonly<StickySettings> = {
   theme: DEFAULT_APP_SETTINGS.theme,
   stickyColorMode: DEFAULT_APP_SETTINGS.stickyColorMode,
@@ -181,9 +181,12 @@ export function normalizeStickySettings(value: StickySettings): StickySettings {
 
 export function themeVariables(settings: StickySettings, systemScheme: 'light' | 'dark' = 'light'): ThemeVariables {
   const normalized = normalizeStickySettings(settings)
-  const palette = normalized.theme === 'system' && systemScheme === 'dark' ? systemDarkPalette : palettes[normalized.theme]
+  const palette = normalized.theme === 'system' ? systemScheme === 'dark' ? systemDarkPalette : whitePalette : normalized.theme === 'ocean' ? oceanPalette : normalized.theme === 'light' ? whitePalette : normalized.theme === 'night' ? systemDarkPalette : palettes[normalized.theme]
   return {
     ...palette,
+    '--scrollbar-track': 'transparent',
+    '--scrollbar-thumb': palette['--color-accent'],
+    '--scrollbar-thumb-hover': palette['--color-accent-strong'],
     '--sticky-color': palette['--theme-note-accent'],
     '--body-font': normalized.bodyFont,
     '--code-font': normalized.codeFont,
@@ -198,7 +201,9 @@ export function themeStyle(settings: StickySettings, systemScheme: 'light' | 'da
   return themeVariables(settings, systemScheme) as CSSProperties
 }
 
-const systemDarkPalette = palettes.night
+const whitePalette = { ...palettes.system, '--color-canvas': '#FFFFFF', '--color-panel': '#FFFFFF', '--color-panel-warm': '#FAFBFC', '--color-accent-strong': '#43545F', '--color-accent-strong-hover': '#33434D', '--color-accent': '#788D9B', '--color-focus': '#43545F', '--color-accent-soft':'#F0F3F5', '--color-accent-border':'#D2DAE0', '--theme-note-accent':'#F4F6F8' }
+const oceanPalette = { ...palettes.system, '--color-canvas': '#EAF2F9', '--color-surface': '#F8FBFE', '--color-panel': '#F0F6FB', '--color-panel-warm': '#E2EDF6', '--color-accent': '#619DCA', '--color-accent-strong': '#236B96', '--color-accent-strong-hover': '#19577F', '--color-focus': '#236B96', '--color-text': '#253C4C', '--color-heading': '#183044' }
+const systemDarkPalette = { ...palettes.night, '--color-canvas':'#18191C', '--color-surface':'#202124', '--color-panel':'#232427', '--color-panel-warm':'#292A2E', '--color-border':'#484A50', '--color-border-soft':'#34363B', '--color-accent':'#9598A0', '--color-accent-strong':'#C5C7CE', '--color-accent-strong-hover':'#E0E1E6', '--color-on-accent':'#1C1D20', '--color-accent-soft':'#303238', '--color-accent-border':'#4B4D56', '--color-focus':'#B7BBC7', '--color-text':'#E1E2E6', '--color-heading':'#F3F3F5', '--color-muted':'#B1B2BB', '--color-muted-light':'#777983', '--theme-note-accent':'#292A2F', '--color-focus-soft':'rgb(183 187 199 / 18%)', '--color-accent-haze':'rgb(149 152 160 / 18%)' }
 
 function clamp(value: number, minimum: number, maximum: number) {
   if (!Number.isFinite(value)) return minimum
@@ -206,5 +211,5 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 function normalizeBodyFont(value: string) {
-  return value === LEGACY_DEFAULT_BODY_FONT ? DEFAULT_APP_SETTINGS.bodyFont : value
+  return value
 }

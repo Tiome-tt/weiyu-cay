@@ -303,3 +303,29 @@ describe('useLibrary moveNote', () => {
     expect(notes.listNotes).toHaveBeenLastCalledWith(folderB)
   })
 })
+
+it('deduplicates pending note reads and retains the same snapshot for an unchanged revision',async()=>{
+ let resolve!:(document:NoteDocument)=>void
+ const original=note('large note')
+ const loadNote=vi.fn(()=>new Promise<NoteDocument>(done=>resolve=done))
+ const notesPort=fakeNotePort({loadNote}),foldersPort=fakeFolderPort()
+ const hook=renderHook(()=>useLibrary(notesPort,foldersPort))
+ act(()=>{hook.result.current.selectNote(original.id);hook.result.current.selectNote(original.id)})
+ expect(loadNote).toHaveBeenCalledTimes(1)
+ await act(async()=>resolve(original))
+ const first=hook.result.current.document
+ act(()=>hook.result.current.selectNote(original.id))
+ await act(async()=>resolve({...original}))
+ expect(hook.result.current.document).toBe(first)
+})
+it('does not replace a saved revision with an older background read',async()=>{
+ let resolve!:(document:NoteDocument)=>void
+ const original=note('old'),latest={...original,markdown:'saved',revision:3}
+ const loadNote=vi.fn(()=>new Promise<NoteDocument>(done=>resolve=done))
+ const notesPort=fakeNotePort({loadNote}),foldersPort=fakeFolderPort()
+ const hook=renderHook(()=>useLibrary(notesPort,foldersPort))
+ act(()=>hook.result.current.selectNote(original.id))
+ act(()=>hook.result.current.adoptDocument(latest))
+ await act(async()=>resolve(original))
+ expect(hook.result.current.document).toBe(latest)
+})

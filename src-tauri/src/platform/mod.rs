@@ -5,6 +5,17 @@ mod windows;
 
 use crate::error::CommandError;
 
+pub(crate) fn installer_data_path() -> Result<Option<std::path::PathBuf>, CommandError> {
+    #[cfg(windows)]
+    {
+        windows::installer_data_path()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
+}
+
 #[cfg(unix)]
 pub use unix::{
     available_storage_bytes, recover_file, replace_file, replace_file_with_backup, sync_parent,

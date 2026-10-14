@@ -3,6 +3,8 @@ import type {RichNode} from '../../domain/content'
 import type {NoteDocument} from '../../domain/model'
 import type {ImageReadPort} from '../../domain/ports'
 import { richFontSizePoints } from '../document/font'
+import { markdownToRichDocument } from '../document/markdownConversion'
+import { parseMarkdownTable } from '../editor/markdownActions'
 const colors:Record<string,string>={green:'DCEDE5',yellow:'FFF0AD',blue:'DCEAF5',pink:'F5DDE3',purple:'E9DDF5',gray:'E5E8E6'}
 const headings=[HeadingLevel.HEADING_1,HeadingLevel.HEADING_2,HeadingLevel.HEADING_3,HeadingLevel.HEADING_4,HeadingLevel.HEADING_5,HeadingLevel.HEADING_6]
 function attr(node:RichNode,key:string){const value=node.attrs?.[key];return typeof value==='string'?value:''}
@@ -21,7 +23,8 @@ function inline(node:RichNode):ParagraphChild[] {
  return typeof href==='string'&&/^(https?:|mailto:)/i.test(href)?[new ExternalHyperlink({link:href,children:[run]})]:[run]
 }
 export async function buildDocumentDocx(note:NoteDocument,reader?:ImageReadPort):Promise<Uint8Array> {
- if(note.content?.type!=='document')throw new Error('Only documents export as DOCX')
+ if(note.content?.type==='file')throw new Error('Attachments export in their original format')
+ const root = note.content?.type==='document' ? note.content.document.root : note.content?.type==='text' ? {type:'doc',content:note.content.text.split('\n').map(text=>({type:'paragraph',content:text?[{type:'text',text}]:[]}))} : markdownToRichDocument(note.markdown).root
  const blocks=async(node:RichNode,depth=0,list?:'bullet'|'ordered'):Promise<Array<Paragraph|Table>>=>{
   if(node.type==='table')return [new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:await Promise.all((node.content??[]).map(async row=>new TableRow({children:await Promise.all((row.content??[]).map(async cell=>{
    const content=await blocks({type:'doc',content:cell.content})
@@ -49,7 +52,17 @@ export async function buildDocumentDocx(note:NoteDocument,reader?:ImageReadPort)
    alignment:alignment(node),bullet:list==='bullet'?{level:Math.min(depth,8)}:undefined,numbering:list==='ordered'?{reference:'cay-list',level:Math.min(depth,8)}:undefined,
    spacing:{after:120},
   })]
-  if(node.type==='rawMarkdown')return [new Paragraph({children:[new TextRun({text:attr(node,'source'),font:'Consolas'})]})]
+  if(node.type==='rawMarkdown'){
+   const table=parseMarkdownTable(attr(node,'source'))
+   if(table){
+    return blocks({type:'table',content:table.cells.map((row,r)=>({type:'tableRow',content:row.flatMap((value,c)=>{
+     if(table.merges?.some(merge=>(merge.row!==r||merge.column!==c)&&r>=merge.row&&r<merge.row+merge.rowSpan&&c>=merge.column&&c<merge.column+merge.columnSpan))return []
+     const merge=table.merges?.find(merge=>merge.row===r&&merge.column===c)
+     return [{type:r===0?'tableHeader':'tableCell',attrs:{colspan:merge?.columnSpan??1,rowspan:merge?.rowSpan??1},content:[{type:'paragraph',content:[{type:'text',text:value.replace(/<br\s*\/?\s*>/gi,'\n')}]}]}]
+    })}))})
+   }
+   return [new Paragraph({children:[new TextRun({text:attr(node,'source'),font:'Consolas'})]})]
+  }
   if(node.type==='attachment')return [new Paragraph('附件：'+(attr(node,'label')||attr(node,'fileName')))]
   if(node.type==='horizontalRule')return [new Paragraph({border:{bottom:{style:'single',size:4,color:'B0B8B2'}}})]
   const children:Array<Paragraph|Table>=[]
@@ -59,7 +72,7 @@ export async function buildDocumentDocx(note:NoteDocument,reader?:ImageReadPort)
   }
   return children
  }
- const content=await blocks(note.content.document.root)
+ const content=await blocks(root)
  const documentFile=new Document({title:note.title,creator:'Cay (微屿)',styles:{default:{document:{run:{font:'Microsoft YaHei',size:22}}}},numbering:{config:[{reference:'cay-list',levels:Array.from({length:9},(_,level)=>({level,format:'decimal',text:`%${level+1}.`,alignment:AlignmentType.LEFT,style:{paragraph:{indent:{left:720*(level+1),hanging:260}}}}))}]},sections:[{children:[new Paragraph({text:note.title,heading:HeadingLevel.TITLE}),...content]}]})
  return Packer.toArrayBuffer(documentFile).then(buffer=>new Uint8Array(buffer))
 }

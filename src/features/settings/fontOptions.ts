@@ -1,0 +1,37 @@
+/** Labels follow font-family names; persisted CSS stacks remain compatible. */
+export const BODY_FONT_OPTIONS = [
+  { value: 'system-ui, sans-serif', label: '系统字体' },
+  { value: 'KaiTi, STKaiti, serif', label: '楷体（默认）' },
+  { value: 'SimSun, NSimSun, serif', label: '宋体' },
+  { value: 'SimHei, sans-serif', label: '黑体' },
+  { value: 'FangSong, STFangsong, serif', label: '仿宋' },
+  { value: 'Microsoft YaHei, Microsoft YaHei UI, sans-serif', label: '微软雅黑' },
+  { value: 'Microsoft YaHei UI, sans-serif', label: 'Microsoft YaHei UI' },
+  { value: 'DengXian, sans-serif', label: '等线' },
+  { value: 'STSong, serif', label: '华文宋体' },
+  { value: 'STKaiti, serif', label: '华文楷体' },
+  { value: 'STFangsong, serif', label: '华文仿宋' },
+  { value: 'PingFang SC, PingFang TC, sans-serif', label: '苹方-简' },
+  { value: 'Hiragino Sans GB, Hiragino Sans, sans-serif', label: '冬青黑体简体中文' },
+  { value: 'Arial, sans-serif', label: 'Arial' },
+  { value: 'Calibri, sans-serif', label: 'Calibri' },
+  { value: 'Aptos, sans-serif', label: 'Aptos' },
+  { value: 'Cambria, serif', label: 'Cambria' },
+  { value: 'Times New Roman, serif', label: 'Times New Roman' },
+  { value: 'Georgia, serif', label: 'Georgia' },
+  { value: 'serif', label: '系统衬线字体' },
+] as const
+
+export const CODE_FONT_OPTIONS = [
+  { value: 'ui-monospace, SFMono-Regular, Consolas, monospace', label: '系统等宽字体（默认）' },
+  { value: 'Cascadia Code', label: 'Cascadia Code' },
+  { value: 'Cascadia Mono', label: 'Cascadia Mono' },
+  { value: 'Consolas', label: 'Consolas' },
+  { value: 'Courier New', label: 'Courier New' },
+  { value: 'JetBrains Mono, monospace', label: 'JetBrains Mono' },
+  { value: 'Fira Code, monospace', label: 'Fira Code' },
+  { value: 'SFMono-Regular, Menlo, Monaco, monospace', label: 'SF Mono' },
+  { value: 'Menlo', label: 'Menlo' },
+  { value: 'Monaco', label: 'Monaco' },
+  { value: 'Segoe UI Mono', label: 'Segoe UI Mono（旧选项）' },
+] as const

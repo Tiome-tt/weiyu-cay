@@ -97,6 +97,8 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
     assert_eq!(sticky["windows"], serde_json::json!(["temporary-*"]));
     for required in [
         "allow-load-temporary",
+        "allow-read-image-asset",
+        "allow-read-image-assets",
         "allow-save-temporary",
         "allow-hide-temporary-window",
         "allow-set-temporary-always-on-top",
@@ -111,7 +113,7 @@ fn capability_documents_semantically_keep_sticky_renderers_out_of_privileged_com
         "allow-list-notes",
         "allow-rename-note",
         "allow-list-link-targets",
-        "allow-read-image-asset",
+        "allow-sync-external-file",
         "allow-open-external-link",
         "allow-delete-temporary",
         "allow-convert-temporary",
@@ -951,4 +953,24 @@ fn saves_smaller_png_without_changing_decoded_pixels() {
             .into_raw(),
         pixels
     );
+}
+
+#[test]
+fn temporary_saved_images_can_be_read_singly_and_in_batches() {
+    let store = TestStore::new();
+    create_note(&store, FORMAL_ID, NoteKind::Formal);
+    create_note(&store, TEMPORARY_ID, NoteKind::Temporary);
+    let png = encoded(ImageFormat::Png, 2, 3);
+    let saved = save_image_to(&store.paths, input(TEMPORARY_ID, "image/png", png.clone())).unwrap();
+    let single =
+        read_image_asset_from(&store.paths, id(TEMPORARY_ID), &saved.relative_path).unwrap();
+    assert_eq!(single.bytes, png);
+    let batch = simple_notes_lib::commands::assets::read_image_assets_from(
+        &store.paths,
+        id(TEMPORARY_ID),
+        &[saved.relative_path],
+    )
+    .unwrap();
+    assert_eq!(batch[0].bytes, png);
+    assert!(read_image_asset_from(&store.paths, id(FORMAL_ID), &batch[0].relative_path).is_err());
 }

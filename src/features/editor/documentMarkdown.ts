@@ -1,9 +1,11 @@
-import { syntaxTree } from '@codemirror/language'
+import { createCodeLanguageControl } from './codeLanguageControl'
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import { Annotation, EditorSelection, StateEffect, type ChangeSet, type EditorState, type Extension, type Range, type SelectionRange } from '@codemirror/state'
 import { Decoration, EditorView, keymap, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { DocumentImageWidget, DocumentTableWidget, type DocumentImageWidgetContext } from './documentWidgets'
 import { isTableMetadataLine, parseMarkdownTable, type MarkdownTable } from './markdownActions'
+import { replaceFenceLanguage } from './codeLanguages'
 
 export type LiveMarkdownKind =
   | 'heading'
@@ -41,17 +43,19 @@ export function analyzeLiveMarkdown(
   ranges: readonly LiveMarkdownRange[],
 ): readonly LiveMarkdownNode[] {
   const result: LiveMarkdownNode[] = []
-  const source = state.doc.toString()
+  const source = state.doc
 
-  const visit = (node: SyntaxNode) => {
-    if (node.name !== 'Document' && !ranges.some((range) => node.from < range.to && node.to > range.from)) return
+  const seen = new Set<string>()
+  for (const range of ranges) syntaxTree(state).iterate({ from: range.from, to: range.to, enter: cursor => {
+    const node = cursor.node
+    if (node.name !== 'Document' && !(node.from < range.to && node.to > range.from)) return false
     const mapped = mapSyntaxNode(state, source, node)
-    if (mapped !== null) result.push(mapped)
-    if (mapped?.kind === 'image' || mapped?.kind === 'table' || mapped?.kind === 'fenced-code') return
-    for (let child = node.firstChild; child !== null; child = child.nextSibling) visit(child)
-  }
-
-  visit(syntaxTree(state).topNode)
+    if (mapped !== null) {
+      const key = `${mapped.kind}:${mapped.from}:${mapped.to}`
+      if (!seen.has(key)) { result.push(mapped); seen.add(key) }
+    }
+    if (mapped?.kind === 'image' || mapped?.kind === 'table' || mapped?.kind === 'fenced-code') return false
+  } })
   return result.sort((left, right) => left.from - right.from || right.to - left.to)
 }
 
@@ -107,7 +111,7 @@ export function visibleDocumentLineNumbers(
   return [...numbers].sort((left, right) => left - right)
 }
 
-function mapSyntaxNode(state: EditorState, source: string, node: SyntaxNode): LiveMarkdownNode | null {
+function mapSyntaxNode(state: EditorState, source: EditorState['doc'], node: SyntaxNode): LiveMarkdownNode | null {
   const line = state.doc.lineAt(node.from)
   const ordinaryBlock = { blockFrom: line.from, blockTo: line.to }
   if (/^ATXHeading[1-6]$/u.test(node.name)) {
@@ -124,13 +128,13 @@ function mapSyntaxNode(state: EditorState, source: string, node: SyntaxNode): Li
   if (node.name === 'Image') return linkNode(source, node, ordinaryBlock, true)
   if (node.name === 'ListMark') {
     return liveNode('list-marker', node.from, node.to, node.to, node.to, ordinaryBlock, {
-      marker: source.slice(node.from, node.to),
+      marker: source.sliceString(node.from, node.to),
     })
   }
   if (node.name === 'TaskMarker') {
     return liveNode('task-marker', node.from, node.to, node.from, node.to, ordinaryBlock, {
-      checked: /x/iu.test(source.slice(node.from, node.to)),
-      label: source.slice(node.to, line.to).trim(),
+      checked: /x/iu.test(source.sliceString(node.from, node.to)),
+      label: source.sliceString(node.to, line.to).trim(),
     })
   }
   if (node.name === 'QuoteMark') {
@@ -149,7 +153,7 @@ function mapSyntaxNode(state: EditorState, source: string, node: SyntaxNode): Li
       code?.from ?? node.from,
       code?.to ?? node.from,
       { blockFrom: node.from, blockTo: node.to },
-      { language: info === null ? '' : source.slice(info.from, info.to) },
+      { language: info === null ? '' : source.sliceString(info.from, info.to) },
     )
   }
   if (node.name === 'Table') {
@@ -168,7 +172,7 @@ function delimitedNode(
 }
 
 function linkNode(
-  source: string,
+  source: EditorState['doc'],
   node: SyntaxNode,
   block: Pick<LiveMarkdownNode, 'blockFrom' | 'blockTo'>,
   image: boolean,
@@ -178,11 +182,11 @@ function linkNode(
   if (marks.length < 4 || url === null) return null
   const labelOpen = marks[0]
   const labelClose = marks[1]
-  const destination = source.slice(url.from, url.to)
+  const destination = source.sliceString(url.from, url.to)
   if (image) {
     if (!/^assets\/[A-Za-z0-9._/-]+$/u.test(destination) || destination.includes('..')) return null
     return liveNode('image', node.from, node.to, labelOpen.to, labelClose.from, block, {
-      alt: source.slice(labelOpen.to, labelClose.from),
+      alt: source.sliceString(labelOpen.to, labelClose.from),
       relativePath: destination,
     })
   }
@@ -216,9 +220,9 @@ function childrenNamed(node: SyntaxNode, name: string): SyntaxNode[] {
   return children
 }
 
-function skipHorizontalWhitespace(source: string, from: number, to: number) {
+function skipHorizontalWhitespace(source: EditorState['doc'], from: number, to: number) {
   let cursor = from
-  while (cursor < to && (source[cursor] === ' ' || source[cursor] === '\t')) cursor += 1
+  while (cursor < to && /[ \t]/.test(source.sliceString(cursor, cursor + 1))) cursor += 1
   return cursor
 }
 
@@ -381,6 +385,11 @@ function buildDocumentDecorations(
         ...(href === null ? {} : { attributes: { 'data-live-href': href, title: href } }),
       }).range(node.contentFrom, node.contentTo))
     }
+    if (node.kind === 'fenced-code') {
+      const opening = view.state.doc.lineAt(node.from)
+      const language = typeof node.metadata?.language === 'string' ? node.metadata.language.trim().split(/\s+/)[0] : ''
+      ranges.push(Decoration.widget({ widget: new CodeLanguageWidget(language, editable), side: 1 }).range(opening.to))
+    }
     if (activeNode) continue
     if (node.kind === 'image') {
       ranges.push(Decoration.replace({
@@ -439,9 +448,10 @@ function buildDocumentDecorations(
     } else if (node.kind === 'fenced-code') {
       const openingLine = view.state.doc.lineAt(node.from)
       const closingLine = view.state.doc.lineAt(Math.max(node.from, node.to - 1))
-      ranges.push(Decoration.line({ attributes: { class: 'cm-live-hidden-fence' } }).range(openingLine.from))
       addReplacement(ranges, node.from, openingLine.to)
-      if (closingLine.number !== openingLine.number) {
+      const marker = /(`{3,}|~{3,})/.exec(openingLine.text)?.[1]
+      const closing = /(`{3,}|~{3,})\s*$/.exec(closingLine.text)?.[1]
+      if (closingLine.number !== openingLine.number && marker !== undefined && closing !== undefined && closing[0] === marker[0] && closing.length >= marker.length) {
         ranges.push(Decoration.line({ attributes: { class: 'cm-live-hidden-fence' } }).range(closingLine.from))
         addReplacement(ranges, closingLine.from, node.to)
       }
@@ -449,6 +459,30 @@ function buildDocumentDecorations(
   }
 
   return Decoration.set(ranges, true)
+}
+
+class CodeLanguageWidget extends WidgetType {
+  constructor(private readonly language: string, private readonly editable: boolean) { super() }
+  eq(other: CodeLanguageWidget) { return this.language === other.language && this.editable === other.editable }
+  toDOM(view: EditorView): HTMLElement {
+    const control = createCodeLanguageControl({
+      value: this.language,
+      disabled: !this.editable || view.state.readOnly,
+      onCommit: (language, focusEditor) => {
+        if (view.state.readOnly || !this.editable) return
+        const line = view.state.doc.lineAt(view.posAtDOM(control.dom))
+        const text = replaceFenceLanguage(line.text, language)
+        const body = Math.min(view.state.doc.length + text.length - line.length, line.from + text.length + 1)
+        view.dispatch({ changes: text === line.text ? undefined : { from: line.from, to: line.to, insert: text }, selection: { anchor: body }, effects: EditorView.scrollIntoView(body) })
+        if (focusEditor) view.focus()
+      },
+    })
+    this.controls.set(control.dom, control)
+    return control.dom
+  }
+  private controls = new WeakMap<HTMLElement, ReturnType<typeof createCodeLanguageControl>>()
+  destroy(dom: HTMLElement) { this.controls.get(dom)?.destroy() }
+  ignoreEvent() { return true }
 }
 
 function documentTableSourceRange(state: EditorState, from: number, to: number): { from: number; to: number } {
@@ -479,8 +513,10 @@ function documentTableSourceRange(state: EditorState, from: number, to: number):
 
 function documentTableRangeAtPosition(state: EditorState, position: number): { from: number; to: number } | null {
   const bounded = Math.max(0, Math.min(position, state.doc.length))
+  // Initial syntax parsing is time bounded; finish only through the queried position.
+  const tree=ensureSyntaxTree(state,Math.min(state.doc.length,bounded+1),50)??syntaxTree(state)
   for (const bias of [-1, 1] as const) {
-    let node: SyntaxNode | null = syntaxTree(state).resolveInner(bounded, bias)
+    let node: SyntaxNode | null = tree.resolveInner(bounded, bias)
     while (node !== null && node.name !== 'Table') node = node.parent
     // The position immediately after a table belongs to the following block.
     // Treating the right boundary as part of the table makes a click in the

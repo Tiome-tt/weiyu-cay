@@ -1,6 +1,11 @@
+import {fitMenuToBounds} from '../../shared/menuPosition'
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
+import { syntaxHighlighting } from '@codemirror/language'
+import { classHighlighter } from '@lezer/highlight'
+import { codeLanguage } from './codeLanguages'
 import { Annotation, Compartment, EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
+import { history, historyKeymap, isolateHistory, indentWithTab } from '@codemirror/commands'
 import { GFM } from '@lezer/markdown'
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
@@ -23,6 +28,7 @@ import {
   type MarkdownTable,
 } from './markdownActions'
 import { TableEditorDialog } from './TableEditorDialog'
+import { elementScale } from '../../shared/elementScale'
 
 const pasteTokenAnnotation = Annotation.define<symbol>()
 
@@ -42,6 +48,7 @@ interface MarkdownSourceProps {
   onNavigateLink?(noteId: NoteId): void
   presentation?: MarkdownPresentation
   showBlockHandle?: boolean
+  showLineNumbers?: boolean
   external?: Pick<SystemPort, 'openExternal'>
   onInsertInternalLinkRequest?(): void
 }
@@ -110,9 +117,11 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   onNavigateLink,
   presentation = 'document',
   showBlockHandle = true,
+  showLineNumbers = true,
   external,
   onInsertInternalLinkRequest,
 }: MarkdownSourceProps, ref) {
+  const menuRef=useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const selectionRef = useRef(onSelectionChange)
@@ -140,6 +149,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const contextViewRef = useRef<EditorView | null>(null)
   const tableScrollPositionsRef = useRef(new Map<number, number>())
   const contextMenuAnchorRef = useRef<ContextMenuAnchor | null>(null)
+  const keyboardMenuFocusRef=useRef(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [tableDialog, setTableDialog] = useState<TableDialogState | null>(null)
   const [hoverLine,setHoverLine]=useState({number:1,from:0,top:12,left:4,visible:false})
@@ -175,6 +185,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
   const syncSurfaceControls = (view: EditorView) => {
     const selection = view.state.selection.main
     const hostBounds = hostRef.current?.getBoundingClientRect()
+    const scale = elementScale(hostRef.current)
     let blockTop = 12
     let toolbarTop = 12
     let toolbarLeft = 56
@@ -182,10 +193,10 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       const caret = view.coordsAtPos(selection.head)
       const start = view.coordsAtPos(selection.from)
       const end = view.coordsAtPos(selection.to)
-      if (caret !== null && hostBounds !== undefined) blockTop = Math.max(12, caret.top - hostBounds.top)
+      if (caret !== null && hostBounds !== undefined) blockTop = Math.max(12, (caret.top - hostBounds.top) / scale)
       if (start !== null && end !== null && hostBounds !== undefined) {
-        toolbarTop = Math.max(40, Math.min(start.top, end.top) - hostBounds.top - 8)
-        toolbarLeft = Math.max(56, (start.left + end.right) / 2 - hostBounds.left)
+        toolbarTop = Math.max(40, (Math.min(start.top, end.top) - hostBounds.top) / scale - 8)
+        toolbarLeft = Math.max(56, ((start.left + end.right) / 2 - hostBounds.left) / scale)
       }
     } catch {
       // JSDOM and hidden panes do not expose layout; stable fallbacks keep controls usable.
@@ -235,8 +246,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       return
     }
     setContextMenu({
-      x: anchorBounds.left + anchor.offsetX - hostBounds.left,
-      y: anchorBounds.top + anchor.offsetY - hostBounds.top,
+      x: (anchorBounds.left + anchor.offsetX - hostBounds.left) / elementScale(hostRef.current),
+      y: (anchorBounds.top + anchor.offsetY - hostBounds.top) / elementScale(hostRef.current),
     })
   }
 
@@ -250,6 +261,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
         EditorView.contentAttributes.of({ 'aria-readonly': String(locked) }),
       ]),
     })
+    view.dispatch({ effects: refreshDocumentMarkdownContext.of(undefined) })
   }
 
   const drainReadyPastes = () => {
@@ -295,6 +307,10 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   useImperativeHandle(ref, () => ({
     beginEditBarrier: async () => {
+      const view = viewRef.current
+      if (view !== null) {
+        for (const table of view.dom.querySelectorAll<HTMLElement>('.cm-live-table')) table.dispatchEvent(new Event('table-flush'))
+      }
       barrierDepthRef.current += 1
       configureEditable(viewRef.current)
       // Every barrier owner releases only its own depth. Pending paste tokens
@@ -332,16 +348,29 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
     },
   }))
 
+  useLayoutEffect(()=>{
+    const menu=menuRef.current,host=hostRef.current
+    if(!menu||!host||!contextMenu)return
+    if(keyboardMenuFocusRef.current){keyboardMenuFocusRef.current=false;menu.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({preventScroll:true})}
+    const bounds=host.getBoundingClientRect(),rect=menu.getBoundingClientRect(),scale=elementScale(host)
+    const top=Math.max(30,bounds.top),bottom=Math.min(window.innerHeight,bounds.bottom)
+    menu.style.maxHeight=`${Math.max(60,(bottom-top-16)/scale)}px`
+    menu.style.overflowY='auto'
+    const fitted=fitMenuToBounds({x:bounds.left+contextMenu.x*scale,y:bounds.top+contextMenu.y*scale,width:rect.width,height:Math.min(rect.height,bottom-top-16),left:bounds.left,top,right:Math.min(window.innerWidth,bounds.right),bottom})
+    const x=(fitted.x-bounds.left)/scale,y=(fitted.y-bounds.top)/scale
+    if(Math.abs(x-contextMenu.x)>.5||Math.abs(y-contextMenu.y)>.5)setContextMenu({...contextMenu,x,y})
+  },[contextMenu])
   useLayoutEffect(() => {
     const parent = hostRef.current
     if (parent === null) return
     const state = EditorState.create({
       doc: markdown,
       extensions: [
-        markdownLanguage({ extensions: GFM }),
+        markdownLanguage({ extensions: GFM, codeLanguages: codeLanguage }),
+        syntaxHighlighting(classHighlighter),
         createDocumentMarkdownExtension({
           getPresentation: () => presentationRef.current,
-          isEditable: () => !readOnlyRef.current,
+          isEditable: () => !readOnlyRef.current && barrierDepthRef.current === 0,
           getImageContext: () => ({ noteId: noteIdRef.current, assetReader: assetReaderRef.current }),
           onOpenExternal: (href) => { void externalRef.current?.openExternal(href) },
           tableScrollPositions: tableScrollPositionsRef.current,
@@ -352,9 +381,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             view.dispatch({
               changes: { from, to, insert: tableMarkdown },
               selection: { anchor: from + tableMarkdown.length },
-              annotations: documentTableEdit.of(true),
+              annotations: [documentTableEdit.of(true), isolateHistory.of('full')],
             })
-            view.focus()
+            if (!(document.activeElement instanceof HTMLTextAreaElement)) view.focus()
             if (scrollLeft === undefined) return
             const restore = () => {
               const tableWrapper = [...view.dom.querySelectorAll<HTMLElement>('.cm-live-table')].find((element) => {
@@ -362,7 +391,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
               })
               const tableViewport = tableWrapper?.querySelector<HTMLElement>('.cm-live-table-viewport')
               if (tableWrapper === undefined || tableViewport === null || tableViewport === undefined) return
-              const restored = Math.max(0, scrollLeft)
+              // A keyboard focus restore may already have revealed another cell.
+              const restored = Math.max(0, tableScrollPositionsRef.current.get(from) ?? scrollLeft)
               tableViewport.scrollLeft = restored
               const rail = tableWrapper.querySelector<HTMLElement>('.cm-live-table-scrollbar')
               if (rail !== null) rail.scrollLeft = restored
@@ -379,6 +409,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
               onNavigate: (id) => onNavigateLinkRef.current?.(id),
             })]
           : []),
+        ...(!links ? [history(), keymap.of(historyKeymap)] : []),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({
           'aria-label': 'Markdown source',
@@ -391,7 +422,21 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           EditorView.contentAttributes.of({ 'aria-readonly': String(readOnly) }),
         ]),
         keymap.of([
-          { key: 'Mod-b', run: (view) => applyMarkdownStyle(view, 'bold', readOnlyRef, barrierDepthRef) },
+          indentWithTab,
+          { key:'Enter', run:(view)=> {
+            if (readOnlyRef.current || barrierDepthRef.current > 0 || presentationRef.current !== 'document') return false
+            const selection=view.state.selection.main,line=view.state.doc.lineAt(selection.head)
+            if (!selection.empty || selection.head !== line.to || !/^ {0,3}(?:`{3,}|~{3,})$/.test(line.text)) return false
+            view.dispatch({changes:{from:line.to,insert:'\n'},selection:{anchor:line.to+1}})
+            requestAnimationFrame(()=> {
+              if (viewRef.current !== view || view.state.readOnly || barrierDepthRef.current>0) return
+              for(const input of view.dom.querySelectorAll<HTMLInputElement>('[role="combobox"][aria-label="代码块语言"]')) {
+                if(view.state.doc.lineAt(view.posAtDOM(input)).from===line.from){input.focus();break}
+              }
+            })
+            return true
+          } },
+          { key: 'Mod-b' , run: (view) => applyMarkdownStyle(view, 'bold', readOnlyRef, barrierDepthRef) },
           { key: 'Mod-i', run: (view) => applyMarkdownStyle(view, 'italic', readOnlyRef, barrierDepthRef) },
           { key: 'Mod-k', run: (view) => applyMarkdownStyle(view, 'link', readOnlyRef, barrierDepthRef) },
         ]),
@@ -487,8 +532,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             if (position === null || anchorBounds === null) {
               contextMenuAnchorRef.current = null
               setContextMenu({
-                x: event.clientX - bounds.left,
-                y: event.clientY - bounds.top,
+                x: (event.clientX - bounds.left) / elementScale(hostRef.current),
+                y: (event.clientY - bounds.top) / elementScale(hostRef.current),
               })
               return true
             }
@@ -626,14 +671,14 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
       if (hostBounds === undefined) return
       contextMenuAnchorRef.current = null
       setContextMenu({
-        x: handleBounds.right + 8 - hostBounds.left,
-        y: handleBounds.top - hostBounds.top,
+        x: (handleBounds.right - hostBounds.left) / elementScale(hostRef.current) + 8,
+        y: (handleBounds.top - hostBounds.top) / elementScale(hostRef.current),
       })
       return
     }
     const anchor = {
       position,
-      offsetX: handleBounds.right + 8 - anchorBounds.left,
+      offsetX: handleBounds.right + 8 * elementScale(hostRef.current) - anchorBounds.left,
       offsetY: handleBounds.top - anchorBounds.top,
     }
     contextMenuAnchorRef.current = anchor
@@ -678,15 +723,17 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 
   return (
     <div className="markdown-source" ref={hostRef} onMouseMove={event=>{
+      if(!showLineNumbers && !showBlockHandle)return
       const view=viewRef.current
       if(!view || event.target instanceof Element && event.target.closest('.markdown-block-handle,.markdown-context-menu'))return
       let position: number | null
       try { position=view.posAtCoords({x:event.clientX,y:event.clientY}) } catch { return }
       if(position===null)return
       const line=view.state.doc.lineAt(position),coords=view.coordsAtPos(line.from),bounds=event.currentTarget.getBoundingClientRect()
-      if(coords)setHoverLine(previous=>previous.number===line.number&&previous.visible?previous:{number:line.number,from:line.from,top:Math.max(0,coords.top-bounds.top),left:Math.max(4,coords.left-bounds.left-60),visible:true})
+      const scale=elementScale(event.currentTarget)
+      if(coords)setHoverLine(previous=>previous.number===line.number&&previous.visible?previous:{number:line.number,from:line.from,top:Math.max(0,(coords.top-bounds.top)/scale),left:Math.max(4,(coords.left-bounds.left)/scale-60),visible:true})
     }} onMouseLeave={()=>setHoverLine(previous=>({...previous,visible:false}))}>
-      <span aria-hidden="true" className={`markdown-line-number${hoverLine.visible?' is-visible':''}`} style={{top:hoverLine.top,left:hoverLine.left}}>{hoverLine.number}</span>
+      {showLineNumbers && <span aria-hidden="true" className={`markdown-line-number${hoverLine.visible?' is-visible':''}`} style={{top:hoverLine.top,left:hoverLine.left}}>{hoverLine.number}</span>}
       {!readOnly && showBlockHandle && !surfaceControls.blockProtected && (
         <button
           type="button"
@@ -695,7 +742,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           title="添加内容块"
           style={{ top: hoverLine.visible ? hoverLine.top : surfaceControls.blockTop, ...(hoverLine.visible ? {left:hoverLine.left+28,transform:'none'} : {}) }}
           onPointerDown={(event) => event.preventDefault()}
-          onClick={(event) => openInsertionMenu(event.currentTarget)}
+          onClick={(event) => {keyboardMenuFocusRef.current=event.detail===0;openInsertionMenu(event.currentTarget)}}
         >
           +
         </button>
@@ -716,9 +763,9 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
         </div>
       )}
       {contextMenu && (
-        <div className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+        <div ref={menuRef} className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); closeContextMenu() }}>插入表格</button>
-          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { closeContextMenu(); onInsertInternalLinkRequest() }}>插入内部链接</button>}
+          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { closeContextMenu(); onInsertInternalLinkRequest() }}>引用笔记</button>}
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.link)}>插入超链接</button>
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.image)}>插入图片</button>
           <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.code)}>插入代码块</button>

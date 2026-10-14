@@ -1,0 +1,45 @@
+import {afterEach,expect,it,vi} from 'vitest'
+import {fireEvent} from '@testing-library/react'
+import {createCodeLanguageControl} from './codeLanguageControl'
+afterEach(()=>document.body.replaceChildren())
+it('has no blank menu entry, permits custom input and clears without changing code',()=>{
+ const commit=vi.fn()
+ const control=createCodeLanguageControl({value:'',disabled:false,onCommit:commit})
+ document.body.append(control.dom)
+ expect(control.input.value).toBe('')
+ fireEvent.click(control.dom.querySelector('button')!)
+ expect(document.querySelectorAll('[role="option"]')).toHaveLength(16)
+ expect(Array.from(document.querySelectorAll('[role="option"]')).every(item=>item.textContent!.trim())).toBe(true)
+ fireEvent.input(control.input,{target:{value:'my-language'}})
+ fireEvent.keyDown(control.input,{key:'Enter'})
+ expect(commit).toHaveBeenLastCalledWith('my-language',true)
+ control.setValue('java')
+ fireEvent.input(control.input,{target:{value:''}})
+ fireEvent.blur(control.input)
+ expect(commit).toHaveBeenLastCalledWith('',false)
+ control.destroy()
+})
+it('selects through a theme menu and disables both controls at a save barrier',()=>{
+ const commit=vi.fn(),control=createCodeLanguageControl({value:'java',disabled:false,onCommit:commit})
+ document.body.append(control.dom)
+ fireEvent.click(control.dom.querySelector('button')!)
+ fireEvent.click(Array.from(document.querySelectorAll('[role="option"]')).find(node=>node.textContent==='Python')!)
+ expect(commit).toHaveBeenCalledWith('python',true)
+ expect(document.querySelector('[role="listbox"]')).toBeNull()
+ control.setDisabled(true)
+ expect(control.input.disabled).toBe(true)
+ expect(control.dom.querySelector('button')!.disabled).toBe(true)
+ control.destroy()
+})
+
+it('keeps the menu open while scrolling its options and closes on editor scroll',()=>{
+ const control=createCodeLanguageControl({value:'java',disabled:false,onCommit:vi.fn()})
+ document.body.append(control.dom)
+ fireEvent.click(control.dom.querySelector('button')!)
+ const list=document.querySelector('[role="listbox"]')!
+ fireEvent.scroll(list)
+ expect(list.isConnected).toBe(true)
+ fireEvent.scroll(document.body)
+ expect(list.isConnected).toBe(false)
+ control.destroy()
+})

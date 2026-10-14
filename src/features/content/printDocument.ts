@@ -1,6 +1,7 @@
 /** Build an inert snapshot without editing controls or network images. */
 export function printableClone(source: HTMLElement): HTMLElement {
   const clone = source.cloneNode(true) as HTMLElement
+  clone.querySelectorAll('.cm-code-language').forEach(node=>node.remove())
   clone.querySelectorAll('script,iframe,object,embed,link,meta,base,style,button,select,[role="toolbar"],.column-resize-handle,.table-handle').forEach(node => node.remove())
   for (const element of [clone, ...clone.querySelectorAll('*')]) {
     for (const attribute of [...element.attributes]) {

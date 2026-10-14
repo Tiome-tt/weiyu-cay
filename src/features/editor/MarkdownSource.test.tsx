@@ -22,6 +22,106 @@ function editorView() {
 }
 
 describe('MarkdownSource', () => {
+  it('leaves the plain code language label blank',()=>{
+    render(<MarkdownSource markdown={'```\nhello\n```'} onChange={vi.fn()}/>)
+    const picker=screen.getByRole('combobox',{name:'代码块语言'}) as HTMLInputElement
+    expect(picker).toHaveValue('')
+  })
+  it('changes a code language without changing its body and supports undo', () => {
+    const source = '```java\npublic class Demo {}\n```'
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={source} onChange={onChange} />)
+    fireEvent.change(screen.getByRole('combobox', { name: '代码块语言' }), { target: { value: 'python' } })
+    expect(editorView().state.doc.toString()).toBe('```python\npublic class Demo {}\n```')
+    act(() => { undo(editorView()) })
+    expect(editorView().state.doc.toString()).toBe(source)
+  })
+  it('keeps unknown languages and unclosed fence content visible', () => {
+    render(<MarkdownSource markdown={'before\n\n```custom\nlast body line'} onChange={vi.fn()} />)
+    expect(screen.getByRole('combobox', { name: '代码块语言' })).toHaveValue('custom')
+    expect(screen.getByRole('textbox', { name: 'Markdown source' })).toHaveTextContent('last body line')
+  })
+  it('locks code language controls during save barriers and readonly rendering', async () => {
+    const ref = createRef<MarkdownSourceHandle>()
+    const source = '```java\npublic class Demo {}\n```'
+    const rendered = render(<MarkdownSource ref={ref} markdown={source} onChange={vi.fn()} />)
+    await act(async () => { await ref.current!.beginEditBarrier() })
+    expect(screen.getByRole('combobox', { name: '代码块语言' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('combobox', { name: '代码块语言' }), { target: { value: 'python' } })
+    expect(editorView().state.doc.toString()).toBe(source)
+    act(() => { ref.current!.endEditBarrier() })
+    expect(screen.getByRole('combobox', { name: '代码块语言' })).toBeEnabled()
+    rendered.rerender(<MarkdownSource ref={ref} markdown={source} onChange={vi.fn()} readOnly />)
+    expect(screen.getByRole('combobox', { name: '代码块语言' })).toBeDisabled()
+  })
+  it('fills a reverse-dragged rectangle with plain text and ignores an image-only paste', () => {
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'} onChange={onChange} />)
+    const start = screen.getByRole('textbox', { name: '3 行 2 列' })
+    fireEvent.pointerDown(start, { button: 0 })
+    fireEvent.pointerEnter(screen.getByRole('textbox', { name: '2 行 1 列' }).closest('td')!)
+    fireEvent.pointerUp(document.body)
+    fireEvent.paste(start, { clipboardData: { getData: () => '' } })
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.paste(start, { clipboardData: { getData: () => 'same' } })
+    expect(onChange).toHaveBeenLastCalledWith('| A | B |\n| --- | --- |\n| same | same |\n| same | same |')
+  })
+  it('pastes every matrix value over merged cells without discarding covered values', () => {
+    const onChange = vi.fn()
+    const markdown = tableMarkdownFromModel({ cells: [['A', 'B'], ['1', '']], alignments: [null, null], merges: [{ row: 1, column: 0, rowSpan: 1, columnSpan: 2 }] })
+    render(<MarkdownSource markdown={markdown} onChange={onChange} />)
+    fireEvent.paste(screen.getByRole('textbox', { name: '2 行 1 列' }), { clipboardData: { getData: () => 'x\ty' } })
+    expect(onChange).toHaveBeenLastCalledWith('| A | B |\n| --- | --- |\n| x | y |')
+  })
+  it('pastes beyond the table edge without dropping rows or columns', () => {
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |'} onChange={onChange} />)
+    fireEvent.paste(screen.getByRole('textbox', { name: '2 行 2 列' }), { clipboardData: { getData: () => 'x\ty\nz\tw' } })
+    expect(onChange).toHaveBeenLastCalledWith('| A | B | 列 3 |\n| --- | --- | --- |\n| 1 | x | y |\n|  | z | w |')
+  })
+
+  it('moves Enter down a column and skips merged cells with Tab', async () => {
+    const markdown = tableMarkdownFromModel({ cells: [['A', 'B', 'C'], ['1', '', '3'], ['4', '5', '6']], alignments: [null, null, null], merges: [{ row: 1, column: 0, rowSpan: 1, columnSpan: 2 }] })
+    render(<MarkdownSource markdown={markdown} onChange={vi.fn()} />)
+    const first = screen.getByRole('textbox', { name: '2 行 1 列' })
+    first.focus()
+    fireEvent.keyDown(first, { key: 'Tab' })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 3 列' })).toHaveFocus())
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '2 行 3 列' }), { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '3 行 3 列' })).toHaveFocus())
+  })
+  it('drags from cell text and pastes a matrix into the selected rectangle', () => {
+    const onChange = vi.fn()
+    render(<MarkdownSource markdown={'| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |'} onChange={onChange} links={fakeLinkPort()} />)
+    const first = screen.getByRole('textbox', { name: '2 行 1 列' })
+    const last = screen.getByRole('textbox', { name: '3 行 2 列' })
+    fireEvent.pointerDown(first, { button: 0 })
+    fireEvent.pointerEnter(last.closest('td')!)
+    fireEvent.pointerUp(last)
+    expect(screen.getByRole('button', { name: '合并单元格' })).toBeEnabled()
+    fireEvent.paste(first, { clipboardData: { getData: () => 'x\ty\r\nz\tw\r\n' } })
+    expect(onChange).toHaveBeenLastCalledWith('| A | B | C |\n| --- | --- | --- |\n| x | y | 3 |\n| z | w | 6 |')
+    act(() => expect(undo(editorView())).toBe(true))
+    expect(editorView().state.doc.toString()).toContain('| 1 | 2 | 3 |')
+  })
+
+  it('reveals the focused cell when Tab moves across a wide table', async () => {
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |'} onChange={vi.fn()} />)
+    const reveal = vi.fn()
+    const original = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = reveal
+    try {
+      const first = screen.getByRole('textbox', { name: '2 行 1 列' })
+      first.focus()
+      fireEvent.keyDown(first, { key: 'Tab' })
+      await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 2 列' })).toHaveFocus())
+      expect(reveal).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+      expect(screen.getByRole('textbox', { name: '2 行 2 列' }).closest('td')).toHaveAttribute('aria-selected', 'true')
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original
+    }
+  })
+
   it('preserves a local draft when the parent rerenders with the same stale Markdown prop', () => {
     const onChange = vi.fn()
     const rendered = render(<MarkdownSource markdown="old" onChange={onChange} />)
@@ -496,6 +596,7 @@ describe('MarkdownSource', () => {
     fireEvent.input(first, { target: { value: 'edited' } })
     first.addEventListener('blur', () => fireEvent.change(first), { once: true })
     fireEvent.pointerDown(target, { button: 0 })
+    fireEvent.pointerUp(target)
 
     await waitFor(() => expect(screen.getByRole('textbox', { name: '2 行 3 列' })).toHaveFocus())
     expect(onChange).toHaveBeenLastCalledWith('| A | B | C |\n| --- | --- | --- |\n| edited | 2 | 3 |')
@@ -1210,4 +1311,26 @@ describe('MarkdownSource', () => {
     ref.current!.endEditBarrier()
     expect(view.contentDOM).toHaveAttribute('contenteditable', 'true')
   })
+})
+it('can hide hover line numbers for temporary captures', () => {
+  const { container } = render(<MarkdownSource markdown="capture" onChange={vi.fn()} showLineNumbers={false} showBlockHandle={false} />)
+  expect(container.querySelector('.markdown-line-number')).toBeNull()
+})
+
+it('focuses a new Markdown fence language and returns Enter to its body',async()=>{
+ render(<MarkdownSource markdown={'```'} onChange={vi.fn()}/>)
+ const view=editorView()
+ act(()=>view.dispatch({selection:{anchor:3}}))
+ fireEvent.keyDown(view.contentDOM,{key:'Enter'})
+ const language=await screen.findByRole('combobox',{name:'代码块语言'})
+ await waitFor(()=>expect(language).toHaveFocus())
+ fireEvent.keyDown(language,{key:'Enter'})
+ expect(view.state.selection.main.head).toBe(4)
+ expect(view.contentDOM).toHaveFocus()
+})
+
+it('focuses the first insertion action when the block handle is activated by keyboard',()=>{
+ render(<MarkdownSource markdown="body" onChange={()=>{}} presentation="document"/>)
+ fireEvent.click(screen.getByRole('button',{name:'添加内容块'}),{detail:0})
+ expect(screen.getByRole('menuitem',{name:'插入表格'})).toHaveFocus()
 })

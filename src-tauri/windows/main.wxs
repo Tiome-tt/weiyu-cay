@@ -37,6 +37,9 @@
         <Property Id="AUTOLAUNCHAPP" Secure="yes" />
         <!-- Property to forward cli args to the launched app to not lose those of the pre-update instance -->
         <Property Id="LAUNCHAPPARGS" Secure="yes" />
+        <Property Id="CAY_DATA_PATH" Secure="yes">
+            <RegistrySearch Id="InitialDataPath" Root="HKCU" Key="Software\app.simplenotes.desktop" Name="InstallDataPath" Type="raw" />
+        </Property>
 
         {{#if allow_downgrades}}
             <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="yes" />
@@ -89,6 +92,22 @@
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
 
         <UI>
+            <Dialog Id="CayDataPathDlg" Width="370" Height="270" Title="微屿 · 数据保存位置">
+                <Control Id="Title" Type="Text" X="20" Y="18" Width="330" Height="20" Text="数据保存位置" />
+                <Control Id="Description" Type="Text" X="20" Y="48" Width="330" Height="60" Text="输入空文件夹的完整路径；留空使用系统默认位置。仅在首次使用时生效，已有资料库保持原位置，请通过应用设置迁移。" />
+                <Control Id="DataPath" Type="Edit" X="20" Y="120" Width="330" Height="20" Property="CAY_DATA_PATH" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步">
+                    <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+                </Control>
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步">
+                    <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+            </Dialog>
+            <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="CayDataPathDlg" Order="5">WIXUI_INSTALLDIR_VALID = "1"</Publish>
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="CayDataPathDlg" Order="5">NOT Installed</Publish>
             <!-- launch app checkbox -->
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
 
@@ -129,6 +148,7 @@
 
         <DirectoryRef Id="INSTALLDIR">
             <Component Id="RegistryEntries" Guid="*">
+                <RegistryValue Root="HKCU" Key="Software\app.simplenotes.desktop" Name="InstallDataPath" Type="string" Value="[CAY_DATA_PATH]" />
                 <RegistryKey Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}">
                     <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
                 </RegistryKey>
