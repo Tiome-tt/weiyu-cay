@@ -548,8 +548,15 @@ export class DocumentTableWidget extends WidgetType {
           const nextCell = nextTarget.closest<HTMLElement>('[data-row][data-column]')!
           event.preventDefault()
           event.stopPropagation()
+          const cellValue=input.value.replace(/\r?\n/gu, ' ')
+          if(current.cells[merge?.row ?? row]?.[merge?.column ?? column]===cellValue){
+            // An unchanged cell needs no source transaction or delayed DOM replacement.
+            nextTarget.focus({preventScroll:true})
+            nextTarget.scrollIntoView?.({block:'nearest',inline:'nearest'})
+            return
+          }
           commit(
-            tableWithCell(current, merge?.row ?? row, merge?.column ?? column, input.value.replace(/\r?\n/gu, ' ')),
+            tableWithCell(current, merge?.row ?? row, merge?.column ?? column, cellValue),
             { row: Number(nextCell.dataset.row), column: Number(nextCell.dataset.column) },
           )
         })

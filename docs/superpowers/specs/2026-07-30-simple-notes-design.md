@@ -127,6 +127,8 @@ The main window uses three columns:
 
 Notes expand naturally within their folders; only the complete folder tree scrolls. The outline uses the preview Markdown grammar, excludes code-block contents, and retains source positions for navigation. Its collapsed rail displays only the directory label, without note or heading counts. These corrections are confirmed for 1.0.1 on 2026-08-31.
 
+Creating a folder from the context menu inserts a temporary folder row in the tree and focuses its name input. A folder target expands to show the new child; blank-space creation places the row at the end of the root list. Enter confirms and Escape cancels. The draft is not persisted until confirmation and does not occupy a separate input above the tree.
+
 The 1.1.3 UI refinement approved on 2026-09-28 uses General, System, Keys, Storage, and AI categories with aligned right edges for compact number controls, grouping updates in System and portable export in Storage, preserving input drafts across categories. Rich-document formatting uses an H menu with themed hover highlighting; the collapsed toolbar takes no full row and keeps a small edge icon. Temporary inbox rows and their content buttons have no hover fill. Main-window column boundaries occupy one pixel with a transparent pointer hit area, retaining keyboard resizing and double-click reset.
 
 The boundaries between columns are directly draggable. There is no visible “drag to resize” instruction in the application. On hover, the cursor changes and the boundary highlights subtly. Each column has a minimum width. Double-clicking a boundary restores the default proportion. The application persists proportions and collapsed states.

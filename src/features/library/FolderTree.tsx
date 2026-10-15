@@ -47,11 +47,18 @@ export function FolderTree(props: FolderTreeProps) {
   const previousActiveIdRef = useRef<FolderId | null | undefined>(undefined)
   const itemRefs = useRef(new Map<TreeItemKey, HTMLButtonElement>())
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  const createInputRef = useRef<HTMLInputElement>(null)
   const pointerStartRef = useRef<{ id: FolderId; x: number; y: number } | null>(null)
   const pointerDragRef = useRef<FolderId | null>(null)
   const suppressClickRef = useRef(false)
   const pointerTargetRef = useRef<{ folderId?: FolderId; parentId?: string } | null>(null)
   const [pointerDragging, setPointerDragging] = useState<FolderId | null>(null)
+
+  useLayoutEffect(() => {
+    if (!creating) return
+    createInputRef.current?.focus({ preventScroll: true })
+    createInputRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [creating, createParent])
 
   // Folder and note data are loaded asynchronously. Seed newly expandable folders as
   // collapsed while leaving a user's explicit expand/collapse choice untouched.
@@ -418,7 +425,7 @@ export function FolderTree(props: FolderTreeProps) {
       .filter((folder) => folder.parentId === parentId)
       .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
       .map((folder) => {
-        const hasChildren = props.folders.some((candidate) => candidate.parentId === folder.id)
+        const hasChildren = props.folders.some((candidate) => candidate.parentId === folder.id) || (creating && createParent === folder.id)
         const folderContents = typeof props.folderContents === 'function' ? props.folderContents(folder.id) : props.activeId === folder.id ? props.folderContents : undefined
         const hasFolderContents = folderContents !== undefined
         // A contents resolver means notes are lazy-loaded per folder. Treat every
@@ -490,11 +497,27 @@ export function FolderTree(props: FolderTreeProps) {
                 )}
               </button>
             )}
-            {hasChildren && (expanded || mountedFolders.has(folder.id)) && <ul role="group" data-folder-parent-id={folder.id} data-collapsed={String(!expanded)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, folder.id)}>{renderBranch(folder.id)}</ul>}
+            {hasChildren && (expanded || mountedFolders.has(folder.id)) && <ul role="group" data-folder-parent-id={folder.id} data-collapsed={String(!expanded)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, folder.id)}>{renderBranch(folder.id)}{creating && createParent === folder.id && renderCreateRow()}</ul>}
             {hasFolderContents && (expanded || mountedFolders.has(folder.id)) && <div className="folder-tree__folder-notes" data-collapsed={String(!expanded)}>{folderContents}</div>}
           </li>
         )
       })
+
+  const renderCreateRow = () => (
+    <li role="none" className="folder-tree__draft">
+      <form className="folder-form folder-form--inline" onSubmit={(event) => void finishCreate(event)}>
+        <Icon name="folder" size={22} />
+        <input ref={createInputRef} aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          setCreating(false)
+          setName('')
+          setCreateParent(null)
+          focusItem(createParent ?? 'root')
+        }} />
+      </form>
+    </li>
+  )
 
   const excludedMoveTargets = moving === null ? new Set<FolderId>() : descendantIds(moving, props.folders)
   const rootContents = props.activeId === null && props.folderContents !== undefined
@@ -517,14 +540,9 @@ export function FolderTree(props: FolderTreeProps) {
         </div>
       </header>
       {props.searchSlot}
-      {creating && (
-        <form className="folder-form" onSubmit={(event) => void finishCreate(event)}>
-          <input autoFocus aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setCreating(false); setName(''); setCreateParent(null) } }} />
-        </form>
-      )}
       {contextPosition !== null && (
         <div ref={contextMenuRef} className="folder-context-menu" role="menu" aria-label="文件夹快捷操作" style={{ left: contextPosition?.x ?? 8, top: contextPosition?.y ?? 8 }} onContextMenu={(event) => event.preventDefault()}>
-          <button type="button" role="menuitem" onClick={() => { setCreateParent(contextTarget); setCreating(true); setName(''); setContextTarget(null); setContextPosition(null) }}>新建文件夹</button>
+          <button type="button" role="menuitem" onClick={() => { if (contextTarget !== null) { userToggledFoldersRef.current.add(contextTarget); revealFolder(contextTarget) }; setRenaming(null); setCreateParent(contextTarget); setCreating(true); setName(''); setError(false); setContextTarget(null); setContextPosition(null) }}>新建文件夹</button>
           {props.onCreateNote && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>新建笔记</button>}
           {props.onImportFiles && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onImportFiles?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>导入文件</button>}
           {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>}
@@ -614,6 +632,7 @@ export function FolderTree(props: FolderTreeProps) {
         {props.searching ? <li role="none">{props.searchResultsSlot}</li> : renderBranch(null)}
         {!props.searching && <li role="none" hidden>{props.searchResultsSlot}</li>}
         {!props.searching && rootContents !== undefined && <li role="none" className="folder-tree__root-notes">{rootContents}</li>}
+        {creating && createParent === null && renderCreateRow()}
       </ul>
       <ErrorNotification error={error ? "文件夹操作未完成。" : null} />
       {deleteTarget !== null && (

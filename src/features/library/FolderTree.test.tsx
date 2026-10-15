@@ -328,6 +328,10 @@ describe('FolderTree keyboard navigation', () => {
 
     await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
     await user.click(screen.getByRole('menuitem', { name: '新建文件夹' }))
+    const draft = screen.getByRole('textbox', { name: '文件夹名称' })
+    expect(draft).toHaveFocus()
+    expect(draft.closest('ul')).toHaveAttribute('data-folder-parent-id', folderA)
+    expect(screen.getByRole('treeitem', { name: '项目 A' })).toHaveAttribute('aria-expanded', 'true')
     await user.type(screen.getByRole('textbox', { name: '文件夹名称' }), '子文件夹{Enter}')
 
     expect(onCreate).toHaveBeenCalledWith(folderA, '子文件夹')
@@ -353,6 +357,10 @@ describe('FolderTree keyboard navigation', () => {
     expect(screen.queryByRole('menuitem', { name: '重命名文件夹' })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: '新建笔记' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('menuitem', { name: '新建文件夹' }))
+    const draft = screen.getByRole('textbox', { name: '文件夹名称' })
+    expect(draft).toHaveFocus()
+    expect(draft.closest('ul')).toBe(tree)
+    expect(tree.lastElementChild).toContainElement(draft)
     await user.type(screen.getByRole('textbox', { name: '文件夹名称' }), '根目录文件夹{Enter}')
 
     expect(onCreate).toHaveBeenCalledWith(null, '根目录文件夹')
@@ -366,6 +374,18 @@ describe('FolderTree keyboard navigation', () => {
     const input = screen.getByRole('textbox', { name: '文件夹名称' })
     await user.click(screen.getByRole('treeitem', { name: '未归档笔记' }))
     expect(input).not.toBeInTheDocument()
+  })
+
+  it('cancels the inline draft with Escape without creating a folder', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn()
+    render(<FolderTree folders={rows} activeId={null} state="ready" onSelect={vi.fn()} onCreate={onCreate} onRename={vi.fn()} onMove={vi.fn()} onDelete={vi.fn()} />)
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('treeitem', { name: '项目 A' }) })
+    await user.click(screen.getByRole('menuitem', { name: '新建文件夹' }))
+    await user.type(screen.getByRole('textbox', { name: '文件夹名称' }), '未完成{Escape}')
+    expect(screen.queryByRole('textbox', { name: '文件夹名称' })).not.toBeInTheDocument()
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(screen.getByRole('treeitem', { name: '项目 A' })).toHaveFocus()
   })
 
   it('asks for confirmation before deleting a folder', async () => {

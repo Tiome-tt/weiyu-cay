@@ -1,4 +1,26 @@
 import { test, expect } from '@playwright/test'
+const undoShortcut=process.platform==='darwin'?'Meta+z':'Control+z'
+const documentEndShortcut=process.platform==='darwin'?'Meta+ArrowDown':'Control+End'
+const multiSelectModifier=process.platform==='darwin'?'Meta':'Control'
+
+test('folder creation focuses an inline tree row instead of the sidebar header', async ({ page }) => {
+  await page.goto('/e2e/v114-preferences-fixture.html?mode=icons')
+  const folder = page.getByRole('treeitem', { name: '开始使用' })
+  await folder.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '新建文件夹', exact: true }).click()
+  const input = page.getByRole('textbox', { name: '文件夹名称', exact: true })
+  await expect(input).toBeFocused()
+  await expect(folder).toHaveAttribute('aria-expanded', 'true')
+  const folderBox = (await folder.boundingBox())!
+  const inputBox = (await input.boundingBox())!
+  expect(inputBox.y).toBeGreaterThan(folderBox.y)
+  expect(inputBox.x).toBeGreaterThan(folderBox.x)
+  await input.fill('新文件夹')
+  await page.screenshot({ path: 'test-results/v114-inline-folder.png' })
+  await input.press('Escape')
+  await expect(input).toHaveCount(0)
+  await expect(folder).toBeFocused()
+})
 test('larger library icons keep compact toolbar controls and usable export menus', async ({ page }) => {
   await page.goto('/e2e/v114-preferences-fixture.html?mode=icons')
   const folder = page.locator('.folder-tree').getByTestId('icon-folder').first()
@@ -28,7 +50,7 @@ test('code languages switch with undo and highlight live, split and preview', as
   expect(await comment.evaluate(element => getComputedStyle(element).color)).not.toBe(await string.evaluate(element => getComputedStyle(element).color))
   await page.getByRole('button',{name:'选择代码语言'}).click()
   await page.getByRole('option',{name:'Python',exact:true}).click()
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press(undoShortcut)
   await expect(picker).toHaveValue('java')
   await page.getByRole('button', { name: '分栏校对' }).click()
   await expect(page.locator('.markdown-preview .tok-keyword').first()).toHaveText('public')
@@ -67,7 +89,7 @@ test('Ctrl-wheel zooms Markdown content without scaling title controls or changi
   await expect.poll(() => body.evaluate(element => getComputedStyle(element).zoom)).toBe('1.1')
   expect((await title.boundingBox())!.height).toBe(titleBefore!.height)
   await page.getByRole('textbox', { name: 'Markdown source' }).click()
-  await page.keyboard.press('Control+End')
+  await page.keyboard.press(documentEndShortcut)
   await page.keyboard.type('zoom edit')
   await expect(page.getByRole('textbox', { name: 'Markdown source' })).toContainText('zoom edit')
   await page.getByRole('button', { name: '分栏校对' }).click()
@@ -128,7 +150,7 @@ test('operation dialogs fit both dark and white themes and outside clicks cancel
  for(const theme of ['night','light']){
   await page.goto(`/e2e/v114-preferences-fixture.html?mode=icons&theme=${theme}`)
   const first=page.getByRole('button',{name:'欢迎来到微屿',exact:true}),second=page.getByRole('button',{name:'灵感与计划',exact:true})
-  await second.click({modifiers:['Control']})
+  await second.click({modifiers:[multiSelectModifier]})
   await second.click({button:'right'})
   await expect(page.getByRole('menuitem',{name:'添加星标'})).toBeVisible()
   await expect(page.getByRole('menuitem',{name:'删除笔记'})).toBeVisible()
@@ -153,7 +175,7 @@ test('rich code language controls are borderless, highlighted and undoable',asyn
  await language.fill('python')
  await language.press('Enter')
  await page.getByRole('textbox',{name:'文档正文'}).click()
- await page.keyboard.press('Control+z')
+ await page.keyboard.press(undoShortcut)
  await expect(language).toHaveValue('java')
  await page.screenshot({path:'test-results/v114-rich-code-refined.png'})
 })
@@ -217,7 +239,7 @@ test('Tab stays at the end of a long rich document and a new fence focuses langu
  await page.goto('/e2e/v114-preferences-fixture.html?mode=keyboard-rich')
  const body=page.getByRole('textbox',{name:'文档正文'})
  await body.click()
- await page.keyboard.press('Control+End')
+ await page.locator('.tiptap p').last().click({position:{x:5,y:5}})
  await page.keyboard.press('Tab')
  await expect(body).toBeFocused()
  expect(await page.locator('.tiptap p').last().textContent()).toContain('\t')
@@ -284,7 +306,7 @@ test('external file actions sit next to the title and refreshed edits become vis
 test('bottom-right rich context menu stays visible and calls links note citations',async({page})=>{
  await page.goto('/e2e/v114-preferences-fixture.html?mode=keyboard-rich')
  const body=page.getByRole('textbox',{name:'文档正文'})
- await body.click();await page.keyboard.press('Control+End')
+ await body.click();await page.keyboard.press(documentEndShortcut)
  await page.locator('.tiptap p').last().click({button:'right'})
  const menu=page.getByRole('menu',{name:'正文快捷操作'})
  await expect(menu).toBeVisible()

@@ -1334,3 +1334,14 @@ it('focuses the first insertion action when the block handle is activated by key
  fireEvent.click(screen.getByRole('button',{name:'添加内容块'}),{detail:0})
  expect(screen.getByRole('menuitem',{name:'插入表格'})).toHaveFocus()
 })
+
+it('moves through unchanged table rows synchronously without rebuilding or changing the draft',()=>{
+ const onChange=vi.fn()
+ render(<MarkdownSource markdown={"| A | B |\n| --- | --- |\n| one | 1 |\n| two | 2 |\n| three | 3 |\n| four | 4 |"} onChange={onChange} presentation="document"/>)
+ screen.getByRole('textbox',{name:'2 行 1 列'}).focus()
+ for(let row=2;row<5;row++){
+  fireEvent.keyDown(screen.getByRole('textbox',{name:`${row} 行 1 列`}),{key:'Enter'})
+  expect(screen.getByRole('textbox',{name:`${row+1} 行 1 列`})).toHaveFocus()
+ }
+ expect(onChange).not.toHaveBeenCalled()
+})

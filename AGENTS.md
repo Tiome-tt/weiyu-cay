@@ -93,6 +93,7 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 - The editor block “+” menu and editor context menu expose the same insertion actions, including a searchable internal-link picker that excludes the current note.
 - Show non-empty note tags below the note title; last-edited time and save state belong in the bottom status bar. Icon-only inline formatting controls expose visible hover labels and accessible names.
 - New-note and move destinations offer actual folders only. Moving a note updates both source and destination inline lists immediately; preserve compatibility with existing root-level content.
+- 右键新建文件夹在目录树内显示带文件夹图标的临时名称行，自动展开目标父文件夹并聚焦输入；空白处新建放在顶层列表末尾，Enter 确认、Escape 取消，不在资料库顶部单独显示输入框。
 - Keep the visual language warm, rounded, and nature-inspired, while preserving high contrast and dense-content readability.
 - Do not copy Nintendo assets or directly use `animal-island-ui`; its CC BY-NC license prohibits commercial use. Build an original design system.
 - Keyboard operation, visible focus, reduced motion, and adequate color contrast are required.
