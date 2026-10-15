@@ -42,11 +42,11 @@
 
 ## 版本记录
 
-### 1.1.4 · Windows/macOS · 预发布
-日期：2026-10-14
+### 1.1.4 · Windows/macOS · 稳定
+日期：2026-10-15
 平台：Windows、macOS
-状态：预发布
-提交：待发布
+状态：稳定
+提交：a7981c2c168524663fa3624784712c8a0c0d1ff0
 
 #### 新增
 - 为 Markdown、文档和纯文本笔记提供 Markdown、TXT、HTML、DOCX 和 PDF 另存为，支持编辑导出文件名和选择目录。
@@ -89,8 +89,9 @@
 - 重绘资料库与文件类型图标，AI 总结入口采用 24px 圆角机器人与星光图形。
 - 在 README 特别感谢中添加 zwt147 的 GitHub 主页。
 - 扩充并精简欢迎笔记的格式导入、笔记类型与 AI 总结介绍，仅自动更新未被用户修改的内置内容。
-- 完成前端 1011 项完整回归及后续 113 项受影响检查、65 项 Chromium 流程、Rust 各测试目标与万篇索引重建，Lint、类型检查、Rust 格式/Clippy 和 UI 构建通过；旧菜单、权限及布局断言同步到当前设计。
-- Windows 实际 PowerPoint 打开编辑保存与 Excel 保存重新打开检查通过；平台安装包和 GitHub 发布门禁结果在发布后补录。
+- 完成 Windows/macOS 各 1014 项前端测试和 66 项 Chromium 流程，Rust 测试、Lint、类型检查、Rust 格式/Clippy、UI 与桌面构建通过，并完成万篇索引重建回归。
+- Windows 实际 PowerPoint 打开编辑保存与 Excel 保存重新打开检查通过；Windows EXE/MSI、macOS Intel/Apple Silicon 发布包、更新密钥探针、元数据与 SHA256 校验通过。
+- 发布已验证的文件身份清单，确保 SHA256SUMS 中的各文件均可从 Release 下载。
 
 #### 已知问题
 - Office 预览与投影导出不复现复杂版式、图表或动画，完整内容仍保留在原文件中；迁移资料库前请保存并关闭外部 Office 编辑窗口。
@@ -98,7 +99,10 @@
 - 需要权限或发行者密钥的原生测试按环境跳过，更新签名由 GitHub 发布工作流验证。
 
 #### 安装包
-- 待发布构建生成后补录安装包文件名与 SHA256。
+- _1.1.4_x64-setup.exe — SHA256: `09b1c39951ac1a6ec13250a2d8c883f8ac5a8e619df77ecc33125ffe36009c18`
+- _1.1.4_x64_en-US.msi — SHA256: `f767d84386195f1012fd042378aac0f7826fe3ec5e19e52b806e0a65a06e00a3`
+- _1.1.4_x64.dmg — SHA256: `e2d6519bedbe2854121b0437977f7ebb6687db76bc7d001a959ee20f2b7d1e7b`
+- _1.1.4_aarch64.dmg — SHA256: `07bf9f88f226c3b31751d8e9acddf472bd92650a438a2109a6aa944d166453a9`
 
 ### 1.1.3 · Windows/macOS · 稳定
 日期：2026-10-08
