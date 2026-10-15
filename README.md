@@ -4,8 +4,6 @@
 
 ![Cay（微屿）主页预览](docs/screenshots/weiyu-home.png)
 
-上图基于实际界面截图，已隐藏个人文件夹。
-
 ## 核心特点
 
 - 本地优先：离线即可使用，Markdown 文件是可长期保存的内容。
