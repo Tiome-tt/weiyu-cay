@@ -1,7 +1,6 @@
-import { ErrorNotification } from '../../shared/notifications'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
 import { libraryEntryPresentation } from './libraryEntries'
-import { createPortal } from 'react-dom'
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { ExportSelection, FilePort } from '../../domain/ports'
 import type { Folder, FolderId, NoteId, NoteSummary } from '../../domain/model'
 import { Icon, type IconName } from '../../shared/Icon'
@@ -51,7 +50,6 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
   const listRef=useRef<HTMLElement>(null)
   const [saveTarget,setSaveTarget]=useState<NoteSummary|null>(null)
   const [moveTargets,setMoveTargets]=useState<NoteId[]|null>(null)
-  const feedbackRef = useRef<HTMLParagraphElement>(null)
   const contextTriggerRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ id: NoteId; x: number; y: number } | null>(null)
   const pointerDragRef = useRef<NoteId | null>(null)
@@ -77,9 +75,6 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
     document.addEventListener('pointerdown',cancel,true)
     return()=>document.removeEventListener('pointerdown',cancel,true)
   },[selectedIds])
-  useEffect(() => {
-    if (deleteFeedback !== null) feedbackRef.current?.focus()
-  }, [deleteFeedback])
 
   useEffect(() => {
     const visible = new Set(notes.map((note) => note.id))
@@ -102,11 +97,6 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
     })
   }, [activeId, notes])
 
-  useEffect(() => {
-    if (deleteFeedback === null || onDismissFeedback === undefined) return
-    const timer = window.setTimeout(onDismissFeedback, 10000)
-    return () => window.clearTimeout(timer)
-  }, [deleteFeedback, onDismissFeedback])
 
   useEffect(() => {
     if (contextTarget === null) return
@@ -243,19 +233,12 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
   const contextSelection = contextTarget !== null && effectiveSelectedIds.has(contextTarget.id)
     ? selectedEntries
     : contextTarget === null ? [] : [contextTarget]
+  const deletionNotice = useMemo(()=>deleteFeedback ? {message:deleteFeedback,focus:true,onDismiss:onDismissFeedback,action:undoAvailable && onUndoDelete ? {label:undoBusy?'正在撤销…':'撤销删除',onClick:onUndoDelete,disabled:undoBusy||deletingId!==null}:undefined}:null,[deleteFeedback,onDismissFeedback,undoAvailable,onUndoDelete,undoBusy,deletingId])
   const selectionCount = contextSelection.length
 
   return (
     <section ref={listRef} aria-label="笔记列表" className="note-list">
-      {deleteFeedback && createPortal(
-        <div className="note-list__mutation-status">
-          <span className="note-list__mutation-icon" aria-hidden="true"><Icon name="note" size={18} /></span><p ref={feedbackRef} role="status" tabIndex={-1} title={deleteFeedback}>{deleteFeedback}</p>
-          <div className="note-list__mutation-actions">
-            {undoAvailable && onUndoDelete && <button type="button" disabled={undoBusy || deletingId !== null} onClick={onUndoDelete}>{undoBusy ? '正在撤销…' : '撤销删除'}</button>}
-            {onDismissFeedback && <button type="button" aria-label="关闭提示" onClick={onDismissFeedback}><Icon name="close" size={15} /></button>}
-          </div>
-        </div>, document.querySelector('.main-window') ?? document.body
-      )}
+      <OperationNotification notice={deletionNotice}/>
       <ErrorNotification error={deleteError} />
       {state === 'loading' && <p className="library-status">正在加载笔记…</p>}
       <ErrorNotification error={state === 'error' ? '无法加载笔记。' : null} />

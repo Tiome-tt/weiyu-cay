@@ -22,6 +22,16 @@ function editorView() {
 }
 
 describe('MarkdownSource', () => {
+  it('does not extend a cell selection when layout shifts without pointer movement', () => {
+    render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| long<br>long<br>long | 2 |\n| short | 4 |'} onChange={vi.fn()} />)
+    const first = screen.getByRole('textbox', { name: '2 行 1 列' })
+    const target = screen.getByRole('textbox', { name: '3 行 1 列' })
+    fireEvent.focus(first)
+    fireEvent.pointerDown(target, { button: 0, clientX: 100, clientY: 100 })
+    fireEvent.pointerEnter(screen.getByRole('textbox', { name: '3 行 2 列' }).closest('td')!, { clientX: 100, clientY: 100 })
+    fireEvent.pointerUp(target)
+    expect(document.querySelectorAll('[data-row][aria-selected="true"]')).toHaveLength(1)
+  })
   it('leaves the plain code language label blank',()=>{
     render(<MarkdownSource markdown={'```\nhello\n```'} onChange={vi.fn()}/>)
     const picker=screen.getByRole('combobox',{name:'代码块语言'}) as HTMLInputElement
@@ -59,7 +69,7 @@ describe('MarkdownSource', () => {
     render(<MarkdownSource markdown={'| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'} onChange={onChange} />)
     const start = screen.getByRole('textbox', { name: '3 行 2 列' })
     fireEvent.pointerDown(start, { button: 0 })
-    fireEvent.pointerEnter(screen.getByRole('textbox', { name: '2 行 1 列' }).closest('td')!)
+    fireEvent.pointerMove(screen.getByRole('textbox', { name: '2 行 1 列' }).closest('td')!, { clientX: 20, clientY: 20 })
     fireEvent.pointerUp(document.body)
     fireEvent.paste(start, { clipboardData: { getData: () => '' } })
     expect(onChange).not.toHaveBeenCalled()
@@ -96,7 +106,7 @@ describe('MarkdownSource', () => {
     const first = screen.getByRole('textbox', { name: '2 行 1 列' })
     const last = screen.getByRole('textbox', { name: '3 行 2 列' })
     fireEvent.pointerDown(first, { button: 0 })
-    fireEvent.pointerEnter(last.closest('td')!)
+    fireEvent.pointerMove(last.closest('td')!, { clientX: 20, clientY: 20 })
     fireEvent.pointerUp(last)
     expect(screen.getByRole('button', { name: '合并单元格' })).toBeEnabled()
     fireEvent.paste(first, { clipboardData: { getData: () => 'x\ty\r\nz\tw\r\n' } })
@@ -713,7 +723,7 @@ describe('MarkdownSource', () => {
     vi.spyOn(start, 'getBoundingClientRect').mockReturnValue(new DOMRect(150, 300, 100, 40))
     vi.spyOn(end, 'getBoundingClientRect').mockReturnValue(new DOMRect(500, 500, 100, 40))
     fireEvent.pointerDown(start, { button: 0 })
-    fireEvent.pointerEnter(end)
+    fireEvent.pointerMove(end, { clientX: 20, clientY: 20 })
 
     expect(toolbar).toHaveStyle({ left: '10px', top: '152px' })
   })
@@ -753,7 +763,7 @@ describe('MarkdownSource', () => {
     const end = table.querySelector<HTMLElement>('[data-row="1"][data-column="1"]')
     if (start === null || end === null) throw new Error('table cells not found')
     fireEvent.pointerDown(start, { button: 0 })
-    fireEvent.pointerEnter(end)
+    fireEvent.pointerMove(end, { clientX: 20, clientY: 20 })
     fireEvent.pointerUp(end, { button: 0 })
     expect(screen.getByRole('button', { name: '合并单元格' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: '合并单元格' }))
@@ -789,7 +799,7 @@ describe('MarkdownSource', () => {
     if (start === null || end === null) throw new Error('table cells not found')
 
     fireEvent.pointerDown(start, { button: 0, clientX: 10, clientY: 10 })
-    fireEvent.pointerEnter(end, { clientX: 50, clientY: 50 })
+    fireEvent.pointerMove(end, { clientX: 50, clientY: 50 })
     fireEvent.pointerUp(end, { button: 0, clientX: 50, clientY: 50 })
 
     expect(start).toHaveAttribute('aria-selected', 'true')

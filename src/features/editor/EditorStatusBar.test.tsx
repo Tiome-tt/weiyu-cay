@@ -14,7 +14,7 @@ it('keeps save information at the bottom and toggles a keyboard resizable relate
  expect(screen.getByText('相关内容')).toBeVisible()
  const resize=screen.getByRole('separator', {name:'调整关联笔记高度'})
  fireEvent.keyDown(resize, {key:'ArrowUp'})
- expect(resize).toHaveAttribute('aria-valuenow','144')
+ expect(resize).toHaveAttribute('aria-valuenow','224')
  fireEvent.click(screen.getByRole('button', {name:'关联笔记'}))
  expect(screen.queryByText('相关内容')).not.toBeInTheDocument()
 })

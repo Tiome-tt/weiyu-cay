@@ -11,6 +11,17 @@ import { EditorPane, type EditorPaneHandle } from './EditorPane'
 import * as markdownPipeline from './markdownPipeline'
 
 afterEach(cleanup)
+it('does not display internal reference refresh counters after a successful rename', async () => {
+  const source = note('正文')
+  const renamed = { ...source, title: '新标题' }
+  render(<EditorPane document={source} notes={fakeNotePort()} onRenameNote={vi.fn().mockResolvedValue({ document: renamed, linkRepair: { updated: 7, failedSourceIds: [], failure: null } })}/>)
+  const title = screen.getByRole('textbox', { name: '笔记标题' })
+  fireEvent.change(title, { target: { value: '新标题' } })
+  fireEvent.blur(title)
+  await act(async () => { await Promise.resolve() })
+  await waitFor(() => expect(title).toHaveValue('新标题'))
+  expect(screen.queryByText(/已刷新.*引用标签/)).not.toBeInTheDocument()
+})
 it('exports the saved Markdown snapshot as TXT and releases the editing barrier', async () => {
   const source = note('old')
   let saved = source

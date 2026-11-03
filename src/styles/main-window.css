@@ -1700,13 +1700,16 @@
   border: 1px solid var(--color-border-soft);
   border-radius: 10px;
 }
-.main-window .markdown-source .cm-live-table-viewport { scrollbar-width: none; scrollbar-color: transparent transparent; }
+.main-window .markdown-source .cm-live-table-viewport { overflow-x:auto; scrollbar-width: none; scrollbar-color: transparent transparent; }
+.main-window .markdown-source .cm-live-table .cm-live-table-viewport th { background:var(--color-panel); }
+.markdown-preview .markdown-table-viewport { overflow-x:auto; }
+.markdown-preview .markdown-table-viewport th { background:var(--color-panel); }
 .main-window .markdown-source .cm-live-table-viewport {
   box-sizing: border-box;
   width: 100%;
   padding-bottom: 16px;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: auto;
 }
 .main-window .markdown-source .cm-live-table-viewport::-webkit-scrollbar {
   width: 0;
@@ -1857,8 +1860,8 @@
 .main-window .markdown-source .cm-live-table-cell-action {
   position: absolute;
   display: grid;
-  width: 15px;
-  height: 15px;
+  width: 11px;
+  height: 11px;
   padding: 0;
   place-items: center;
   color: var(--color-accent-strong);

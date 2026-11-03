@@ -65,7 +65,7 @@ it('shows undo feedback outside the note list without removing its accessible ac
   expect(within(screen.getByRole('region', { name: '笔记列表' })).queryByRole('status')).not.toBeInTheDocument()
   expect(screen.getByRole('status')).toHaveTextContent('笔记已移入回收站。')
   fireEvent.click(screen.getByRole('button', { name: '撤销删除' }))
-  fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+  fireEvent.click(screen.getByRole('button', { name: '关闭通知' }))
   expect(undo).toHaveBeenCalledOnce()
   expect(dismiss).toHaveBeenCalledOnce()
 })

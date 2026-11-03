@@ -21,16 +21,19 @@ fn main_window(window: &tauri::WebviewWindow) -> Result<(), CommandError> {
     Ok(())
 }
 #[tauri::command(rename_all = "camelCase")]
-pub fn import_files(
+pub async fn import_files(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,
     input: ImportFilesInput,
 ) -> Result<ImportFilesResult, CommandError> {
     main_window(&window)?;
     let scope = window.fs_scope();
-    import_files_with_scope(state.paths_for(StorageConsumer::Notes)?, input, |path| {
-        scope.is_allowed(path)
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_files_with_scope(&paths, input, |path| scope.is_allowed(path))
     })
+    .await
+    .map_err(|_| CommandError::io("import task could not finish"))?
 }
 
 #[doc(hidden)]
@@ -69,7 +72,7 @@ pub fn import_files_with_scope(
     Ok(result)
 }
 #[tauri::command(rename_all = "camelCase")]
-pub fn read_managed_file(
+pub async fn read_managed_file(
     window: tauri::WebviewWindow,
     state: State<'_, StorageCommandState>,
     note_id: NoteId,
@@ -77,7 +80,10 @@ pub fn read_managed_file(
     main_window(&window)?;
     // Keep the compatibility path identical to the original structured command.
     // The renderer only uses it after raw-byte IPC or PDF.js parsing fails.
-    managed_files::read_file(state.paths_for(StorageConsumer::Notes)?, note_id)
+    let paths = state.paths_for(StorageConsumer::Notes)?.clone();
+    tauri::async_runtime::spawn_blocking(move || managed_files::read_file(&paths, note_id))
+        .await
+        .map_err(|_| CommandError::io("file read did not complete"))?
 }
 #[tauri::command(rename_all = "camelCase")]
 pub async fn read_managed_file_bytes(

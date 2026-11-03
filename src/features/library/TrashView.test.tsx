@@ -72,7 +72,8 @@ describe('TrashView', () => {
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('已恢复 2 项')
     expect(status).toHaveTextContent('原文件夹不可用的项目已放入“已恢复”')
-    expect(status).toHaveFocus()
+    expect(status.closest('.notification-center')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '回收站' })).toHaveFocus()
     await waitFor(()=>expect(screen.queryByRole('checkbox', { name: '选择 发布清单' })).not.toBeInTheDocument())
   })
 

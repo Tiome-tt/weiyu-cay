@@ -16,13 +16,14 @@ import {EditorStatusBar} from '../editor/EditorStatusBar'
 import {Backlinks} from '../editor/Backlinks'
 import { AiSummaryWidget } from '../ai/AiSummaryWidget'
 import { waitForImageAssets } from './imageAssetLoader'
+import { pdfReadingPositionStore } from './pdfReadingPosition'
 
 import './content.css'
 const RichDocumentEditor=lazy(()=>import('../document/RichDocumentEditor').then(module=>({default:module.RichDocumentEditor})))
 export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(function TypedEditorPane(props,ref){
  const {document,notes,files,assets,assetReader,links,folders,onNavigateNote,search,onDocumentAdopt,onConvertFileToDocument,onSaveStateChange,onDraftChange,autosaveDelayMs,external,ai,deepseekModel,onOpenSettings}=props
  const save=useContentAutosave(document,notes,autosaveDelayMs)
- const aiMarkdown=useMemo(()=>save.content.type==='text' ? save.content.text : save.content.type==='document' ? contentSummaryMarkdown({ content: save.content }) : document.title,[save.content,document.title])
+ const aiMarkdown=useMemo(()=>save.content.type==='text' ? save.content.text : save.content.type==='document' ? contentSummaryMarkdown({ content: save.content }) : '',[save.content])
  const statusText=useMemo(()=>save.content.type==='file'?null:contentText({content:save.content}),[save.content])
  const initialBlockCount=useMemo(()=>save.content.type==='document'?documentBlockCount(save.content.document):undefined,[save.content])
  const rich=useRef<RichDocumentEditorHandle>(null)
@@ -39,7 +40,7 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  const body=useRef<HTMLDivElement>(null)
  const [fileActions,setFileActions]=useState<HTMLDivElement|null>(null)
  const commit=useCallback(async()=>{await rich.current?.commitComposition();await text.current?.commitComposition()},[])
- const flush=useCallback(async()=>{try{await commit();return await save.flush()}catch{setError('请先完成当前输入，再重试保存。');return false}},[commit,save.flush]); const reloadLatest=useCallback(async()=>{const latest=await save.reloadLatest();if(latest){onDocumentAdopt?.(latest)}else setError('无法载入最新版本，请重试。')},[onDocumentAdopt,save.reloadLatest])
+ const flush=useCallback(async()=>{try{await commit();if(props.preferences)await pdfReadingPositionStore(props.preferences).flush().catch(()=>undefined);return await save.flush()}catch{setError('请先完成当前输入，再重试保存。');return false}},[commit,save.flush,props.preferences]); const reloadLatest=useCallback(async()=>{const latest=await save.reloadLatest();if(latest){onDocumentAdopt?.(latest)}else setError('无法载入最新版本，请重试。')},[onDocumentAdopt,save.reloadLatest])
  useImperativeHandle(ref,()=>({
    flush,
    beginEditBarrier:async()=>{await commit();flushSync(()=>setBlocked(true))},
@@ -108,10 +109,10 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
   {save.state.status==='error'&&<><ErrorNotification error={save.state.message} /><div className="typed-editor__recovery"><button type="button" onClick={save.state.retry}>重试保存</button>{save.state.message.includes('其他窗口')&&<button type="button" onClick={()=>void reloadLatest()}>载入最新版本</button>}</div></>}
   <div className="typed-editor__body" ref={body}>
    {save.content.type==='text'&&<PlainTextEditor onSelectionChange={setSelectedText} ref={text} value={save.content.text} editable={!readOnly} onChange={value=>update({type:'text',text:value})}/>}
-   {save.content.type==='file'&&<FileViewer actionsContainer={fileActions} onDocumentAdopt={onDocumentAdopt} document={{...document,content:save.content}} files={files} onSaveAs={exportDocument} onConvertToDocument={onConvertFileToDocument}/>}
+   {save.content.type==='file'&&<FileViewer preferences={props.preferences} actionsContainer={fileActions} onDocumentAdopt={onDocumentAdopt} document={{...document,content:save.content}} files={files} onSaveAs={exportDocument} onConvertToDocument={onConvertFileToDocument}/>}
    {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor onSelectionChange={setSelectedText} onBlockCountChange={setLiveBlockCount} ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
   </div>
-  <AiSummaryWidget noteId={document.id} title={title} markdown={aiMarkdown} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages}/>
-  <EditorStatusBar blockCount={save.content.type==='document'?liveBlockCount??initialBlockCount:undefined} text={statusText} selectedText={selectedText} updatedAt={save.updatedAt} state={save.state} related={links&&onNavigateNote?<Backlinks noteId={document.id} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>:undefined}/>
+  <AiSummaryWidget unsupported={save.content.type==='file'} noteId={document.id} title={title} markdown={aiMarkdown} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages}/>
+  <EditorStatusBar blockCount={save.content.type==='document'?liveBlockCount??initialBlockCount:undefined} text={statusText} selectedText={selectedText} updatedAt={save.updatedAt} state={save.state} related={links&&onNavigateNote?<Backlinks noteId={document.id} noteTitle={title} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>:undefined}/>
  </div>
 })

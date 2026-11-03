@@ -1,7 +1,11 @@
 use crate::{
-    domain::{FolderId, ManagedFile, NoteContent, NoteDocument, NoteId, NoteKind},
-    error::CommandError,
-    platform::{IndexMutationLock, SafeDirectory},
+    commands::folders::FolderRepository,
+    domain::{
+        CreateFolderInput, Folder, FolderId, ManagedFile, NoteContent, NoteDocument, NoteId,
+        NoteKind,
+    },
+    error::{CommandError, CommandErrorCode},
+    platform::{IndexMutationLock, SafeDirectory, SafeEntryKind},
     storage::{
         atomic_file::PublishResult,
         entry::{self, MAX_FILE_BYTES, MAX_TEXT_BYTES},
@@ -31,6 +35,7 @@ pub struct ImportFailure {
 #[serde(rename_all = "camelCase")]
 pub struct ImportFilesResult {
     pub imported: Vec<NoteDocument>,
+    pub imported_folders: Vec<Folder>,
     pub failed: Vec<ImportFailure>,
 }
 #[derive(Debug, Serialize)]
@@ -49,22 +54,120 @@ pub fn import_files(
     let guard = IndexMutationLock::acquire(paths.root())?;
     let mut result = ImportFilesResult {
         imported: Vec::new(),
+        imported_folders: Vec::new(),
         failed: Vec::new(),
     };
+    let mut remaining = 1000;
     for source in input.paths {
         let name = Path::new(&source)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "file".into());
-        match import_one(paths, Path::new(&source), input.folder_id, &guard) {
-            Ok(note) => result.imported.push(note),
-            Err(error) => result.failed.push(ImportFailure {
+        let outcome = validated_parent(Path::new(&source)).and_then(|(parent, name)| {
+            DirectoryImporter {
+                paths,
+                guard: &guard,
+                result: &mut result,
+                remaining: &mut remaining,
+            }
+            .import(&parent, &name, input.folder_id, 0)
+        });
+        if let Err(error) = outcome {
+            result.failed.push(ImportFailure {
                 name,
                 message: error.message().into(),
-            }),
+            });
         }
     }
     Ok(result)
+}
+
+struct DirectoryImporter<'a> {
+    paths: &'a StoragePaths,
+    guard: &'a IndexMutationLock,
+    result: &'a mut ImportFilesResult,
+    remaining: &'a mut usize,
+}
+
+impl DirectoryImporter<'_> {
+    fn import(
+        &mut self,
+        parent: &SafeDirectory,
+        name: &str,
+        folder_id: Option<FolderId>,
+        depth: usize,
+    ) -> Result<(), CommandError> {
+        if *self.remaining == 0 {
+            return Err(CommandError::validation("import exceeds 1000 entries"));
+        }
+        *self.remaining -= 1;
+        match parent.entry_kind(name)? {
+            SafeEntryKind::RegularFile => {
+                self.result
+                    .imported
+                    .push(import_one(self.paths, parent, name, folder_id, self.guard)?);
+            }
+            SafeEntryKind::Directory => {
+                if depth > 64 {
+                    return Err(CommandError::validation(
+                        "import exceeds 64 child-directory levels",
+                    ));
+                }
+                // Enumerate and read through pinned, no-follow handles. A dropped
+                // directory authorizes descendants, never symlink/reparse targets.
+                let directory = parent.open_child(name, false)?;
+                let entries = directory.entry_names_bounded(*self.remaining + 1)?;
+                let repository = FolderRepository::new(self.paths.clone());
+                let mut suffix = 1;
+                let folder = loop {
+                    let candidate = if suffix == 1 {
+                        name.to_owned()
+                    } else {
+                        let tail = format!(" ({suffix})");
+                        format!(
+                            "{}{}",
+                            name.chars()
+                                .take(120 - tail.chars().count())
+                                .collect::<String>(),
+                            tail
+                        )
+                    };
+                    match repository.create_locked(
+                        CreateFolderInput {
+                            parent_id: folder_id,
+                            name: candidate,
+                        },
+                        self.guard,
+                    ) {
+                        Ok(folder) => break folder,
+                        Err(error)
+                            if error.code() == CommandErrorCode::Conflict && suffix < 1000 =>
+                        {
+                            suffix += 1
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                let id = folder.id;
+                self.result.imported_folders.push(folder);
+                for entry in entries {
+                    let exhausted = *self.remaining == 0;
+                    if let Err(error) = self.import(&directory, &entry, Some(id), depth + 1) {
+                        self.result.failed.push(ImportFailure {
+                            name: entry,
+                            message: error.message().into(),
+                        });
+                    }
+                    // Report the first skipped entry, rather than an unbounded
+                    // list of identical errors after the shared batch budget ends.
+                    if exhausted {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 fn validated_parent(path: &Path) -> Result<(SafeDirectory, String), CommandError> {
     if !path.is_absolute()
@@ -111,12 +214,12 @@ fn validated_parent(path: &Path) -> Result<(SafeDirectory, String), CommandError
 }
 fn import_one(
     paths: &StoragePaths,
-    source_path: &Path,
+    source_parent: &SafeDirectory,
+    original_name: &str,
     folder_id: Option<FolderId>,
     guard: &IndexMutationLock,
 ) -> Result<NoteDocument, CommandError> {
-    let (source_parent, original_name) = validated_parent(source_path)?;
-    let mut source = source_parent.open_regular(&original_name, MAX_FILE_BYTES)?;
+    let mut source = source_parent.open_regular(original_name, MAX_FILE_BYTES)?;
     let initial = source
         .metadata()
         .map_err(|_| CommandError::io("could not inspect import source"))?;
@@ -163,7 +266,7 @@ fn import_one(
         .map_err(|_| CommandError::io("could not flush imported payload"))?;
     drop(target);
     directory.sync()?;
-    let extension = source_path
+    let extension = Path::new(original_name)
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
@@ -171,7 +274,7 @@ fn import_one(
     let media_type = detect_media(&head, &extension);
     let mut file = ManagedFile {
         storage_name,
-        original_name: original_name.clone(),
+        original_name: original_name.to_owned(),
         media_type: media_type.into(),
         size,
         sha256: format!("{:x}", hash.finalize()),
@@ -187,7 +290,7 @@ fn import_one(
     let mut note = NoteDocument {
         id,
         kind: NoteKind::Formal,
-        title: original_name,
+        title: original_name.to_owned(),
         folder_id,
         tags: Vec::new(),
         markdown: String::new(),

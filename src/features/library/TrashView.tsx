@@ -1,4 +1,4 @@
-import { ErrorNotification } from '../../shared/notifications'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Folder, NoteId } from '../../domain/model'
 import type { TrashEntry, TrashPort } from '../../domain/ports'
@@ -18,11 +18,12 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
   const [state, setState] = useState<LoadState>('loading')
   const [busy, setBusy] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const [feedback, setFeedbackState] = useState<{ message: string } | null>(null)
+  const setFeedback = useCallback((message: string | null) => setFeedbackState(message === null ? null : { message }), [])
   const [purgeTarget, setPurgeTarget] = useState<ReadonlyArray<NoteId> | null>(null)
   const requestRef = useRef(0)
   const busyRef = useRef<BusyAction>(null)
-  const feedbackRef = useRef<HTMLParagraphElement>(null)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const mountedRef = useRef(false)
 
   const refresh = useCallback(async (options: { silent?: boolean } = {}) => {
@@ -56,7 +57,7 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
   }, [refresh])
 
   useEffect(() => {
-    if (feedback !== null) feedbackRef.current?.focus()
+    if (feedback !== null) headingRef.current?.focus()
   }, [feedback])
 
   const selectedIds = useMemo(
@@ -153,7 +154,7 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
       <header className="trash-view__header">
         <div>
           <span className="library-pane__eyebrow">安全恢复</span>
-          <h2>回收站</h2>
+          <h2 ref={headingRef} tabIndex={-1}>回收站</h2>
         </div>
       </header>
       <div className="trash-view__actions" aria-label="回收站操作">
@@ -175,7 +176,7 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
           清空回收站
         </button>
       </div>
-      {feedback !== null && <p ref={feedbackRef} tabIndex={-1} role="status" className="library-status">{feedback}</p>}
+      <OperationNotification notice={feedback} />
       <ErrorNotification error={error} />
       {state === 'loading' && <p role="status" className="library-status">正在加载回收站…</p>}
       <ErrorNotification error={state === 'error' ? '无法加载回收站。' : null} />

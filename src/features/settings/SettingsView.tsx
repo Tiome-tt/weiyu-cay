@@ -188,16 +188,10 @@ export function SettingsView({ settings, value, onChange, onClose, prepareStorag
       setCredentialConfigured(status.configured)
       setApiKeyDraft('')
     } catch (error: unknown) {
-      console.error('[AI] 保存 API Key 失败', error)
       const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
-      const diagnostic = typeof error === 'object' && error !== null && 'diagnostic' in error && typeof error.diagnostic === 'string'
-        ? error.diagnostic
-        : undefined
       setError(code === 'validation'
         ? 'API Key 格式不正确，请确认粘贴的是完整的 DeepSeek API Key。'
-        : import.meta.env.DEV && diagnostic !== undefined
-          ? 'API Key 保存失败：' + diagnostic
-          : 'API Key 未能写入本地加密凭据，请完全退出微屿后重试。')
+        : '无法保存 API Key，请完全退出微屿后重试。')
     } finally {
       setCredentialBusy(false)
     }

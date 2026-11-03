@@ -1,5 +1,5 @@
-import { ErrorNotification } from '../../shared/notifications'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ExportPort, ExportReport } from '../../domain/ports'
 
 interface ExportLibraryProps {
@@ -65,12 +65,12 @@ export function useExportLibraryController(
         const retained = next.incompleteRoot === null
           ? '没有可保留的输出位置。'
           : `不完整的文件可能仍保留在 ${next.incompleteRoot}。`
-        setError(`导出未发布。${retained}${next.globalFailure ?? '操作未完成。'}`)
+        setError(`导出未完成。${retained}请检查保存位置后重试。`)
       }
     } catch {
       if (mounted.current && request.current === current) {
         setError(
-          '导出命令失败。重试前请检查所选父文件夹中是否存在不完整的导出文件。',
+          '导出失败。重试前请检查所选文件夹中是否存在不完整的导出文件。',
         )
       }
     } finally {
@@ -85,6 +85,7 @@ export function useExportLibraryController(
 export function ExportLibrary({ exporter, chooseDestination, controller }: ExportLibraryProps) {
   const localController = useExportLibraryController(exporter, chooseDestination)
   const { busy, report, status, error, startExport } = controller ?? localController
+  const notice = useMemo(() => status ? { message: status } : null, [status, report])
 
   return (
     <div className="settings-export">
@@ -92,15 +93,13 @@ export function ExportLibrary({ exporter, chooseDestination, controller }: Expor
       <button type="button" disabled={busy} onClick={() => void startExport()}>
         {busy ? '正在导出资料库…' : '导出完整资料库'}
       </button>
-      {status && <p role="status">{status}</p>}
+      <OperationNotification notice={notice} />
       <ErrorNotification error={error} />
       {report !== null && report.renamedPaths.length > 0 && (
         <p>为保证可移植性，已重命名 {report.renamedPaths.length} 个路径。</p>
       )}
       {report !== null && report.failed.length > 0 && (
-        <ul aria-label="无法导出的笔记">
-          {report.failed.map((failure) => <li key={failure.noteId}><code>{failure.noteId}</code>: {failure.message}</li>)}
-        </ul>
+        <p>有 {report.failed.length} 篇笔记未能导出，请重试完整导出。</p>
       )}
     </div>
   )

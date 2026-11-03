@@ -58,6 +58,14 @@ Markdown fenced code uses a shared offline CodeMirror language registry for live
 
 ### 4.1 Formal notes
 
+Creating a note with tags completes the tag write and reloads the authoritative document before publishing editor/list cache snapshots, avoiding the untagged creation revision in navigation. Existing notes remain durable if tag initialization fails. Ordinary successful renames do not show internal link-refresh counters; preserve actual link-repair failures and their retry action.
+
+User-facing feedback describes outcomes, meaningful limitations and recovery actions. Do not display internal reference counters, note UUIDs, raw native diagnostics or credential-file implementation details, including in development UI. Keep useful import/export counts, user-selected output locations, partial-failure warnings, source-preservation assurances and retry/recovery controls. Export reports retain detailed underlying records without rendering raw identifiers or diagnostics into the normal interface.
+
+Long Markdown editing/preview tables and rich-document tables use bounded independently scrolling containers with sticky header cells. Pointer entry caused solely by collapsing the previous Markdown cell editor must not extend selection: rectangular selection requires actual pointer movement beyond the click threshold. Preserve internal table scroll offsets after edits. Rich table operations appear in an icon toolbar above/below the selected cell according to available space; show operation names on hover, group row/column operations in a hover/focus menu, and retain native table commands/undo. Table-size grids render outside clipping menus in a viewport-positioned portal, choosing the side with available space and staying inside the window.
+
+HTML/HTM managed attachments retain their original payload and render self-contained interactive pages in an opaque-origin iframe with only `allow-scripts`. Native code authorizes the main window, validates the note UUID and managed payload, limits HTML to 8 MiB, and publishes a read-only snapshot behind an unpredictable temporary token through the separate `cay-html` protocol. Keep at most four snapshots. Response CSP permits inline scripts/styles and embedded images/fonts while denying connections, external resources, nested frames, base URLs and form submissions; iframe sandbox denies same-origin, popups and top navigation. The application script CSP remains unchanged. HTML cannot access application DOM or storage. Browser initialization and native IPC credentials remain main-frame-only. Webpage-owned progress is session-only; external companion files and persistent webpage storage are outside this first implementation.
+
 - Create, rename, move, edit, and delete notes.
 - Organize notes in a nested, real-folder-style tree managed by the application.
 - Use source, split, and preview views.
@@ -70,6 +78,8 @@ Markdown fenced code uses a shared offline CodeMirror language registry for live
 - Visually identify links whose target has been deleted or cannot be resolved.
 - Export the complete note library with its logical folder structure, Markdown, and images.
 - Create rich document, plain text, and managed file entries alongside legacy Markdown notes. Markdown conversion creates a new document copy, preserving the original note and UUID links.
+- Dropping a directory imports its nested files and empty folders into the target library folder (or root when none is selected), preserving hierarchy. Name conflicts create numbered folder copies without overwriting existing content. Reuse the normal file import and atomic publication path, leave sources untouched, reject symlinks/reparse points and bound each batch to 1,000 files/directories and 64 child-directory levels. Partial failures retain successful entries and report failures; refresh the folder tree after import. Native import I/O runs off the UI event loop.
+- PDF reading preferences persist the page, vertical/horizontal reading offsets and zoom under the immutable note UUID, independently of the payload revision. Reopening restores the position after rendering; replaced shorter PDFs clamp to their actual page count. A compact page-number field applies on Enter or blur, clamps numeric input to the page range, and restores the current page for invalid input or Escape. The zoom menu and Ctrl+wheel share 50%–300% steps. Preference writes are ordered/coalesced, flushed to the existing native preference store, and awaited by the editor close barrier; failures leave the PDF readable and show a dismissible notification without modifying the source attachment.
 
 ### 4.2 Temporary sticky notes
 
@@ -452,6 +462,7 @@ Legacy caches remain readable. Version-1 or pre-versioned labels are not treated
 - Markdown displays source-line numbers on hover immediately left of its block insertion button; rich document numbers refer to content blocks. Both honor reduced motion.
 
 - The rich-document gutter remains reachable across the gap from content to its insertion button. Rich and Markdown buttons share transparent resting and green hover/focus states, with vertically centered numbers. Titlebar poetry uses a larger 12–16px size without changing the 30px titlebar height.
+- Rich-document block numbers and insertion buttons use absolute positions within the scrollable document surface. Convert viewport measurements and pointer coordinates to that surface's layout coordinates using its effective CSS scale and scroll offsets, so the gutter scales with the document without applying zoom twice to its position. Refresh measurements on hover and hide stale hover controls during scrolling/zoom changes; preserve the clickable gap and block identity.
 
 ### Image and native-block refinements approved on 2026-09-29
 
@@ -460,7 +471,7 @@ Legacy caches remain readable. Version-1 or pre-versioned labels are not treated
 - The rich insertion menu omits text and heading styles. It inserts native structured document objects, including lists and tables, rather than Markdown source syntax.
 - New static PNG and JPEG assets follow the image-save quality setting: high-quality WebP Q95 by default, smaller WebP Q85, or original format. Convert only when the WebP output is smaller; preserve animation, unsupported files, and original bytes when encoding fails. The original-format option retains the existing bounded, lossless PNG IDAT optimization. Existing libraries are not rewritten automatically. Preserve validation, staging, flush, and atomic publication for every saved asset.
 - In Storage settings, a quiet horizontal divider separates image-save quality from “存储位置与迁移”. The selector describes the user-facing tradeoff as “高清压缩（推荐）”, “省空间压缩”, and “保留原图”; one concise contextual sentence explains the selected option and which images are affected while persisted WebP Q95/Q85 values remain stable. The migration area distinguishes the current location from the target folder.
-- Transient operation failures, including editor commands, image operations, search, settings, and library actions, appear as bottom-right notifications with a close button and ten-second expiry. Keep retry and recovery controls available in context when a failure blocks startup, saving, or a platform decision.
+- Transient operation results and failures, including imports, moves, renames, conversions, exports and trash actions, appear as bottom-right notifications with a close button and ten-second expiry. Repeating the same operation result restarts its timer rather than stacking duplicates. Successful results use polite status announcements with the theme accent; failures use alerts. Retain loading/save state, undo actions, export failure details and persistent retry/recovery controls when startup, unsaved work or a platform decision still needs attention. Trash actions move focus to the stable trash heading after removed rows disappear, rather than focusing an expiring message.
 
 ### Approved settings and library presentation refinements (2026-10-13)
 
@@ -495,3 +506,26 @@ The 2026-10-14 icon follow-up replaces the summary-page silhouette with a friend
 ### Note navigation and onboarding refinement (2026-10-14)
 
 Markdown opens without querying the full citation target list; the picker loads targets only on demand. The title toolbar omits the unused more-actions button. Editor context menus fit the available viewport/host bounds and scroll when necessary. The visible action is “引用笔记”; persisted internal-link syntax is unchanged. The built-in welcome note describes supported imports and Markdown/document/text/file entry types in one consolidated section with a concise format sentence and separate short type paragraphs rather than extra subheadings or long list items, including DOCX conversion and original-file preservation, followed by the current AI summary feature. Upgrades replace only exact untouched built-in welcome content and preserve user edits.
+
+
+### 2026-11-02 阅读与交互修正
+
+保存、改名、附件兼容读取与引用查询移至原生后台，保留锁、校验和原子写入。预览字节缓存最多三项且合计 32MiB，超大文件不复制进缓存；无引用更新的改名直接更新列表元数据。
+
+通知含删除撤销统一在右下角按时间向上堆叠，最新在下方，10 秒过期并可手动关闭。表格取消纵向高度限制，原表头离开编辑区时浮动显示，随横向滚动和缩放对齐，离开表格后隐藏；文档表格入口整行可点，每次右键重置大小选择器，移除背景色入口但保留已存数据，Markdown 格边加号缩小为 11px。
+
+AI 总结仅保留 Markdown、文档、纯文本笔记。所有附件点击 AI 入口仅显示“暂不支持该格式文件进行AI总结。”，不加载缓存或凭据，不读取附件正文用于总结，不发送 AI 请求。PDF 页码使用翻页按钮中间的紧凑行内输入，去掉鼠标聚焦外圈，保留键盘聚焦底线；横向滚动复用浮动表头，只更新位移，内容、字体、缩放或尺寸变化才重建，双滚动条忽略同步回传，相关控件定位按帧合并。
+
+
+### 2026-11-02 本地关联图谱
+
+关联面板左侧保留引用此笔记的列表，右侧增加简约 SVG 图谱，显示当前笔记周围两层直接与间接引用及方向箭头，当前节点高亮，其他节点通过现有保存屏障跳转。左右分隔线可拖动、键盘调整及双击复位，限制 25%–75%，各侧独立布局；面板默认关闭，打开后高度 200px，仍可上下调整。
+
+新增主窗口专用 link_neighborhood 查询，在原生后台读取可重建的引用索引元数据，最多 24 节点、48 边；排除删除、临时及缺失目标，去重循环与重复引用。超限说明部分展示，不读取全库正文或附件，不修改内容、UUID 或索引结构；节点较多时按悬停或键盘聚焦显示标题，完整名称通过节点提示和可访问标签提供。加载失败保留列表，并提供图谱重试。
+
+关联图谱标题加粗，右侧使用默认开启的“间接引用”滑动开关；关闭时仅保留距离 0–1 的节点及它们之间的连线，重新开启恢复两层关联，均在已加载结果上筛选，不额外查询。文档右键菜单移入 body 独立浮层，补齐主题、字体和菜单项样式；编辑区浮层高于关联面板，避免菜单底部被遮盖。
+
+
+### 2026-11-03 双语安装包发布规则
+
+正式 Release 提供四个安装包：Windows x64 EXE 与兼容 Intel/Apple Silicon 的 macOS 通用 DMG，各提供简体中文、完整英文界面版本。自动更新所需清单、签名、载荷和校验文件继续保留。英文不只包括安装器，还包括应用操作、设置、弹窗、状态、原生菜单和内置帮助；不得翻译用户笔记、改变 UUID 或持久化兼容标识。英文构建的翻译覆盖和更新语言保持未完成时，不得仅通过重命名中文产物发布英文版。

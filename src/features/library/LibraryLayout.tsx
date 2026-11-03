@@ -1,4 +1,4 @@
-import { ErrorNotification } from '../../shared/notifications'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
 import { shortcutMatches } from '../search/shortcuts'
 import { useStarredNotes } from './useStarredNotes'
 import { WorkspaceSearchDialog } from '../search/WorkspaceSearchDialog'
@@ -77,7 +77,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     format: 'document',
     status: 'idle',
   })
-  const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
+  const [metadataNotice, setMetadataNoticeState] = useState<{ message: string; kind: 'status' | 'alert' } | null>(null)
+  const setMetadataNotice = useCallback((message: string | null, kind: 'status' | 'alert' = 'status') => setMetadataNoticeState(message === null ? null : { message, kind }), [])
   const [linkRepairRetry, setLinkRepairRetry] = useState<{ noteId: NoteId; title: string } | null>(null)
   const [linkRepairBusy, setLinkRepairBusy] = useState(false)
   const [deletingNoteId, setDeletingNoteId] = useState<NoteId | null>(null)
@@ -191,9 +192,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     if (pending === null || library.documentState !== 'ready' || library.document?.id !== pending.noteId) return
     setPendingEditorAction(null)
     void editorRef.current?.exportDocument(pending.kind,pending.selection).then((success) => {
-      if (!success && mountedRef.current) setMetadataNotice(pending.kind === 'word' ? '此笔记无法导出为 Word。' : '导出未完成，原笔记已保留。')
+      if (!success && mountedRef.current) setMetadataNotice(pending.kind === 'word' ? '此笔记无法导出为 Word。' : '导出未完成，原笔记已保留。', 'alert')
     }).catch(() => {
-      if (mountedRef.current) setMetadataNotice('导出未完成，原笔记已保留。')
+      if (mountedRef.current) setMetadataNotice('导出未完成，原笔记已保留。', 'alert')
     })
   }, [library.document, library.documentState, pendingEditorAction])
 
@@ -324,13 +325,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       if (result === null) throw new Error('link repair retry was blocked')
       if (linkRepairNeedsRetry(result.linkRepair)) {
         setLinkRepairRetry({ noteId: result.document.id, title: result.document.title })
-        setMetadataNotice('标题已提交；链接修复仍未完成，可再次重试。')
+        setMetadataNotice('标题已提交；链接修复仍未完成，可再次重试。', 'alert')
       } else {
         setLinkRepairRetry(null)
-        setMetadataNotice(`链接修复已完成；已刷新 ${result.linkRepair.updated} 篇引用笔记。`)
+        setMetadataNotice('链接修复已完成。')
       }
     } catch {
-      setMetadataNotice('标题保持已提交状态；链接修复重试失败，可再次重试。')
+      setMetadataNotice('标题保持已提交状态；链接修复重试失败，可再次重试。', 'alert')
     } finally {
       linkRepairBusyRef.current = false
       setLinkRepairBusy(false)
@@ -475,12 +476,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     updateCreateOperation((current) => ({ ...current, status: 'pending' }))
     const operation = (async () => {
       try {
-        const result = await navigateAfterSave(() => library.createNote(title, folderId, format))
+        if (tags.length > 0 && search === undefined) throw new Error('tag service unavailable')
+        const result = await navigateAfterSave(() => library.createNote(title, folderId, format, tags.length > 0 ? async created => {
+          await search!.updateTags(created.id, tags)
+          return notes.loadNote(created.id)
+        } : undefined))
         if (result === null) throw new Error('create was blocked by an unsaved editor')
-        if (tags.length > 0 && search !== undefined) {
-          await search.updateTags(result.id, tags)
-          library.selectNote(result.id)
-        }
         if (!mountedRef.current || createOperationRequest.current !== request) return
         updateCreateOperation(() => ({ title: '', folderId, tags: '', format: 'document', status: 'idle' }))
         if (createPopoverOpenRef.current) {
@@ -499,7 +500,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }
 
   const startImport = (providedPaths?: string[], destination = activeFolderIdRef.current) => {
-    if (!files || importBusy || createInFlightRef.current || storageMoveLockedRef.current || destination === null) return
+    if (!files || importBusy || createInFlightRef.current || storageMoveLockedRef.current) return
     const folderId = destination
     setImportBusy(true)
     setImportNotice(null)
@@ -508,11 +509,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         const paths = providedPaths ?? await files.chooseFiles()
         if (paths.length === 0) return
         const result = await files.importFiles({ paths, folderId })
+        await library.refreshFolders()
         await library.refreshNotes(folderId, folderId !== activeFolderIdRef.current)
         if (mountedRef.current) {
           setImportNotice({
             kind: result.failed.length > 0 ? 'alert' : 'status',
-            message: '已导入 ' + result.imported.length + ' 项' + (result.failed.length ? '；失败：' + result.failed.map(failure => failure.name + '：' + failure.message).join('；') : '。'),
+            message: '已导入 ' + (result.imported.length + (result.importedFolders?.length ?? 0)) + ' 项' + (result.failed.length ? '；失败：' + result.failed.map(failure => failure.name + '：' + failure.message).join('；') : '。'),
           })
         }
       } catch {
@@ -528,7 +530,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     const folderId = position === undefined
       ? activeFolderIdRef.current
       : (document.elementFromPoint(position.x, position.y)?.closest<HTMLElement>('[data-folder-id]')?.dataset.folderId as FolderId | undefined) ?? activeFolderIdRef.current
-    if (folderId !== null && folderId !== undefined) startImport(paths, folderId)
+    if (folderId !== undefined) startImport(paths, folderId)
   }
 
   useEffect(() => {
@@ -764,8 +766,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           }}
           folderContents={activeView === 'library' ? renderFolderNotes : undefined}
         />
-        <ErrorNotification error={importNotice?.kind === 'alert' ? importNotice.message : null} />
-        {importNotice?.kind === 'status' && <p className="library-status" role="status">{importNotice.message}</p>}
+        <OperationNotification notice={importNotice} />
         </div>
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
@@ -829,7 +830,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
               setLinkRepairRetry(retryRequired ? { noteId: result.document.id, title: result.document.title } : null)
               setMetadataNotice(retryRequired
                 ? '标题已提交；链接修复未完成，可安全重试。'
-                : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`)
+                : null, retryRequired ? 'alert' : 'status')
               return result
             }}
             onMoveNote={async (folderId) => {
@@ -839,6 +840,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
               return result
             }}
             external={system}
+            preferences={system}
             onDocumentAdopt={library.adoptDocument}
             onConvertFileToDocument={convertWordFile}
             initialMode={defaultEditorMode}
@@ -850,7 +852,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onDraftChange={(markdown) => reportOutlineDraft(library.document!.id, markdown)}
           />
         )}
-        {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
+        <OperationNotification notice={metadataNotice} />
         {activeView === 'library' && linkRepairRetry && (
           <button type="button" disabled={linkRepairBusy} onClick={() => void retryLinkRepair()}>
             重试链接修复

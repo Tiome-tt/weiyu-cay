@@ -8,6 +8,14 @@ import { DEFAULT_APP_SETTINGS } from './theme'
 import type { UpdateController } from './UpdateSettings'
 
 afterEach(cleanup)
+it('keeps native credential diagnostics out of user-facing messages', async () => {
+  render(<SettingsView settings={settingsPort()} value={DEFAULT_APP_SETTINGS} ai={aiPort({ saveDeepSeekApiKey: vi.fn().mockRejectedValue({ code: 'io', diagnostic: 'internal-secret-path' }) })} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined}/>)
+  fireEvent.click(screen.getByRole('tab', { name: 'AI' }))
+  await userEvent.type(screen.getByLabelText('DeepSeek API Key'), 'sk-test')
+  await userEvent.click(screen.getByRole('button', { name: '保存' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('无法保存 API Key')
+  expect(screen.getByRole('alert')).not.toHaveTextContent('internal-secret-path')
+})
 it('shows a persistent notice when the default library migration is pending', async () => {
   render(<SettingsView settings={settingsPort({ getStorageInfo: async () => ({ root: 'old library', noteBytes: 0, assetBytes: 0, trashBytes: 0, defaultMigrationPending: true }) })} value={DEFAULT_APP_SETTINGS} onChange={vi.fn()} onClose={vi.fn()} prepareStorageMove={async () => () => undefined} />)
   await userEvent.click(screen.getByRole('tab', { name: '存储' }))

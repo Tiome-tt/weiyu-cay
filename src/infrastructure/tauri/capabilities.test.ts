@@ -11,6 +11,15 @@ const MAIN_WINDOW_PERMISSIONS = [
 ] as const
 
 describe('frameless window capabilities', () => {
+  it('limits the local graph query to the main window',()=>{
+    expect(mainCapability.permissions).toContain('allow-link-neighborhood')
+    expect(temporaryCapability.permissions).not.toContain('allow-link-neighborhood')
+  })
+  it('keeps interactive HTML creation main-window only without weakening the app script policy', () => {
+    expect(mainCapability.permissions).toContain('allow-create-html-preview')
+    expect(temporaryCapability.permissions).not.toContain('allow-create-html-preview')
+    expect(tauriConfig.app.security.csp).toContain("script-src 'self'; frame-src cay-html: http://cay-html.localhost")
+  })
   it('authorizes every native operation required by the frameless main window', () => {
     expect(tauriConfig.app.windows[0]).toMatchObject({ decorations: false })
     expect(mainCapability.windows).toEqual(['main'])

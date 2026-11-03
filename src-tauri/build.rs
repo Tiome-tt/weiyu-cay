@@ -3,6 +3,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "create_note",
             "import_files",
+            "create_html_preview",
             "read_managed_file",
             "read_managed_file_bytes",
             "read_office_preview_parts",
@@ -27,6 +28,7 @@ fn main() {
             "purge_expired_trash",
             "resolve_link",
             "backlinks",
+            "link_neighborhood",
             "rename_target_labels",
             "save_image",
             "read_image_asset",

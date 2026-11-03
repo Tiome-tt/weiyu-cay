@@ -28,6 +28,7 @@ import { AiSummaryWidget } from '../ai/AiSummaryWidget'
 import { waitForImageAssets } from '../content/imageAssetLoader'
 
 export interface EditorPaneProps {
+  preferences?: import('../../domain/ports').WindowPreferencePort
   onConvertFileToDocument?(source: NoteDocument, bytes: Uint8Array): Promise<void>
   files?: import('../../domain/ports').FilePort
   document: NoteDocument
@@ -285,8 +286,8 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       setTitleDraft(result.document.title)
       setMetadataNotice(
         result.linkRepair.failure !== null || result.linkRepair.failedSourceIds.length > 0
-          ? `标题已更新；${result.linkRepair.failedSourceIds.length} 个引用标签将在重试时修复。`
-          : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`,
+          ? '标题已保存，但部分笔记中的引用名称未更新，请重试。'
+          : null,
       )
     } catch {
       setMetadataError('无法重命名笔记，请解决保存错误后重试。')
@@ -496,6 +497,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       )}
       <EditorStatusBar ref={statisticsRef} text={autosave.markdown} selectedText={selectedText} updatedAt={autosave.updatedAt} state={autosave.state} related={links && onNavigateNote ? (
         <Backlinks
+          noteTitle={displayTitle}
           noteId={document.id}
           links={links}
           onNavigate={onNavigateNote}

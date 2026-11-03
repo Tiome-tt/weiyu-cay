@@ -1,18 +1,19 @@
+import { rememberPreview } from './previewByteCache'
 import { ErrorNotification } from '../../shared/notifications'
 import {createPortal} from 'react-dom'
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
 import { selectedExportPort } from '../../domain/exportSelection'
-import type { ExportSelection } from '../../domain/ports'
+import type { ExportSelection, WindowPreferencePort } from '../../domain/ports'
 import type { NoteExportKind } from '../../domain/noteExport'
 import type { FilePort } from '../../domain/ports'
 import { SaveAsDialog } from './SaveAsDialog'
+import { HtmlPreview } from './HtmlPreview'
 const OfficePreview = lazy(() => import('./OfficePreview').then(module => ({ default: module.OfficePreview })))
 import './content.css'
 const loadPdfViewer = () => import('./PdfViewer')
 const PdfViewer = lazy(loadPdfViewer)
 // Keep a small per-port cache so reopening a stable payload does not reread it.
-const PREVIEW_CACHE_LIMIT = 3
 const previewCaches = new WeakMap<object, Map<string, { mediaType: string; bytes: Uint8Array }>>()
 
 function previewCacheFor(files: FilePort): Map<string, { mediaType: string; bytes: Uint8Array }> {
@@ -30,17 +31,7 @@ function previewCacheKey(document: NoteDocument, file: { sha256: string }): stri
 function hasPdfHeader(bytes: Uint8Array): boolean {
   return bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d
 }
-function rememberPreview(cache: Map<string, { mediaType: string; bytes: Uint8Array }>, key: string, value: { mediaType: string; bytes: Uint8Array }): void {
-  cache.delete(key)
-  // PDF.js may transfer the supplied buffer to its worker, so the cache owns a copy.
-  cache.set(key, { mediaType: value.mediaType, bytes: value.bytes.slice() })
-  while (cache.size > PREVIEW_CACHE_LIMIT) {
-    const oldest = cache.keys().next().value
-    if (oldest === undefined) break
-    cache.delete(oldest)
-  }
-}
-export function FileViewer({document,files,onConvertToDocument,onSaveAs,onDocumentAdopt,actionsContainer}:{onDocumentAdopt?:(document:NoteDocument)=>void;actionsContainer?:HTMLElement|null;document:NoteDocument;files?:FilePort;onSaveAs?:(kind:NoteExportKind,selection?:ExportSelection)=>Promise<boolean>;onConvertToDocument?: (document:NoteDocument, bytes:Uint8Array)=>Promise<void>}) {
+export function FileViewer({document,files,onConvertToDocument,onSaveAs,onDocumentAdopt,actionsContainer,preferences}:{preferences?:WindowPreferencePort;onDocumentAdopt?:(document:NoteDocument)=>void;actionsContainer?:HTMLElement|null;document:NoteDocument;files?:FilePort;onSaveAs?:(kind:NoteExportKind,selection?:ExportSelection)=>Promise<boolean>;onConvertToDocument?: (document:NoteDocument, bytes:Uint8Array)=>Promise<void>}) {
   const file = document.content?.type === 'file' ? document.content.file : null
   const [data,setData] = useState<{mediaType:string;bytes:Uint8Array}|null>(null)
   const [error,setError] = useState<string|null>(null)
@@ -49,6 +40,7 @@ export function FileViewer({document,files,onConvertToDocument,onSaveAs,onDocume
   const [forceStructuredRead,setForceStructuredRead] = useState(false)
   const [converting,setConverting] = useState(false)
   const [saving,setSaving] = useState(false)
+  const createHtmlPreview = useMemo(() => files?.createHtmlPreview?.bind(files), [files])
   const adoptRef=useRef(onDocumentAdopt)
   adoptRef.current=onDocumentAdopt
   useEffect(()=>{
@@ -107,7 +99,7 @@ export function FileViewer({document,files,onConvertToDocument,onSaveAs,onDocume
   const extension = file.originalName.split('.').pop()?.toLowerCase() ?? ''
   const office = /^(docx?|xlsx?|pptx?)$/.test(extension)
   const canOpen = office && (file.size > 0 || ['docx','xlsx','pptx'].includes(extension))
-  const action=async(fn:()=>Promise<unknown>)=>{try{await fn()}catch(cause){setError(cause instanceof Error&&cause.message ? cause.message : '文件操作失败，原文件已保留。')}}
+  const action=async(fn:()=>Promise<unknown>)=>{try{await fn()}catch{setError('文件操作未完成，原文件已保留，请重试。')}}
   const actions=(<header className="file-viewer__actions">
       {office&&<button type="button" disabled={!files||!canOpen} title="在系统应用中编辑；保存后自动同步到此笔记" onClick={()=>void action(()=>files!.openFile(document.id))}>打开进行编辑</button>}
       <button type="button" disabled={!files} onClick={()=>setSaving(true)}>另存为</button>
@@ -126,9 +118,10 @@ export function FileViewer({document,files,onConvertToDocument,onSaveAs,onDocume
   return <section className="file-viewer" aria-label="文件预览">
     {actionsContainer?createPortal(actions,actionsContainer):actions}
     <div className="file-viewer__content">
+    {['html','htm'].includes(extension)&&<HtmlPreview noteId={document.id} revision={document.revision} createPreview={createHtmlPreview}/>}
     {error&&<><ErrorNotification error={error} /><button type="button" onClick={()=>setAttempt(n=>n+1)}>重试加载文件</button></>}
     {imageUrl&&<img className="file-viewer__image" src={imageUrl} alt={file.originalName}/>}
-    {data?.mediaType==='application/pdf'&&<Suspense fallback={<p role="status">正在打开 PDF…</p>}><PdfViewer bytes={data.bytes} cacheKey={file ? previewCacheKey(document, file) : undefined} onDocumentError={()=>{
+    {data?.mediaType==='application/pdf'&&<Suspense fallback={<p role="status">正在打开 PDF…</p>}><PdfViewer key={previewCacheKey(document, file)} noteId={document.id} preferences={preferences} bytes={data.bytes} cacheKey={file ? previewCacheKey(document, file) : undefined} onDocumentError={()=>{
       if (!files?.readFileBytes || forceStructuredRead || !file) return
       previewCacheFor(files).delete(previewCacheKey(document, file))
       setForceStructuredRead(true)

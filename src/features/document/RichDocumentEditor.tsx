@@ -1,3 +1,4 @@
+import { useFloatingTableHeaders } from '../../shared/floatingTableHeaders'
 import {fitMenuToBounds} from '../../shared/menuPosition'
 import { createPortal } from 'react-dom'
 import { captureFormat, applyFormat, type PaintedFormat } from './formatPainter'
@@ -18,6 +19,7 @@ import { RICH_FONT_FAMILY_OPTIONS, RICH_FONT_SIZE_SUGGESTIONS, richFontSizePoint
 import { PendingAssetWrites } from './PendingAssetWrites'
 import { InternalLinkDialog } from '../editor/InternalLinkDialog'
 import { ErrorNotification } from '../../shared/notifications'
+import { elementScale } from '../../shared/elementScale'
 import { documentBlockCount } from './documentBlockCount'
 import './rich-document.css'
 import 'katex/dist/katex.min.css'
@@ -97,15 +99,6 @@ function richAlignmentIcon(alignment: RichTextAlignment) {
         : ['M4 6h16', 'M4 10h16', 'M4 14h16', 'M4 18h16']
   return <svg viewBox='0 0 24 24' aria-hidden='true' focusable='false'>{paths.map((path) => <path key={path} d={path} />)}</svg>
 }
-const CELL_COLORS = [
-  { value: 'green', label: '浅绿' },
-  { value: 'yellow', label: '浅黄' },
-  { value: 'blue', label: '浅蓝' },
-  { value: 'pink', label: '浅粉' },
-  { value: 'purple', label: '浅紫' },
-  { value: 'gray', label: '灰色' },
-] as const
-
 export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocumentEditorProps>(function RichDocumentEditor({
   value,
   onChange,
@@ -133,6 +126,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const [linkTargets, setLinkTargets] = useState<NoteSummary[]>([])
   const [linkPickerOpen, setLinkPickerOpen] = useState(false)
   const pendingBlockInsertionRef=useRef<number|null>(null)
+  const surfaceRef=useRef<HTMLDivElement>(null)
   const insertPopupRef=useRef<HTMLDivElement>(null)
   const imagePickerRef=useRef<HTMLInputElement>(null)
   const [insertAnchor,setInsertAnchor]=useState({left:0,top:0})
@@ -147,6 +141,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const insertMenuRef = useRef<HTMLDivElement>(null)
   const tablePickerRef = useRef<HTMLDivElement>(null)
   const [tablePickerSide, setTablePickerSide] = useState<'left' | 'right'>('right')
+  const tableGridRef = useRef<HTMLDivElement>(null)
+  const tableToolsRef = useRef<HTMLDivElement>(null)
+  const [tableToolsAnchor, setTableToolsAnchor] = useState<{ left: number; top: number } | null>(null)
+  const [tableGridAnchor, setTableGridAnchor] = useState({ left: 0, top: 0 })
   const [contextPosition, setContextPosition] = useState<{ x: number; y: number } | null>(null)
   const [contextMenuKind, setContextMenuKind] = useState<'default' | 'image'>('default')
   const contextImageRef = useRef<string | null>(null)
@@ -306,6 +304,8 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     },
   })
 
+  useFloatingTableHeaders(surfaceRef,editor!==null)
+
   useEffect(() => {
     editorInstanceRef.current = editor
     if (editor) blockCountRef.current?.(documentBlockCount(fromTiptapJson(editor.getJSON())))
@@ -375,7 +375,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   useEffect(() => {
     if (!insertOpen) return
     const closeFromOutside = (event: PointerEvent) => {
-      if (!insertMenuRef.current?.contains(event.target as Node) && !insertPopupRef.current?.contains(event.target as Node) && !(event.target instanceof Element && event.target.closest('.rich-document__block-controls'))) { pendingBlockInsertionRef.current=null; setInsertOpen(false) }
+      if (!tableGridRef.current?.contains(event.target as Node) && !insertMenuRef.current?.contains(event.target as Node) && !insertPopupRef.current?.contains(event.target as Node) && !(event.target instanceof Element && event.target.closest('.rich-document__block-controls'))) { pendingBlockInsertionRef.current=null; setInsertOpen(false) }
     }
     document.addEventListener('pointerdown', closeFromOutside)
     return () => document.removeEventListener('pointerdown', closeFromOutside)
@@ -385,10 +385,13 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     if (!tablePickerOpen) return
     const picker = tablePickerRef.current
     const trigger = picker?.querySelector<HTMLElement>('.rich-document__table-picker-trigger')
-    const grid = picker?.querySelector<HTMLElement>('.rich-document__table-picker-grid')
+    const grid = tableGridRef.current
     if (trigger === null || trigger === undefined || grid === null || grid === undefined) return
     const update = () => {
       const triggerRect = trigger.getBoundingClientRect()
+      const width = grid.getBoundingClientRect().width
+      const side = chooseTablePickerSide({ triggerLeft: triggerRect.left, triggerRight: triggerRect.right, pickerWidth: width, viewportWidth: window.innerWidth })
+      setTableGridAnchor({ left: Math.max(8, Math.min(window.innerWidth-width-8, side==='left'?triggerRect.left-width-6:triggerRect.right+6)), top: Math.max(34, Math.min(triggerRect.top, window.innerHeight-grid.getBoundingClientRect().height-8)) })
       setTablePickerSide(chooseTablePickerSide({
         triggerLeft: triggerRect.left,
         triggerRight: triggerRect.right,
@@ -412,7 +415,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     if (contextPosition === null) return
     const closeFromOutside = (event: MouseEvent) => {
       const menu = contextMenuRef.current
-      if (menu !== null && !menu.contains(event.target as Node)) { contextImageRef.current = null; setContextMenuKind('default'); setContextPosition(null) }
+      if (menu !== null && !menu.contains(event.target as Node) && !tableGridRef.current?.contains(event.target as Node)) { contextImageRef.current = null; setContextMenuKind('default'); setContextPosition(null) }
     }
     const resize=()=>setContextPosition(current=>current?{...current}:null)
     window.addEventListener('resize',resize)
@@ -519,6 +522,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   const handleDocumentZoom = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     if (!event.ctrlKey) return
     event.preventDefault()
+    setHoverBlock(previous => ({ ...previous, visible: false }))
     setDocumentZoom((current) => nextRichDocumentZoom(current, event.deltaY))
   }, [])
   const handleSurfaceMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -572,6 +576,28 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       attrs: { noteId: target.id, label: target.title },
     }).run()
   }, [editor])
+  useLayoutEffect(() => {
+    if (!editor || !editable) return
+    const update = () => {
+      const node = editor.view.domAtPos(editor.state.selection.from).node
+      const element = node instanceof Element ? node : node.parentElement
+      const cell = editor.view.dom.querySelector<HTMLElement>('.selectedCell') ?? element?.closest<HTMLElement>('td,th')
+      const surface = editor.view.dom.closest('.rich-document__surface')
+      if (!cell || !surface) { setTableToolsAnchor(null); return }
+      const rect = cell.getBoundingClientRect(), bounds = surface.getBoundingClientRect()
+      if (rect.bottom < bounds.top || rect.top > bounds.bottom) { setTableToolsAnchor(null); return }
+      const width = tableToolsRef.current?.getBoundingClientRect().width || 340
+      const height = tableToolsRef.current?.getBoundingClientRect().height || 42
+      const left = Math.max(bounds.left+8, Math.min(rect.left, bounds.right-width-8))
+      const top = rect.top-height-6 >= bounds.top ? rect.top-height-6 : Math.min(Math.max(bounds.top+4,rect.bottom+6),bounds.bottom-height-4)
+      setTableToolsAnchor(previous => previous?.left===left && previous.top===top ? previous : { left, top })
+    }
+    update()
+    editor.on('selectionUpdate', update); editor.on('update', update); editor.on('focus', update)
+    document.addEventListener('scroll', update, true); window.addEventListener('resize', update)
+    return () => { editor.off('selectionUpdate', update); editor.off('update', update); editor.off('focus', update); document.removeEventListener('scroll', update, true); window.removeEventListener('resize', update) }
+  }, [editor, editable])
+
   if (!editor) return <div className="rich-document" aria-busy="true" />
 
   const renderInsertionItems=()=> <>
@@ -588,7 +614,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
             }}>公式</button>
             <div ref={tablePickerRef} className="rich-document__table-picker" role="group" aria-label="选择表格大小">
               <button type="button" role="menuitem" className="rich-document__table-picker-trigger" aria-haspopup="grid" aria-expanded={tablePickerOpen} onClick={() => setTablePickerOpen((open) => !open)}>表格</button>
-              {tablePickerOpen && <div className="rich-document__table-picker-grid" data-placement={tablePickerSide} role="grid" aria-label="选择表格行列">
+              {tablePickerOpen && createPortal(<div ref={tableGridRef} className="rich-document__table-picker-grid rich-document__floating-picker" style={tableGridAnchor} data-placement={tablePickerSide} role="grid" aria-label="选择表格行列" onPointerDown={event=>event.stopPropagation()} onClick={event=>event.stopPropagation()}>
                 {Array.from({ length: 8 }, (_, row) => Array.from({ length: 8 }, (_, column) => {
                   const rows = row + 1
                   const cols = column + 1
@@ -600,7 +626,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
                   }} />
                 })).flat()}
                 <output>{tablePickerSize.rows > 0 ? tablePickerSize.rows + ' × ' + tablePickerSize.cols : '选择行列'}</output>
-                  </div>}
+                  </div>, document.body)}
             </div>
             {links && <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setLinkPickerOpen(true);setInsertOpen(false);setContextPosition(null)}}>引用笔记</button>}
             <button type="button" role="menuitem" onClick={()=>{run(()=>{editor.chain().focus().setHorizontalRule().run()});setInsertOpen(false);setContextPosition(null)}}>分隔线</button>
@@ -715,21 +741,26 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         try { const url=new URL(urlDialog.url); if(!['http:','https:'].includes(url.protocol))throw new Error('protocol') } catch {setCommandError('请输入完整的 http 或 https 链接。');return}
         editor.chain().focus().insertContent({type:'text',text:urlDialog.text.trim()||urlDialog.url,marks:[{type:'link',attrs:{href:urlDialog.url}}]}).run();setUrlDialog(null);setCommandError(null)
       }}><label>显示文字<input aria-label="链接文字" value={urlDialog.text} onChange={event=>setUrlDialog({...urlDialog,text:event.target.value})}/></label><label>地址<input autoFocus aria-label="链接地址" value={urlDialog.url} onChange={event=>setUrlDialog({...urlDialog,url:event.target.value})}/></label><div className="rich-document__math-dialog-actions"><button type="button" onClick={()=>setUrlDialog(null)}>取消</button><button type="submit">插入</button></div></form>}
-      <div onPointerUp={() => { requestAnimationFrame(() => { if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }) }} onKeyUp={event => { if (event.key === 'Escape') { paintRef.current=null; setPainting(false) } else if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }} className="rich-document__surface" style={{ "--rich-document-zoom": documentZoom } as CSSProperties} onWheel={handleDocumentZoom} onMouseMove={event=>{
+      <div onPointerUp={() => { requestAnimationFrame(() => { if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }) }} onKeyUp={event => { if (event.key === 'Escape') { paintRef.current=null; setPainting(false) } else if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }} ref={surfaceRef} className="rich-document__surface" style={{ "--rich-document-zoom": documentZoom } as CSSProperties} onWheel={handleDocumentZoom} onMouseMove={event=>{
         handleSurfaceMouseMove(event)
         if(event.target instanceof Element && event.target.closest('.rich-document__block-controls'))return
+        const surface=event.currentTarget,surfaceRect=surface.getBoundingClientRect(),scale=elementScale(surface)
         const block=event.target instanceof Element?event.target.closest<HTMLElement>('[data-block-number]'):null
         if(block && editor.view.dom.contains(block)) {
           const rect=block.getBoundingClientRect(),content=editor.view.dom.getBoundingClientRect()
           const padding=parseFloat(getComputedStyle(editor.view.dom).paddingLeft)||0
-          const next={number:block.dataset.blockNumber??'',top:rect.top,left:content.left+padding-60,visible:true,position:Number(block.dataset.blockPosition??0)}
-          setHoverBlock(previous=>previous.number===next.number&&previous.top===next.top&&previous.position===next.position&&previous.visible?previous:next)
+          // DOM rectangles are viewport pixels; the gutter shares the surface's
+          // zoomed layout and scroll origin with the document.
+          const next={number:block.dataset.blockNumber??'',top:(rect.top-surfaceRect.top)/scale+surface.scrollTop,left:(content.left-surfaceRect.left)/scale+surface.scrollLeft+padding-60,visible:true,position:Number(block.dataset.blockPosition??0)}
+          setHoverBlock(previous=>previous.number===next.number&&previous.top===next.top&&previous.left===next.left&&previous.position===next.position&&previous.visible?previous:next)
         } else setHoverBlock(previous=>{
           // Keep the gutter reachable while the pointer crosses the gap from the block.
-          const crossingGutter=event.clientX>=previous.left && event.clientX<=previous.left+60 && event.clientY>=previous.top && event.clientY<=previous.top+24
+          const x=(event.clientX-surfaceRect.left)/scale+surface.scrollLeft,y=(event.clientY-surfaceRect.top)/scale+surface.scrollTop
+          const crossingGutter=x>=previous.left && x<=previous.left+60 && y>=previous.top && y<=previous.top+24
           return crossingGutter ? previous : {...previous,visible:false}
         })
       }} onScrollCapture={()=>setHoverBlock(previous=>({...previous,visible:false}))} onMouseLeave={() => { setHoverBlock(previous=>({...previous,visible:false})); setTableSelectTarget(null) }} onContextMenu={(event) => {
+        setTablePickerOpen(false)
         event.preventDefault()
         setInsertOpen(false)
         const target = event.target instanceof Element ? event.target : null
@@ -738,22 +769,22 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         setContextMenuKind(image === null ? 'default' : 'image')
         setContextPosition({ x: event.clientX, y: event.clientY })
       }}>
-        {editor.isActive('table') && editable && <div className="rich-document__table-tools" role="toolbar" aria-label="表格工具">
+        {editor.isActive('table') && editable && createPortal(<div ref={tableToolsRef} className="rich-document__table-tools rich-document__floating-table-tools" style={{left:tableToolsAnchor?.left??8,top:tableToolsAnchor?.top??8,visibility:tableToolsAnchor?'visible':'hidden'}} role="toolbar" aria-label="表格工具" onMouseDown={event=>{if(event.target instanceof Element && event.target.closest('button'))event.preventDefault()}}>
+          <div className="rich-document__table-actions-group" data-menu-side={(tableToolsAnchor?.top??0)>180?'above':'below'}><button type="button" aria-label="行列操作" title="行列操作" aria-haspopup="menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18M14 15h5m-2.5-2.5v5"/></svg></button><div role="menu" aria-label="行列操作">
           <button type="button" onClick={() => run(() => { editor.chain().focus().addRowAfter().run() })}>在下方插入行</button>
           <button type="button" onClick={() => run(() => { editor.chain().focus().addColumnAfter().run() })}>在右侧插入列</button>
           <button type="button" onClick={() => run(() => { editor.chain().focus().deleteRow().run() })}>删除行</button>
           <button type="button" onClick={() => run(() => { editor.chain().focus().deleteColumn().run() })}>删除列</button>
-          <button type="button" onClick={() => run(() => { editor.chain().focus().mergeCells().run() })}>合并单元格</button>
-          <button type="button" onClick={() => run(() => { editor.chain().focus().splitCell().run() })}>拆分单元格</button>
+          </div></div>
+          <button type="button" aria-label="合并单元格" title="合并单元格" onClick={() => run(() => { editor.chain().focus().mergeCells().run() })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m6 9 3 3-3 3m12-6-3 3 3 3"/></svg></button>
+          <button type="button" aria-label="拆分单元格" title="拆分单元格" onClick={() => run(() => { editor.chain().focus().splitCell().run() })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14m-4-9-2 2 2 2m8-4 2 2-2 2"/></svg></button>
           <div className='rich-document__alignment-tools rich-document__table-alignment-tools' role='group' aria-label='单元格对齐方式'>
             {richAlignmentOptions.filter((option) => option.value !== 'justify').map((option) => <button key={option.value} type='button' aria-label={option.label} title={option.label} aria-pressed={activeCellTextAlign === option.value} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { editor.chain().focus().setCellAttribute('textAlign', option.value).run() })}>
               {richAlignmentIcon(option.value)}
             </button>)}
           </div>
-          <span className="rich-document__table-select"><select aria-label="单元格背景色" defaultValue="" onChange={(event) => run(() => { editor.chain().focus().setCellAttribute('backgroundColor', event.currentTarget.value).run() })}>
-            <option value="" disabled>背景色</option>{CELL_COLORS.map((color) => <option key={color.value} value={color.value}>{color.label}</option>)}
-          </select></span>
-        </div>}
+
+        </div>,document.body)}
         {editable && <div className={`rich-document__block-controls${hoverBlock.visible||(insertOpen&&pendingBlockInsertionRef.current!==null)?' is-visible':''}`} style={{top:hoverBlock.top,left:hoverBlock.left}} onMouseEnter={()=>setHoverBlock(previous=>({...previous,visible:true}))}>
           <span aria-hidden="true" className="rich-document__block-number">{hoverBlock.number}</span>
           <button type="button" aria-label="添加内容块" title="添加内容块" aria-haspopup="menu" onMouseDown={event=>event.preventDefault()} onClick={event=>{pendingBlockInsertionRef.current=hoverBlock.position;const rect=event.currentTarget.getBoundingClientRect();setInsertAnchor({left:rect.left,top:rect.bottom+6});setInsertOpen(true)}}>+</button>
@@ -776,12 +807,12 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           </svg>
         </button>}
       </div>
-      {contextPosition !== null && <div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y, maxHeight: 'calc(100dvh - 46px)', overflowY:'auto' }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
+      {contextPosition !== null && createPortal(<div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y, maxHeight: 'calc(100dvh - 46px)', overflowY:'auto' }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
         {contextMenuKind === 'image' ? <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); void copyImageToClipboard() }}>复制图片</button> : <>
           {renderInsertionItems()}
           <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().clearNodes().unsetAllMarks().run() }); setContextPosition(null) }}>清除格式</button>
         </>}
-      </div>}
+      </div>,document.body)}
     </section>
   )
 })

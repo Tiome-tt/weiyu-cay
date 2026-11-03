@@ -25,9 +25,24 @@ interface AiSummaryWidgetProps {
   model?: string
   onOpenSettings?(): void
   waitForImages?(): Promise<void>
+  unsupported?: boolean
 }
 
-export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, onOpenSettings, waitForImages }: AiSummaryWidgetProps) {
+export function AiSummaryWidget(props:AiSummaryWidgetProps) {
+  return props.unsupported ? <UnavailableSummary/> : <NoteAiSummaryWidget {...props}/>
+}
+function UnavailableSummary(){
+  const [open,setOpen]=useState(false)
+  useEffect(()=>{
+    const close=(event:KeyboardEvent)=>{if(event.key==='Escape')setOpen(false)}
+    window.addEventListener('keydown',close)
+    return ()=>window.removeEventListener('keydown',close)
+  },[])
+  return <aside className={`ai-summary-widget${open?' ai-summary-widget--open':''}`} data-boundary="editor">
+    {!open ? <button className="ai-summary-widget__rail" type="button" aria-label="打开 AI 总结" onClick={()=>setOpen(true)}><Icon name="ai-fusion" size={24}/><span>AI 总结</span></button> : <section className="ai-summary-widget__panel" role="dialog" aria-label="AI 总结" aria-modal="false"><header className="ai-summary-widget__header"><div className="ai-summary-widget__title"><Icon name="ai-fusion" size={22}/><strong>AI 总结</strong></div><div className="ai-summary-widget__header-actions"><button type="button" aria-label="关闭 AI 总结" onClick={()=>setOpen(false)}><Icon name="close" size={15}/></button></div></header><div className="ai-summary-widget__empty"><p>暂不支持该格式文件进行AI总结。</p></div></section>}
+  </aside>
+}
+function NoteAiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, onOpenSettings, waitForImages }: AiSummaryWidgetProps) {
   const effectiveNoteId = noteId ?? title
   const [open, setOpen] = useState(false)
   const [showEmphasis, setShowEmphasis] = useState(true)
@@ -187,7 +202,7 @@ export function AiSummaryWidget({ noteId, title, markdown, ai, apiKey, model, on
           {!configured && summary === null && !cacheLoading ? (
             <div className="ai-summary-widget__empty">
               <p>还没有配置 DeepSeek API Key</p>
-              <span>Key 会保存在加密凭据文件中，正文和普通设置不会保存明文。</span>
+              <span>请在 AI 设置中填写 API Key。</span>
               {onOpenSettings && <button type="button" onClick={onOpenSettings}>打开设置</button>}
             </div>
           ) : (

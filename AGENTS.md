@@ -93,13 +93,27 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 - The editor block “+” menu and editor context menu expose the same insertion actions, including a searchable internal-link picker that excludes the current note.
 - Show non-empty note tags below the note title; last-edited time and save state belong in the bottom status bar. Icon-only inline formatting controls expose visible hover labels and accessible names.
 - New-note and move destinations offer actual folders only. Moving a note updates both source and destination inline lists immediately; preserve compatibility with existing root-level content.
+- 拖入资料库的文件夹递归导入并保留层级与空目录，同名文件夹新建带序号的副本，不覆盖已有内容；拒绝符号链接与重解析点，单次最多处理 1000 个文件/目录、64 层子目录，部分失败保留成功项并报告，源文件不移动。导入后刷新目录树，空资料库可直接接收拖入。
+- PDF 按不可变笔记 UUID 持久保存页码、页内滚动位置与缩放比例，重新打开后恢复；阅读偏好不改附件正文或修订号。页码可手动输入，Enter 或离焦跳转并限制在实际页数内，Escape 取消输入；缩放支持 50%–300%，菜单与 Ctrl+滚轮一致。
+- HTML/HTM 附件保留原文件，以独立来源、仅 allow-scripts 的沙箱预览内嵌脚本/样式/图片；不授予同源、联网、外部资源、弹窗、表单提交或顶层导航权限。原生按 UUID 校验读取，单文件上限 8MiB，以不可猜测的临时令牌提供只读快照，最多缓存四份；不暴露资料库路径。网页自有进度仅在本次预览中保留，不承诺外置资源网页或跨次网页存储。
+- 文档正文缩放时，内容块行号与加号使用编辑区内的布局坐标，按实际缩放与滚动偏移换算定位；控件随正文缩放，跨正文旁空隙仍可点击，不改变块序号或正文内容。
+- Markdown 编辑/预览与文档长表格随正文完整纵向滚动，仅保留表内横向滚动；原表头离开视野后显示随列宽、横向滚动与正文缩放同步的只读浮动表头，表格离开视野后隐藏；Markdown 单击换格不因旧输入框收起而扩展选区，跨格拖选需实际移动指针，编辑后保留表内滚动。文档表格工具栏在选中格上下按空间浮动，图标提供操作名称，行列动作合并为悬停/聚焦列表；行列大小网格独立浮层按左右空间展开，避免被菜单滚动区裁切，表格入口整行可点击且每次右键重置网格；移除单元格背景色入口，保留已有颜色数据。Markdown 格边插入加号使用 11px 紧凑控件。
 - 右键新建文件夹在目录树内显示带文件夹图标的临时名称行，自动展开目标父文件夹并聚焦输入；空白处新建放在顶层列表末尾，Enter 确认、Escape 取消，不在资料库顶部单独显示输入框。
 - Keep the visual language warm, rounded, and nature-inspired, while preserving high contrast and dense-content readability.
 - Do not copy Nintendo assets or directly use `animal-island-ui`; its CC BY-NC license prohibits commercial use. Build an original design system.
 - Keyboard operation, visible focus, reduced motion, and adequate color contrast are required.
-- Transient operation errors appear in a dismissible bottom-right notification and expire after ten seconds. Preserve persistent recovery controls for blocked startup, unsaved work, and unavailable platform actions.
+- Transient operation results and errors appear in dismissible bottom-right notifications and expire after ten seconds. All results, including deletion undo, share one bottom-right stack with the latest at the bottom. Repeated results restart the timer without stacking duplicate messages; success uses polite status announcements and failures use alerts. Preserve loading/save state, undo actions and persistent recovery controls for blocked startup, unsaved work, and unavailable platform actions.
+- 普通笔记改名成功不显示内部引用刷新统计，链接修复失败仍保留提示和重试入口。新建时填写的标签保存成功后，先回读最新笔记，再发布编辑器快照及列表缓存，确保标题下与资料库标签一致。
+- 用户提示仅显示操作结果、必要限制及可执行的恢复步骤，不显示内部引用计数、笔记 UUID、底层诊断或凭据存储实现；开发模式也不向界面输出诊断。导入/导出数量、用户选择的输出位置、部分失败及原内容保留情况属于有用反馈，应保留。
 
 - 工作区弹窗打开时保留顶部原生标题栏的拖动区域；独立临时便笺同时接入图片保存与读取服务，新粘贴和已有本地图片使用同一所属便笺 UUID 读取；临时窗口拥有受所属 UUID 校验约束的单张及批量图片读取权限。另存为格式名称仅显示 Markdown，附件实际导出能力保持不变。
+
+- 保存、改名、附件兼容读取与引用查询在原生后台执行，锁和原子写入顺序不变；预览原始字节缓存最多三项、总计 32MiB，超大文件不额外复制进缓存。无引用更新的改名直接更新列表元数据，不重新读取整目录。
+- AI 总结仅支持 Markdown、文档与纯文本笔记；PDF、HTML/HTM、Office 和其他附件点击 AI 入口仅显示“暂不支持该格式文件进行AI总结。”，不读取附件正文、不查询总结缓存或凭据、不发送 AI 请求。PDF 页码在翻页按钮中间采用“第 X / 总页数 页”行内输入，鼠标聚焦无外圈，键盘聚焦以底线提示；表格横向滚动复用浮动表头，内容或尺寸变化才重建，并忽略双滚动条同步产生的回传事件。
+
+- 关联面板默认关闭，打开后左侧保留引用列表、右侧显示两层双向邻域图谱，箭头表示引用方向，当前笔记高亮，图谱标题加粗，使用默认开启的“间接引用”滑动开关在本地筛选二层节点和连线，不重新查询；最多 24 节点、48 边，节点较多时悬停或键盘聚焦显示短标题，完整名称由节点提示和可访问标签提供，超限明确提示部分展示。图谱仅在主窗口按需后台读取引用索引元数据，跳过删除、临时和缺失目标，不扫描正文或附件；节点跳转沿用保存屏障。左右分隔线支持指针拖动、方向键、Home/End 与双击复位，比例限制 25%–75%；面板初始高度 200px，保留原有纵向调整。
+
+- 文档右键菜单使用文档主体外的独立浮层，继承应用字体与主题，不受编辑区的隔离层裁切；编辑器浮层位于关联笔记面板之上，主窗口弹窗与通知仍保持各自层级。
 
 ## Code style
 
@@ -150,6 +164,9 @@ Do not claim a command passes unless it was run in the current worktree. If scaf
 - Before releasing, cover global shortcuts, multiple sticky windows, always-on-top behavior, autostart, installers, signing, and updates on both Windows and macOS.
 
 ## Version and changelog rules
+
+- 安装包发布规则：仅提供 Windows x64 EXE 中文/英文、macOS 通用版 DMG 中文/英文四个安装包；英文必须覆盖完整应用界面，不能仅改安装器语言或重命名中文包。保留 latest.json、签名、更新载荷、校验和等更新辅助文件。macOS 通用包须同时包含 Intel 与 Apple Silicon；英文界面、原生菜单及更新语言保持验证完成前不得发布英文包或将 v1.1.5 标记稳定。现有构建矩阵须在正式发版前同步至此规则。
+
 
 - `CHANGELOG.md` at the repository root is the only source of version change records; do not create or update a separate release-notes file for version history.
 - Add each new version at the top of the version records, use `MAJOR.MINOR.PATCH`, and keep the status limited to `预发布`, `稳定`, or `撤回`.

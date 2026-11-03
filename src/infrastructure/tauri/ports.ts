@@ -326,6 +326,10 @@ class TauriLinkPort implements LinkPort {
     return this.client.invoke<NoteSummary[]>('backlinks', { noteId })
   }
 
+  neighborhood(noteId:NoteId){
+    return this.client.invoke<import('../../domain/ports').LinkNeighborhood>('link_neighborhood',{noteId})
+  }
+
   renameTargetLabels(noteId: NoteId, title: string) {
     return this.client.invoke<Awaited<ReturnType<LinkPort['renameTargetLabels']>>>(
       'rename_target_labels',
@@ -348,6 +352,7 @@ class TauriSystemPort implements SystemPort {
     value: WindowPreferenceMap[Key],
   ) {
     await this.preferences.set(key, value)
+    if (key.startsWith('pdf-reading:')) await this.preferences.save()
   }
 
   async hideTemporaryWindow(noteId: NoteId) {

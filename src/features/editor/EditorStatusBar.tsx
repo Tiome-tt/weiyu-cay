@@ -19,7 +19,7 @@ export const EditorStatusBar = forwardRef<EditorStatusBarHandle, Props>(function
     if (frame.current === null) frame.current = requestAnimationFrame(() => { frame.current = null; setLiveText(pendingText.current) })
   }}), [])
   const [open, setOpen] = useState(false)
-  const [height, setHeight] = useState(120)
+  const [height, setHeight] = useState(200)
   const [previewSelection, setPreviewSelection] = useState('')
   const root = useRef<HTMLDivElement>(null)
   const drag = useRef<{ y: number; height: number } | null>(null)

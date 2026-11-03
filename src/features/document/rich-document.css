@@ -283,10 +283,10 @@
 .main-window .rich-document__table-select-all svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.45; }
 .main-window .rich-document__table-select-all:hover,
 .main-window .rich-document__table-select-all:focus-visible { color: var(--color-heading); background: var(--color-accent-border); outline: 2px solid var(--color-accent-border); outline-offset: 1px; }
-.main-window .rich-document__context-menu { position: fixed; z-index: 40; display: grid; min-width: 150px; gap: 2px; padding: 6px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-overlay); box-shadow: var(--shadow-overlay); }
-.main-window .rich-document__context-menu button { padding: 8px 12px; color: var(--color-text); text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
-.main-window .rich-document__context-menu button:hover,
-.main-window .rich-document__context-menu button:focus-visible { background: var(--color-accent-soft); outline: none; }
+.rich-document__context-menu { position: fixed; z-index: 100; color:var(--color-text); font-family:var(--body-font); display: grid; min-width: 150px; gap: 2px; padding: 6px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-overlay); box-shadow: var(--shadow-overlay); }
+.rich-document__context-menu button { font:inherit; padding: 8px 12px; color: var(--color-text); text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+.rich-document__context-menu button:hover,
+.rich-document__context-menu button:focus-visible { background: var(--color-accent-soft); outline: none; }
 
 @media (max-width: 720px) {
   .main-window .rich-document__content { padding-right: 32px; padding-left: 32px; }
@@ -323,7 +323,7 @@
 
 .rich-document__source-prefix.is-hidden { display:none; }
 
-.rich-document__block-controls { display:flex; align-items:center; gap:6px; position:fixed; z-index:5; opacity:0; pointer-events:none; transform:translateX(4px); transition:opacity 150ms ease,transform 150ms ease; }
+.rich-document__block-controls { display:flex; align-items:center; gap:6px; position:absolute; z-index:5; opacity:0; pointer-events:none; transform:translateX(4px); transition:opacity 150ms ease,transform 150ms ease; }
 .rich-document__block-controls.is-visible { opacity:1; pointer-events:auto; transform:translateX(0); }
 .rich-document__block-controls .rich-document__block-number { position:static; opacity:1; transform:none; width:22px; font:11px/1.8 var(--code-font); text-align:right; }
 .rich-document__block-controls button { width:24px; height:24px; padding:0; color:var(--color-accent); background:var(--color-accent-soft); border:1px solid var(--color-accent-border); border-radius:6px; cursor:pointer; }
@@ -331,6 +331,22 @@
 .rich-document__block-popover button { display:block; width:100%; padding:7px 9px; font:inherit; font-size:13px; text-align:left; background:transparent; color:var(--color-text); border:0; border-radius:5px; cursor:pointer; }
 .rich-document__block-popover button:hover,.rich-document__block-popover button:focus-visible { background:var(--color-accent-soft); }
 .rich-document__context-menu { max-height:70vh; overflow-y:auto; }
+.rich-document__floating-picker { position:fixed!important; z-index:220; display:grid; grid-template-columns:repeat(8,17px); gap:3px; width:max-content; padding:9px; background:var(--color-surface); color:var(--color-text); border:1px solid var(--color-border); border-radius:8px; box-shadow:var(--shadow-overlay); }
+.rich-document__floating-picker button { width:17px; height:17px; padding:0; border:1px solid var(--color-border-soft); background:var(--color-panel); }
+.rich-document__floating-picker button.is-selected { background:var(--color-accent-soft); border-color:var(--color-accent); }
+.rich-document__floating-picker output { grid-column:1/-1; font-size:12px; text-align:center; }
+.rich-document__floating-table-tools { position:fixed!important; z-index:100; display:flex; align-items:center; gap:4px; padding:5px; max-width:calc(100vw - 24px); border:1px solid var(--color-border); border-radius:10px; background:var(--color-surface); color:var(--color-text); box-shadow:var(--shadow-overlay); }
+.rich-document__floating-table-tools button { display:inline-flex; align-items:center; justify-content:center; min-width:28px; height:28px; padding:4px; border:0; border-radius:5px; color:inherit; background:transparent; font:inherit; }
+.rich-document__floating-table-tools button:hover,.rich-document__floating-table-tools button:focus-visible { background:var(--color-accent-soft); }
+.rich-document__floating-table-tools .rich-document__alignment-tools { display:flex; }
+.rich-document__floating-table-tools .rich-document__alignment-tools svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; }
+.rich-document__floating-table-tools select { max-width:80px; color:inherit; background:var(--color-surface); border:1px solid var(--color-border); border-radius:5px; }
+.rich-document__table-actions-group { position:relative; }
+.rich-document__table-actions-group [role=menu] { display:none; position:absolute; top:100%; left:0; width:145px; padding:5px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; box-shadow:var(--shadow-overlay); }
+.rich-document__table-actions-group:hover [role=menu],.rich-document__table-actions-group:focus-within [role=menu] { display:grid; }
+.rich-document__table-actions-group[data-menu-side=above] [role=menu] { top:auto; bottom:100%; }
+.main-window .rich-document__content .tableWrapper { overflow-x:auto; }
+.main-window .rich-document__content th { background:var(--color-panel); }
 @media(prefers-reduced-motion:reduce) { .rich-document__block-controls { transition:none; } }
 
 .rich-document__block-popover .rich-document__table-picker-grid { display:grid; grid-template-columns:repeat(8,17px); gap:3px; padding:6px; }
@@ -355,3 +371,6 @@
 .main-window .rich-document .tiptap .rich-code-block pre code { display:block; padding:0; border:0; border-radius:0; background:transparent; white-space:pre; font:inherit; }
 
 .main-window .rich-document .tiptap .rich-code-block pre { border:0; box-shadow:none; }
+
+.rich-document__table-picker-trigger { width:100%; box-sizing:border-box; text-align:left; }
+.rich-document__context-menu .rich-document__table-picker { width:100%; }

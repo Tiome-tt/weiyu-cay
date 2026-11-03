@@ -1,3 +1,4 @@
+import { useFloatingTableHeaders } from '../../shared/floatingTableHeaders'
 import {fitMenuToBounds} from '../../shared/menuPosition'
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
 import { syntaxHighlighting } from '@codemirror/language'
@@ -123,6 +124,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
 }: MarkdownSourceProps, ref) {
   const menuRef=useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+    useFloatingTableHeaders(hostRef)
   const viewRef = useRef<EditorView | null>(null)
   const selectionRef = useRef(onSelectionChange)
   selectionRef.current = onSelectionChange
@@ -374,7 +376,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
           getImageContext: () => ({ noteId: noteIdRef.current, assetReader: assetReaderRef.current }),
           onOpenExternal: (href) => { void externalRef.current?.openExternal(href) },
           tableScrollPositions: tableScrollPositionsRef.current,
-          onEditTable: ({ from, to, table, scrollLeft }) => {
+          onEditTable: ({ from, to, table, scrollLeft, scrollTop }) => {
             const view = viewRef.current
             if (view === null || readOnlyRef.current || barrierDepthRef.current > 0) return
             const tableMarkdown = tableMarkdownFromModel(table)
@@ -394,6 +396,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
               // A keyboard focus restore may already have revealed another cell.
               const restored = Math.max(0, tableScrollPositionsRef.current.get(from) ?? scrollLeft)
               tableViewport.scrollLeft = restored
+              if (scrollTop !== undefined) tableViewport.scrollTop = scrollTop
               const rail = tableWrapper.querySelector<HTMLElement>('.cm-live-table-scrollbar')
               if (rail !== null) rail.scrollLeft = restored
             }

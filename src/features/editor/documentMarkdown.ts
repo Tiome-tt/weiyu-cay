@@ -291,7 +291,7 @@ export interface DocumentMarkdownExtensionOptions {
   getPresentation(): MarkdownPresentation
   isEditable?(): boolean
   getImageContext?(): DocumentImageWidgetContext
-  onEditTable?(input: { from: number; to: number; table: MarkdownTable; scrollLeft?: number }): void
+  onEditTable?(input: { from: number; to: number; table: MarkdownTable; scrollLeft?: number; scrollTop?: number }): void
   tableScrollPositions?: Map<number, number>
   onOpenExternal?(href: string): void | Promise<void>
 }

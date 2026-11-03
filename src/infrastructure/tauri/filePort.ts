@@ -3,12 +3,17 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import type { ExportSelection, FileImportResult, FilePort } from '../../domain/ports'
 import type { FolderId, NoteId } from '../../domain/model'
 import { TauriClient } from './client'
+import { convertFileSrc } from '@tauri-apps/api/core'
 function exportPath(title:string,extension:string,selection?:ExportSelection):string {
  const name=(selection?.filename??title).replace(/[<>:"/\\|?*]/g,'_')
  const leaf=extension&&!name.toLowerCase().endsWith('.'+extension)?name+'.'+extension:name
  return selection?.directory?selection.directory.replace(/[\\/]$/,'')+'/'+leaf:leaf
 }
 export class TauriFilePort implements FilePort {
+  async createHtmlPreview(noteId: NoteId): Promise<string> {
+    const token = await this.client.invoke<string>('create_html_preview', { noteId })
+    return convertFileSrc(token, 'cay-html')
+  }
   constructor(private readonly client: TauriClient) {}
   async chooseExportDirectory():Promise<string|null>{const value=await open({directory:true,multiple:false,title:'选择保存目录'});return typeof value==='string'?value:null}
   readOfficeParts(noteId: NoteId): Promise<Array<{ name: string; text: string }>> { return this.client.invoke('read_office_preview_parts', { noteId }) }

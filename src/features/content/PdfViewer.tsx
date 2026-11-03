@@ -1,11 +1,14 @@
 import { ErrorNotification } from '../../shared/notifications'
-import { useEffect, useRef, useState, type WheelEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type WheelEvent } from 'react'
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import { PdfDocumentCache } from './pdfDocumentCache'
+import type { NoteId } from '../../domain/model'
+import type { PdfReadingPosition, WindowPreferencePort } from '../../domain/ports'
+import { normalizePdfReadingPosition, pdfReadingPositionStore, PDF_SCALE_STEPS } from './pdfReadingPosition'
 GlobalWorkerOptions.workerSrc=workerUrl
 
-export const PDF_SCALE_STEPS = [0.5,0.75,1,1.25,1.5,2] as const
+export { PDF_SCALE_STEPS } from './pdfReadingPosition'
 
 export function adjustPdfScale(current: number, deltaY: number): number {
   const index = PDF_SCALE_STEPS.reduce((closest, value, candidate) =>
@@ -44,31 +47,86 @@ function loadPdfDocument(bytes: Uint8Array, cacheKey?: string): { promise: Promi
   return { promise: sharedPromise, task }
 }
 
-export default function PdfViewer({bytes,cacheKey,onDocumentError}:{bytes:Uint8Array;cacheKey?:string;onDocumentError?:()=>void}) {
+export default function PdfViewer({bytes,cacheKey,onDocumentError,noteId,preferences}:{bytes:Uint8Array;cacheKey?:string;onDocumentError?:()=>void;noteId?:NoteId;preferences?:WindowPreferencePort}) {
   const [pdf,setPdf]=useState<PDFDocumentProxy|null>(null)
   const [page,setPage]=useState(1)
+  const [pageInput,setPageInput]=useState('1')
   const [scale,setScale]=useState(1)
   const [error,setError]=useState<string|null>(null)
   const canvas=useRef<HTMLCanvasElement>(null)
+  const viewer=useRef<HTMLDivElement>(null)
+  const pageContainer=useRef<HTMLDivElement>(null)
+  const position=useRef<PdfReadingPosition>(normalizePdfReadingPosition(undefined))
+  const restoring=useRef(true)
+  const loadedBytes=useRef<Uint8Array|null>(null)
   const onDocumentErrorRef=useRef(onDocumentError)
   useEffect(()=>{onDocumentErrorRef.current=onDocumentError},[onDocumentError])
+  const persist=useCallback((next:PdfReadingPosition)=>{
+    position.current=next
+    if(preferences&&noteId)void pdfReadingPositionStore(preferences).save(noteId,next).catch(()=>setError('无法保存 PDF 阅读位置，下次打开可能无法恢复。'))
+  },[preferences,noteId])
+  const changePage=(next:number)=>{
+    if(!pdf)return
+    const value=Math.max(1,Math.min(pdf.numPages,next))
+    setPageInput(String(value))
+    if(value===page)return
+    restoring.current=true
+    persist({...position.current,page:value,scrollTop:0,scrollLeft:0})
+    setPage(value)
+  }
+  const commitPage=()=>{
+    if(/^\d+$/.test(pageInput)&&Number.isSafeInteger(Number(pageInput)))changePage(Number(pageInput))
+    else setPageInput(String(page))
+  }
+  const changeScale=(value:number)=>{
+    if(!pdf||value===position.current.scale||!PDF_SCALE_STEPS.some(step=>step===value))return
+    restoring.current=true
+    persist({...position.current,scale:value})
+    setScale(value)
+  }
   const handleWheel=(event:WheelEvent<HTMLDivElement>)=>{
     if(!event.ctrlKey)return
     event.preventDefault()
-    setScale(current=>adjustPdfScale(current,event.deltaY))
+    changeScale(adjustPdfScale(scale,event.deltaY))
   }
   useEffect(()=>{
     let active=true
+    restoring.current=true
+    loadedBytes.current=null
     setPdf(null);setPage(1);setError(null)
     const load = loadPdfDocument(bytes,cacheKey)
-    void load.promise.then(value=>{
-      if(active)setPdf(value)
+    const reading=preferences&&noteId?pdfReadingPositionStore(preferences).load(noteId).catch(()=>{
+      if(active)setError('无法读取 PDF 阅读位置，已从第一页打开。')
+      return normalizePdfReadingPosition(undefined)
+    }):Promise.resolve(normalizePdfReadingPosition(undefined))
+    void Promise.all([load.promise,reading]).then(([value,saved])=>{
+      if(active){
+        const restoredPage=Math.min(saved.page,value.numPages)
+        position.current={...saved,page:restoredPage,...(restoredPage!==saved.page?{scrollTop:0,scrollLeft:0}:{})}
+        loadedBytes.current=bytes
+        setPage(restoredPage);setPageInput(String(restoredPage));setScale(saved.scale);setPdf(value)
+      }
       else if(cacheKey===undefined)void value.cleanup()
     },()=>{if(active){setError('无法打开 PDF。文件可能损坏或需要密码，请另存后查看。');onDocumentErrorRef.current?.()}})
     return()=>{active=false;if(cacheKey===undefined)void load.task?.destroy()}
-  },[bytes,cacheKey])
+  },[bytes,cacheKey,noteId,preferences])
   useEffect(()=>{
-    if(!pdf)return
+    if(!pdf||loadedBytes.current!==bytes)return
+    const scrollHost=viewer.current?.closest<HTMLElement>('.file-viewer')
+    const pageHost=pageContainer.current
+    const saveScroll=()=>{
+      if(restoring.current)return
+      persist({...position.current,scrollTop:scrollHost?.scrollTop??0,scrollLeft:pageHost?.scrollLeft??0})
+    }
+    scrollHost?.addEventListener('scroll',saveScroll,{passive:true})
+    pageHost?.addEventListener('scroll',saveScroll,{passive:true})
+    return()=>{
+      scrollHost?.removeEventListener('scroll',saveScroll)
+      pageHost?.removeEventListener('scroll',saveScroll)
+    }
+  },[pdf,bytes,persist])
+  useEffect(()=>{
+    if(!pdf||loadedBytes.current!==bytes)return
     let active=true
     let render:RenderTask|undefined
     const frame=window.requestAnimationFrame(()=>{
@@ -79,19 +137,28 @@ export default function PdfViewer({bytes,cacheKey,onDocumentError}:{bytes:Uint8A
         if(!context)return
         canvas.current.width=viewport.width;canvas.current.height=viewport.height
         render=p.render({canvas:canvas.current,canvasContext:context,viewport})
-        return render.promise
+        return render.promise.then(()=>{
+          if(!active)return
+          const scrollHost=viewer.current?.closest<HTMLElement>('.file-viewer')
+          if(scrollHost)scrollHost.scrollTop=position.current.scrollTop
+          if(pageContainer.current)pageContainer.current.scrollLeft=position.current.scrollLeft
+          restoring.current=false
+        })
       }).catch(()=>{if(active){if(cacheKey!==undefined)pdfDocumentCache.delete(cacheKey);setError('这一页暂时无法显示。')}})
     })
     return()=>{active=false;window.cancelAnimationFrame(frame);render?.cancel()}
-  },[pdf,page,scale,cacheKey])
-  return <div className="pdf-viewer">
+  },[pdf,page,scale,cacheKey,bytes])
+  return <div className="pdf-viewer" ref={viewer}>
     <ErrorNotification error={error} />
-    <div className="pdf-viewer__page" onWheel={handleWheel}><canvas ref={canvas} aria-label={`PDF 第 ${page} 页`}/></div>
+    <div className="pdf-viewer__page" ref={pageContainer} onWheel={handleWheel}><canvas ref={canvas} aria-label={`PDF 第 ${page} 页`}/></div>
     <div className="pdf-viewer__toolbar" role="toolbar" aria-label="PDF 阅读工具">
-      <button type="button" disabled={!pdf||page<=1} onClick={()=>setPage(p=>p-1)}>上一页</button>
-      <span aria-live="polite">{page} / {pdf?.numPages??'—'}</span>
-      <button type="button" disabled={!pdf||page>=pdf.numPages} onClick={()=>setPage(p=>p+1)}>下一页</button>
-      <label>缩放 <select aria-label="PDF 缩放" value={scale} onChange={e=>setScale(Number(e.target.value))}>{PDF_SCALE_STEPS.map(s=><option key={s} value={s}>{s*100}%</option>)}</select></label>
+      <button type="button" disabled={!pdf||page<=1} onClick={()=>changePage(page-1)}>上一页</button>
+      <label className="pdf-viewer__page-number"><span>第</span><input aria-label="PDF 页码" style={{width:`${Math.max(2,String(pdf?.numPages??'').length)+1}ch`}} inputMode="numeric" disabled={!pdf} value={pageInput} onChange={event=>setPageInput(event.target.value)} onBlur={commitPage} onKeyDown={event=>{
+        if(event.key==='Enter'){event.preventDefault();commitPage()}
+        else if(event.key==='Escape'){event.preventDefault();setPageInput(String(page))}
+      }}/><span aria-live="polite">/ {pdf?.numPages??'—'} 页</span></label>
+      <button type="button" disabled={!pdf||page>=pdf.numPages} onClick={()=>changePage(page+1)}>下一页</button>
+      <label>缩放 <select aria-label="PDF 缩放" disabled={!pdf} value={scale} onChange={e=>changeScale(Number(e.target.value))}>{PDF_SCALE_STEPS.map(s=><option key={s} value={s}>{s*100}%</option>)}</select></label>
       <span className="pdf-viewer__hint">Ctrl + 滚轮缩放</span>
     </div>
   </div>

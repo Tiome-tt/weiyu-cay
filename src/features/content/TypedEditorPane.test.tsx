@@ -15,6 +15,16 @@ vi.mock('../document/RichDocumentEditor', () => ({
  RichDocumentEditor: ({onChange}: {onChange:(value:{schemaVersion:1;root:{type:'doc';content:Array<unknown>}})=>void}) => <button type='button' onClick={() => onChange({schemaVersion:1,root:{type:'doc',content:[]}})}>文档正文</button>,
 }))
 afterEach(() => {cleanup();vi.clearAllMocks()})
+it.each(['题库.html','材料.pdf','表格.xlsx'])('shows an unsupported reminder for %s without consulting AI services',async(name)=>{
+ const ai={getCredentialStatus:vi.fn(),getCachedSummary:vi.fn(),summarize:vi.fn(),saveDeepSeekApiKey:vi.fn(),clearDeepSeekApiKey:vi.fn()}
+ render(<TypedEditorPane document={{...note(''),content:{type:'file',file:{storageName:'payload',originalName:name,mediaType:'application/octet-stream',size:4,sha256:'0'.repeat(64)}}}} notes={fakeNotePort()} ai={ai}/>)
+ act(()=>screen.getByRole('button',{name:'打开 AI 总结'}).click())
+ expect(screen.getByText('暂不支持该格式文件进行AI总结。')).toBeVisible()
+ expect(screen.queryByRole('button',{name:'生成总结'})).not.toBeInTheDocument()
+ expect(ai.getCredentialStatus).not.toHaveBeenCalled()
+ expect(ai.getCachedSummary).not.toHaveBeenCalled()
+ expect(ai.summarize).not.toHaveBeenCalled()
+})
 it('opens plain text without Markdown view controls and participates in save barriers',async()=>{
  const ref=createRef<EditorPaneHandle>()
  render(<TypedEditorPane ref={ref} document={{...note(''),content:{type:'text',text:'==原文=='}}} notes={fakeNotePort()}/>)

@@ -35,6 +35,42 @@ function port(backlinks: LinkPort['backlinks']): LinkPort {
 afterEach(() => cleanup())
 
 describe('Backlinks', () => {
+  it('defaults indirect references on and filters them locally with a switch',async()=>{
+    const neighborhood=vi.fn().mockResolvedValue({nodes:[{id:noteA,title:'当前',distance:0},{id:noteB,title:'间接',distance:2}],edges:[{source:noteA,target:noteB}],truncated:false})
+    render(<Backlinks noteId={noteA} links={{...port(vi.fn().mockResolvedValue([])),neighborhood}} onNavigate={vi.fn()}/>)
+    expect(await screen.findByRole('button',{name:'打开笔记：间接'})).toBeVisible()
+    const toggle=screen.getByRole('switch',{name:'间接引用'})
+    expect(toggle).toBeChecked()
+    await userEvent.click(toggle)
+    expect(screen.queryByRole('button',{name:'打开笔记：间接'})).not.toBeInTheDocument()
+    expect(screen.getByLabelText('当前笔记：当前')).toBeVisible()
+    expect(document.querySelectorAll('.related-graph__edges line')).toHaveLength(0)
+    await userEvent.click(toggle)
+    expect(screen.getByRole('button',{name:'打开笔记：间接'})).toBeVisible()
+    expect(neighborhood).toHaveBeenCalledOnce()
+    expect(screen.queryByText('直接与间接引用')).not.toBeInTheDocument()
+  })
+  it('shows incoming and indirect relations, highlights the current note, and resizes the two sides',async()=>{
+    const links={...port(vi.fn().mockResolvedValue([])),neighborhood:vi.fn().mockResolvedValue({nodes:[{id:noteA,title:'当前',distance:0},{id:noteB,title:'间接',distance:2}],edges:[{source:noteA,target:noteB}],truncated:false})}
+    const navigate=vi.fn()
+    render(<Backlinks noteId={noteA} links={links} onNavigate={navigate}/>)
+    const node=await screen.findByRole('button',{name:'打开笔记：间接'})
+    expect(screen.getByLabelText('当前笔记：当前')).toHaveAttribute('aria-current','true')
+    await userEvent.click(node);expect(navigate).toHaveBeenCalledWith(noteB)
+    const divider=screen.getByRole('separator',{name:'调整引用列表与图谱宽度'})
+    divider.focus();await userEvent.keyboard('{ArrowRight}')
+    expect(divider).toHaveAttribute('aria-valuenow','55')
+  })
+  it('allows retrying a graph failure without reloading the incoming list',async()=>{
+    const neighborhood=vi.fn().mockRejectedValueOnce(new Error('private')).mockResolvedValue({nodes:[],edges:[],truncated:false})
+    const backlinks=vi.fn().mockResolvedValue([])
+    render(<Backlinks noteId={noteA} links={{...port(backlinks),neighborhood}} onNavigate={vi.fn()}/>)
+    await userEvent.click(await screen.findByRole('button',{name:'重试加载图谱'}))
+    expect(await screen.findByLabelText('笔记关联图谱')).toBeVisible()
+    expect(neighborhood).toHaveBeenCalledTimes(2)
+    expect(backlinks).toHaveBeenCalledOnce()
+    expect(screen.queryByText('private')).not.toBeInTheDocument()
+  })
   it('renders loading, results, source context, and a collapsible section', async () => {
     let finish!: (items: NoteSummary[]) => void
     const links = port(vi.fn(() => new Promise<NoteSummary[]>((done) => { finish = done })))

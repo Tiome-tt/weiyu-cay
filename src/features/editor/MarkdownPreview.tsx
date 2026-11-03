@@ -1,3 +1,4 @@
+import { useFloatingTableHeaders } from '../../shared/floatingTableHeaders'
 import { forwardRef, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { NoteId, NoteSummary } from '../../domain/model'
 import type { ImageReadPort, LinkPort, SystemPort } from '../../domain/ports'
@@ -27,7 +28,7 @@ export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps
       const identity = createPreviewIdentity()
       return { ...markdownWithPreviewLinks(markdown, identity), identity }
     }, [markdown])
-    const html = useMemo(() => renderPreviewMarkdown(prepared.markdown), [prepared.markdown])
+    const html = useMemo(() => renderPreviewMarkdown(prepared.markdown).replace(/<table>/gu, '<div class="markdown-table-viewport"><table>').replace(/<\/table>/gu, '</table></div>'), [prepared.markdown])
     const [resolutions, setResolutions] = useState<ReadonlyMap<NoteId, NoteSummary | null>>(new Map())
     const [previewZoom, setPreviewZoom] = useState(1)
     const [assetState, setAssetState] = useState<{
@@ -45,6 +46,7 @@ export const MarkdownPreview = memo(forwardRef<HTMLElement, MarkdownPreviewProps
       )
     }, [assetState, html])
     const articleRef = useRef<HTMLElement | null>(null)
+    useFloatingTableHeaders(articleRef)
 
     useEffect(() => {
       let current = true
