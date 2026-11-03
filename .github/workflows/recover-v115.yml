@@ -4,6 +4,9 @@ permissions:
   contents: read
 jobs:
   verify-source:
+    permissions:
+      actions: read
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Verify signed tag and original platform gates
