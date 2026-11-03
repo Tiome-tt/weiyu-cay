@@ -27,7 +27,7 @@ describe('signed release workflow permissions', () => {
     const workflow=readFileSync('.github/workflows/release.yml','utf8').replace(/\r\n/g,'\n')
     expect(workflow).toContain('VITE_CAY_LOCALE: ${{ matrix.locale }}')
     expect(workflow).toContain('universal-apple-darwin')
-    expect(workflow).toContain('lipo -verify_arch arm64 x86_64')
+    expect(workflow).toContain('lipo "$binary" -verify_arch arm64 x86_64')
     expect(workflow).toContain('latest-en.json')
     expect(workflow).toContain('scripts/localized-release.ts')
   })
