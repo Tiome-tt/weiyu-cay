@@ -578,7 +578,7 @@ fn create_getting_started_guide(
 ) -> Result<StartupGuideTarget, CommandError> {
     let folder = super::folders::FolderRepository::new(paths.clone()).ensure_system_root_locked(
         target.folder_id,
-        "开始使用",
+        crate::brand::text("开始使用", "Getting started"),
         guard,
     )?;
     let notes = NoteRepository::new(paths.clone());
@@ -599,11 +599,15 @@ fn create_getting_started_guide(
         NoteDocument {
             id: target.note_id,
             kind: crate::domain::NoteKind::Formal,
-            title: "欢迎来到微屿".to_owned(),
+            title: crate::brand::text("欢迎来到微屿", "Welcome to Cay").to_owned(),
             folder_id: Some(folder.id),
             tags: Vec::new(),
             content: None,
-            markdown: GETTING_STARTED_MARKDOWN.to_owned(),
+            markdown: crate::brand::text(
+                GETTING_STARTED_MARKDOWN,
+                ENGLISH_GETTING_STARTED_MARKDOWN,
+            )
+            .to_owned(),
             revision: 0,
             created_at: now.clone(),
             updated_at: now,
@@ -922,3 +926,28 @@ fn repository(state: &StorageCommandState) -> Result<NoteRepository, CommandErro
         state.paths_for(StorageConsumer::Notes)?.clone(),
     ))
 }
+
+const ENGLISH_GETTING_STARTED_MARKDOWN: &str = r#"# Welcome to Cay
+
+Cay is a local-first note app. Your library works offline without an account.
+
+## Notes and files
+
+Create Markdown, rich-document or plain-text notes. Drag files or folders into the library to import them with their folder structure. PDF reading supports page entry, remembered reading positions and zoom up to 300%. HTML files open in an isolated local preview. Modern Office files have local previews and can be edited in your system app; DOCX can also be converted to an editable document.
+
+## Writing and references
+
+Use the title controls to switch Markdown views. Use the block + menu or right-click to insert lists, images, tables, equations and references. Reference other notes by their stable identities so renaming does not break links. The bottom related-notes panel shows incoming references and a local graph; its dividers can be dragged.
+
+## Save and recover
+
+Cay saves automatically. Check the bottom status bar before leaving unsaved work. Deleted notes go to Trash and can be restored. Use Save as to export a copy without changing your library. Storage settings can move your library to an empty folder after verifying the copied data.
+
+## Sticky notes
+
+Use the sticky-note shortcut for quick captures. Closing a sticky-note window hides it. Convert or delete captures from the main inbox.
+
+## AI summaries
+
+Configure your DeepSeek API key in AI settings, then open AI summary on a note and choose Generate summary. Summaries are sent only on your explicit request. File attachments are not supported for AI summaries.
+"#;

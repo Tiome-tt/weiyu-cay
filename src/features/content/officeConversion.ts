@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import type { AssetPort } from '../../domain/ports'
 import type { NoteId } from '../../domain/model'
 import type { RichDocument, RichMark, RichNode } from '../../domain/content'
@@ -9,7 +10,7 @@ export async function docxToRichDocument(bytes: Uint8Array): Promise<RichDocumen
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   const result = await mammoth.convertToHtml({ arrayBuffer })
   if (result.messages.some((message) => message.type === 'error')) {
-    throw new Error('Word 文档转换失败。')
+    throw new Error(uiText("Word 文档转换失败。","Word conversion failed."))
   }
   const parsed = new DOMParser().parseFromString(result.value, 'text/html')
   const content = Array.from(parsed.body.childNodes).flatMap(convertBlock)
@@ -35,7 +36,7 @@ export async function materializeDocumentImages(
       const source = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
       const decoded = decodeDataUri(source)
       if (decoded === null || assets === undefined) {
-        throw new Error('Word 文档中的图片无法导入资料库。')
+        throw new Error(uiText("Word 文档中的图片无法导入资料库。","Images from this Word document could not be imported."))
       }
       const saved = await assets.saveImage({ noteId, mediaType: decoded.mediaType, bytes: decoded.bytes })
       node.attrs = { ...node.attrs, src: saved.relativePath }
@@ -139,7 +140,7 @@ function convertInline(parent: Element): RichNode[] {
     const tag = child.tagName.toLowerCase()
     if (tag === 'br') return [{ type: 'hardBreak' }]
     if (tag === 'img') {
-      return [{ type: 'image', attrs: { src: child.getAttribute('src') ?? '', alt: child.getAttribute('alt') ?? '图片' } }]
+      return [{ type: 'image', attrs: { src: child.getAttribute('src') ?? '', alt: child.getAttribute('alt') ?? uiText("图片","Image") } }]
     }
     const marks: RichMark[] = []
     const style = child.style

@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useRef, useState, type WheelEvent } from 'react'
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -63,7 +64,7 @@ export default function PdfViewer({bytes,cacheKey,onDocumentError,noteId,prefere
   useEffect(()=>{onDocumentErrorRef.current=onDocumentError},[onDocumentError])
   const persist=useCallback((next:PdfReadingPosition)=>{
     position.current=next
-    if(preferences&&noteId)void pdfReadingPositionStore(preferences).save(noteId,next).catch(()=>setError('无法保存 PDF 阅读位置，下次打开可能无法恢复。'))
+    if(preferences&&noteId)void pdfReadingPositionStore(preferences).save(noteId,next).catch(()=>setError(uiText("无法保存 PDF 阅读位置，下次打开可能无法恢复。","Could not save the PDF reading position. It may not be restored next time.")))
   },[preferences,noteId])
   const changePage=(next:number)=>{
     if(!pdf)return
@@ -96,7 +97,7 @@ export default function PdfViewer({bytes,cacheKey,onDocumentError,noteId,prefere
     setPdf(null);setPage(1);setError(null)
     const load = loadPdfDocument(bytes,cacheKey)
     const reading=preferences&&noteId?pdfReadingPositionStore(preferences).load(noteId).catch(()=>{
-      if(active)setError('无法读取 PDF 阅读位置，已从第一页打开。')
+      if(active)setError(uiText("无法读取 PDF 阅读位置，已从第一页打开。","Could not read the saved PDF position. Opened at the first page."))
       return normalizePdfReadingPosition(undefined)
     }):Promise.resolve(normalizePdfReadingPosition(undefined))
     void Promise.all([load.promise,reading]).then(([value,saved])=>{
@@ -107,7 +108,7 @@ export default function PdfViewer({bytes,cacheKey,onDocumentError,noteId,prefere
         setPage(restoredPage);setPageInput(String(restoredPage));setScale(saved.scale);setPdf(value)
       }
       else if(cacheKey===undefined)void value.cleanup()
-    },()=>{if(active){setError('无法打开 PDF。文件可能损坏或需要密码，请另存后查看。');onDocumentErrorRef.current?.()}})
+    },()=>{if(active){setError(uiText("无法打开 PDF。文件可能损坏或需要密码，请另存后查看。","Could not open the PDF. It may be damaged or password-protected. Save a copy and open it externally."));onDocumentErrorRef.current?.()}})
     return()=>{active=false;if(cacheKey===undefined)void load.task?.destroy()}
   },[bytes,cacheKey,noteId,preferences])
   useEffect(()=>{
@@ -144,22 +145,22 @@ export default function PdfViewer({bytes,cacheKey,onDocumentError,noteId,prefere
           if(pageContainer.current)pageContainer.current.scrollLeft=position.current.scrollLeft
           restoring.current=false
         })
-      }).catch(()=>{if(active){if(cacheKey!==undefined)pdfDocumentCache.delete(cacheKey);setError('这一页暂时无法显示。')}})
+      }).catch(()=>{if(active){if(cacheKey!==undefined)pdfDocumentCache.delete(cacheKey);setError(uiText("这一页暂时无法显示。","This page could not be displayed."))}})
     })
     return()=>{active=false;window.cancelAnimationFrame(frame);render?.cancel()}
   },[pdf,page,scale,cacheKey,bytes])
   return <div className="pdf-viewer" ref={viewer}>
     <ErrorNotification error={error} />
-    <div className="pdf-viewer__page" ref={pageContainer} onWheel={handleWheel}><canvas ref={canvas} aria-label={`PDF 第 ${page} 页`}/></div>
-    <div className="pdf-viewer__toolbar" role="toolbar" aria-label="PDF 阅读工具">
-      <button type="button" disabled={!pdf||page<=1} onClick={()=>changePage(page-1)}>上一页</button>
-      <label className="pdf-viewer__page-number"><span>第</span><input aria-label="PDF 页码" style={{width:`${Math.max(2,String(pdf?.numPages??'').length)+1}ch`}} inputMode="numeric" disabled={!pdf} value={pageInput} onChange={event=>setPageInput(event.target.value)} onBlur={commitPage} onKeyDown={event=>{
+    <div className="pdf-viewer__page" ref={pageContainer} onWheel={handleWheel}><canvas ref={canvas} aria-label={uiText(`PDF 第 ${page} 页`,`PDF page ${page}`)}/></div>
+    <div className="pdf-viewer__toolbar" role="toolbar" aria-label={uiText("PDF 阅读工具","PDF reading tools")}>
+      <button type="button" disabled={!pdf||page<=1} onClick={()=>changePage(page-1)}>{uiText("上一页","Previous")}</button>
+      <label className="pdf-viewer__page-number"><span>{uiText("第","Page ")}</span><input aria-label={uiText("PDF 页码","PDF page number")} style={{width:`${Math.max(2,String(pdf?.numPages??'').length)+1}ch`}} inputMode="numeric" disabled={!pdf} value={pageInput} onChange={event=>setPageInput(event.target.value)} onBlur={commitPage} onKeyDown={event=>{
         if(event.key==='Enter'){event.preventDefault();commitPage()}
         else if(event.key==='Escape'){event.preventDefault();setPageInput(String(page))}
-      }}/><span aria-live="polite">/ {pdf?.numPages??'—'} 页</span></label>
-      <button type="button" disabled={!pdf||page>=pdf.numPages} onClick={()=>changePage(page+1)}>下一页</button>
-      <label>缩放 <select aria-label="PDF 缩放" disabled={!pdf} value={scale} onChange={e=>changeScale(Number(e.target.value))}>{PDF_SCALE_STEPS.map(s=><option key={s} value={s}>{s*100}%</option>)}</select></label>
-      <span className="pdf-viewer__hint">Ctrl + 滚轮缩放</span>
+      }}/><span aria-live="polite">/ {pdf?.numPages??'—'}{uiText(" 页"," ")}</span></label>
+      <button type="button" disabled={!pdf||page>=pdf.numPages} onClick={()=>changePage(page+1)}>{uiText("下一页","Next")}</button>
+      <label>{uiText("缩放 ","Zoom ")}<select aria-label={uiText("PDF 缩放","PDF zoom")} disabled={!pdf} value={scale} onChange={e=>changeScale(Number(e.target.value))}>{PDF_SCALE_STEPS.map(s=><option key={s} value={s}>{s*100}%</option>)}</select></label>
+      <span className="pdf-viewer__hint">{uiText("Ctrl + 滚轮缩放","Ctrl + scroll to zoom")}</span>
     </div>
   </div>
 }

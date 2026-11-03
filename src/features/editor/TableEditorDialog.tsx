@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { parseTsv } from './tableClipboard'
 import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent } from 'react'
@@ -19,7 +20,7 @@ const minimumColumns = 1
 
 function createCells(rows: number, columns: number) {
   return Array.from({ length: Math.max(minimumRows, rows) }, (_, row) =>
-    Array.from({ length: Math.max(minimumColumns, columns) }, (_, column) => row === 0 ? `列 ${column + 1}` : ''),
+    Array.from({ length: Math.max(minimumColumns, columns) }, (_, column) => row === 0 ? uiText(`列 ${column + 1}`,`Column ${column + 1}`) : ''),
   )
 }
 
@@ -76,7 +77,7 @@ export function TableEditorDialog({
 
   const resize = (rows: number, columns: number) => {
     recordHistory()
-    setCells((current) => Array.from({ length: rows }, (_, row) => Array.from({ length: columns }, (_, column) => current[row]?.[column] ?? (row === 0 ? `列 ${column + 1}` : ''))))
+    setCells((current) => Array.from({ length: rows }, (_, row) => Array.from({ length: columns }, (_, column) => current[row]?.[column] ?? (row === 0 ? uiText(`列 ${column + 1}`,`Column ${column + 1}`) : ''))))
     setSelection(null)
   }
 
@@ -92,7 +93,7 @@ export function TableEditorDialog({
     const pastedColumns = Math.max(...pasted.map((line) => line.length))
     const rows = Math.max(cells.length, anchor.row + pasted.length)
     const columns = Math.max(cells[0]?.length ?? minimumColumns, anchor.column + pastedColumns)
-    setCells((current) => Array.from({ length: rows }, (_, rowIndex) => Array.from({ length: columns }, (_, columnIndex) => pasted[rowIndex - anchor.row]?.[columnIndex - anchor.column] ?? current[rowIndex]?.[columnIndex] ?? (rowIndex === 0 ? `列 ${columnIndex + 1}` : ''))))
+    setCells((current) => Array.from({ length: rows }, (_, rowIndex) => Array.from({ length: columns }, (_, columnIndex) => pasted[rowIndex - anchor.row]?.[columnIndex - anchor.column] ?? current[rowIndex]?.[columnIndex] ?? (rowIndex === 0 ? uiText(`列 ${columnIndex + 1}`,`Column ${columnIndex + 1}`) : ''))))
     setSelection({ startRow: anchor.row, startColumn: anchor.column, endRow: anchor.row + pasted.length - 1, endColumn: anchor.column + pastedColumns - 1 })
   }
 
@@ -205,16 +206,16 @@ export function TableEditorDialog({
   }
 
   return (
-    <div className="table-editor-dialog" role="dialog" aria-modal="true" aria-label="编辑表格" onPointerDown={(event) => event.stopPropagation()} onKeyDown={handleKeyDown}>
-      <header><div><span className="library-pane__eyebrow">Markdown 表格</span><h3>{editingExisting ? '编辑表格' : '插入表格'}</h3></div><button type="button" aria-label="关闭表格编辑器" onClick={onCancel}>×</button></header>
+    <div className="table-editor-dialog" role="dialog" aria-modal="true" aria-label={uiText("编辑表格","Edit table")} onPointerDown={(event) => event.stopPropagation()} onKeyDown={handleKeyDown}>
+      <header><div><span className="library-pane__eyebrow">{uiText("Markdown 表格","Markdown table")}</span><h3>{editingExisting ? uiText("编辑表格","Edit table") : uiText("插入表格","Insert table")}</h3></div><button type="button" aria-label={uiText("关闭表格编辑器","Close table editor")} onClick={onCancel}>×</button></header>
       <div className="table-editor-dialog__toolbar">
-        <label>行数<input aria-label="表格行数" type="number" min={minimumRows} max={99} value={cells.length} onChange={(event) => resize(clampCount(Number(event.target.value), minimumRows), cells[0]?.length ?? minimumColumns)} /></label>
-        <label>列数<input aria-label="表格列数" type="number" min={minimumColumns} max={99} value={cells[0]?.length ?? minimumColumns} onChange={(event) => resize(cells.length, clampCount(Number(event.target.value), minimumColumns))} /></label>
+        <label>{uiText("行数","Rows")}<input aria-label={uiText("表格行数","Table rows")} type="number" min={minimumRows} max={99} value={cells.length} onChange={(event) => resize(clampCount(Number(event.target.value), minimumRows), cells[0]?.length ?? minimumColumns)} /></label>
+        <label>{uiText("列数","Columns")}<input aria-label={uiText("表格列数","Table columns")} type="number" min={minimumColumns} max={99} value={cells[0]?.length ?? minimumColumns} onChange={(event) => resize(cells.length, clampCount(Number(event.target.value), minimumColumns))} /></label>
       </div>
         <div className="table-editor-dialog__grid-wrap" onWheel={(event) => event.stopPropagation()}>
-        <table ref={gridRef} className="table-editor-dialog__grid" style={{ width: `${(cells[0]?.length ?? minimumColumns) * 120}px` }} onMouseDown={handleGridMouseDown}><tbody>{cells.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, column) => <td key={column} data-row={rowIndex} data-column={column} className={rowIndex === 0 ? 'table-editor-dialog__header-cell' : undefined} aria-selected={isInRange(selection, rowIndex, column)} data-selection-edge={selectionEdge(selection, rowIndex, column)} data-selection-anchor={isSelectionAnchor(selection, rowIndex, column) ? 'true' : undefined} onMouseEnter={() => extendDrag(rowIndex, column)} onMouseMove={() => extendDrag(rowIndex, column)}><input aria-label={`${rowIndex + 1} 行 ${column + 1} 列`} value={cell} onChange={(event) => { recordHistory(); setCell(rowIndex, column, event.target.value) }} onKeyDown={(event) => handleCellKeyDown(event, rowIndex, column)} onPaste={(event) => handlePaste(event, rowIndex, column)} /></td>)}</tr>)}</tbody></table>
+        <table ref={gridRef} className="table-editor-dialog__grid" style={{ width: `${(cells[0]?.length ?? minimumColumns) * 120}px` }} onMouseDown={handleGridMouseDown}><tbody>{cells.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, column) => <td key={column} data-row={rowIndex} data-column={column} className={rowIndex === 0 ? 'table-editor-dialog__header-cell' : undefined} aria-selected={isInRange(selection, rowIndex, column)} data-selection-edge={selectionEdge(selection, rowIndex, column)} data-selection-anchor={isSelectionAnchor(selection, rowIndex, column) ? 'true' : undefined} onMouseEnter={() => extendDrag(rowIndex, column)} onMouseMove={() => extendDrag(rowIndex, column)}><input aria-label={uiText(`${rowIndex + 1} 行 ${column + 1} 列`,`Row ${rowIndex + 1}, column ${column + 1}`)} value={cell} onChange={(event) => { recordHistory(); setCell(rowIndex, column, event.target.value) }} onKeyDown={(event) => handleCellKeyDown(event, rowIndex, column)} onPaste={(event) => handlePaste(event, rowIndex, column)} /></td>)}</tr>)}</tbody></table>
       </div>
-      <footer><button type="button" onClick={onCancel}>取消</button><button type="button" className="table-editor-dialog__primary" onClick={() => onInsert(tableMarkdownFromCells(cells, initialAlignments))}>{editingExisting ? '保存表格' : '插入表格'}</button></footer>
+      <footer><button type="button" onClick={onCancel}>{uiText("取消","Cancel")}</button><button type="button" className="table-editor-dialog__primary" onClick={() => onInsert(tableMarkdownFromCells(cells, initialAlignments))}>{editingExisting ? uiText("保存表格","Save table") : uiText("插入表格","Insert table")}</button></footer>
     </div>
   )
 }

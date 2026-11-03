@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Icon } from '../../shared/Icon'
 import { ErrorNotification } from '../../shared/notifications'
@@ -24,7 +25,7 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
       await onChange(next)
       if (clearInput) setInput('')
     } catch {
-      setMessage({ kind: 'error', text: '无法更新标签，请重试。' })
+      setMessage({ kind: 'error', text: uiText("无法更新标签，请重试。","Could not update tags. Try again.") })
     } finally {
       setBusy(false)
     }
@@ -37,7 +38,7 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
       const normalized = normalizeTag(input)
       const next = mergeTags(tags, [normalized.display])
       if (next.length === tags.length) {
-        setMessage({ kind: 'status', text: '标签已存在。' })
+        setMessage({ kind: 'status', text: uiText("标签已存在。","This tag already exists.") })
         return
       }
       void persist(next, true)
@@ -45,7 +46,7 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
       if (!(error instanceof TagValidationError)) throw error
       setMessage({
         kind: 'error',
-        text: error.reason === 'empty' ? '请输入标签。' : error.reason === 'too-long' ? '标签过长。' : '标签包含不支持的字符。',
+        text: error.reason === 'empty' ? uiText("请输入标签。","Enter a tag.") : error.reason === 'too-long' ? uiText("标签过长。","The tag is too long.") : uiText("标签包含不支持的字符。","The tag contains unsupported characters."),
       })
     }
   }
@@ -81,22 +82,22 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
   }, [editing])
 
   return (
-    <div ref={rootRef} className="tags-editor" aria-label="笔记标签">
-      <div className="tags-editor__chips" role={tags.length ? 'list' : undefined} aria-label={tags.length ? '笔记标签' : undefined}>
+    <div ref={rootRef} className="tags-editor" aria-label={uiText("笔记标签","Note tags")}>
+      <div className="tags-editor__chips" role={tags.length ? 'list' : undefined} aria-label={tags.length ? uiText("笔记标签","Note tags") : undefined}>
         {tags.map((tag) => (
           <span className="tag-chip" role="listitem" key={normalizeTag(tag).normalized}>
             #{tag}
-            <button type="button" aria-label={`移除标签 ${tag}`} disabled={busy} onClick={() => void persist(tags.filter((item) => item !== tag))}>
+            <button type="button" aria-label={uiText(`移除标签 ${tag}`,`Remove tag ${tag}`)} disabled={busy} onClick={() => void persist(tags.filter((item) => item !== tag))}>
               <Icon name="close" size={12} />
             </button>
           </span>
         ))}
       </div>
       {editing && <form className="tags-editor__form" onSubmit={add}>
-        <input ref={inputRef} aria-label="添加标签" value={input} disabled={busy} onChange={(event) => { setInput(event.target.value); setMessage(null) }} onKeyDown={handleKeyDown} placeholder="输入标签" />
-        <button type="submit" aria-label="确认添加标签" disabled={busy || !input.trim()}>✓</button>
+        <input ref={inputRef} aria-label={uiText("添加标签","Add tag")} value={input} disabled={busy} onChange={(event) => { setInput(event.target.value); setMessage(null) }} onKeyDown={handleKeyDown} placeholder={uiText("输入标签","Enter tag")} />
+        <button type="submit" aria-label={uiText("确认添加标签","Confirm tag")} disabled={busy || !input.trim()}>✓</button>
       </form>}
-      <button className="tags-editor__add" type="button" aria-label="添加标签" disabled={busy} onClick={() => setEditing(true)}><Icon name="plus" size={14} /><span>添加标签</span></button>
+      <button className="tags-editor__add" type="button" aria-label={uiText("添加标签","Add tag")} disabled={busy} onClick={() => setEditing(true)}><Icon name="plus" size={14} /><span>{uiText("添加标签","Add tag")}</span></button>
       <ErrorNotification error={message?.kind === 'error' ? message.text : null} />
       {message?.kind === 'status' && <span className="tags-editor__message" role="status">{message.text}</span>}
     </div>

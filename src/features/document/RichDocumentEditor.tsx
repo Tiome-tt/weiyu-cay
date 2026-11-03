@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useFloatingTableHeaders } from '../../shared/floatingTableHeaders'
 import {fitMenuToBounds} from '../../shared/menuPosition'
 import { createPortal } from 'react-dom'
@@ -83,10 +84,10 @@ export function chooseTablePickerSide(input: { triggerLeft: number; triggerRight
 }
 type RichTextAlignment = 'left' | 'center' | 'right' | 'justify'
 const richAlignmentOptions: ReadonlyArray<{ value: RichTextAlignment; label: string }> = [
-  { value: 'left', label: '左对齐' },
-  { value: 'center', label: '居中对齐' },
-  { value: 'right', label: '右对齐' },
-  { value: 'justify', label: '两端对齐' },
+  { value: 'left', label: uiText("左对齐","Align left") },
+  { value: 'center', label: uiText("居中对齐","Align center") },
+  { value: 'right', label: uiText("右对齐","Align right") },
+  { value: 'justify', label: uiText("两端对齐","Justify") },
 ]
 
 function richAlignmentIcon(alignment: RichTextAlignment) {
@@ -178,7 +179,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     editorProps: {
       attributes: {
         role: 'textbox',
-        'aria-label': '文档正文',
+        'aria-label': uiText("文档正文","Document content"),
         'aria-multiline': 'true',
         class: 'rich-document__content',
       },
@@ -241,7 +242,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           mediaType: image.type,
           bytes: new Uint8Array(buffer),
         })).then(({ relativePath }) => {
-          if(editor&&!editor.isDestroyed)insertSavedImage(editor,relativePath,image.name || '粘贴的图片')
+          if(editor&&!editor.isDestroyed)insertSavedImage(editor,relativePath,image.name || uiText("粘贴的图片","Pasted image"))
         }))
         return true
       },
@@ -366,7 +367,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     }).catch(() => {
       if (active) {
         setLinkTargets([])
-        setCommandError('无法加载可引用笔记，请重试。')
+        setCommandError(uiText("无法加载可引用笔记，请重试。","Could not load notes to reference. Try again."))
       }
     })
     return () => { active = false }
@@ -463,7 +464,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       prepareBlockInsertion()
       command()
     }).catch(() => {
-      setCommandError('格式操作未完成，请重新选择正文后重试。')
+      setCommandError(uiText("格式操作未完成，请重新选择正文后重试。","Formatting did not finish. Select the text again and retry."))
     })
   }, [commitComposition,prepareBlockInsertion])
 
@@ -473,7 +474,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
     setContextMenuKind('default')
     setContextPosition(null)
     if (source === null || source === '' || navigator.clipboard?.write === undefined || typeof ClipboardItem === 'undefined') {
-      setCommandError('当前环境不支持复制图片。')
+      setCommandError(uiText("当前环境不支持复制图片。","Copying images is unavailable in this environment."))
       return
     }
     try {
@@ -484,7 +485,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
       await navigator.clipboard.write([new ClipboardItem({ [mediaType]: blob })])
       setCommandError(null)
     } catch {
-      setCommandError('图片复制失败，请重试。')
+      setCommandError(uiText("图片复制失败，请重试。","Could not copy the image. Try again."))
     }
   }, [])
   const selectWholeTable = useCallback((table: HTMLTableElement) => {
@@ -601,54 +602,54 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
   if (!editor) return <div className="rich-document" aria-busy="true" />
 
   const renderInsertionItems=()=> <>
-            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleBulletList().run() }); setInsertOpen(false);setContextPosition(null) }}>项目列表</button>
-            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleOrderedList().run() }); setInsertOpen(false);setContextPosition(null) }}>有序列表</button>
-            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleTaskList().run() }); setInsertOpen(false);setContextPosition(null) }}>待办列表</button>
-            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleBlockquote().run() }); setInsertOpen(false);setContextPosition(null) }}>引用</button>
-            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleCodeBlock().run() }); setInsertOpen(false);setContextPosition(null) }}>代码块</button>
+            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleBulletList().run() }); setInsertOpen(false);setContextPosition(null) }}>{uiText("项目列表","Bullet list")}</button>
+            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleOrderedList().run() }); setInsertOpen(false);setContextPosition(null) }}>{uiText("有序列表","Numbered list")}</button>
+            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleTaskList().run() }); setInsertOpen(false);setContextPosition(null) }}>{uiText("待办列表","Task list")}</button>
+            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleBlockquote().run() }); setInsertOpen(false);setContextPosition(null) }}>{uiText("引用","Quote")}</button>
+            <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().toggleCodeBlock().run() }); setInsertOpen(false);setContextPosition(null) }}>{uiText("代码块","Code block")}</button>
             <button type="button" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => {
               prepareBlockInsertion()
               const selection = editor.state.selection
               setMathDialog({ mode: 'insert', from: selection.from, to: selection.to, displayMode: false, latex: editor.state.doc.textBetween(selection.from, selection.to, '') })
               setInsertOpen(false);setContextPosition(null)
-            }}>公式</button>
-            <div ref={tablePickerRef} className="rich-document__table-picker" role="group" aria-label="选择表格大小">
-              <button type="button" role="menuitem" className="rich-document__table-picker-trigger" aria-haspopup="grid" aria-expanded={tablePickerOpen} onClick={() => setTablePickerOpen((open) => !open)}>表格</button>
-              {tablePickerOpen && createPortal(<div ref={tableGridRef} className="rich-document__table-picker-grid rich-document__floating-picker" style={tableGridAnchor} data-placement={tablePickerSide} role="grid" aria-label="选择表格行列" onPointerDown={event=>event.stopPropagation()} onClick={event=>event.stopPropagation()}>
+            }}>{uiText("公式","Equation")}</button>
+            <div ref={tablePickerRef} className="rich-document__table-picker" role="group" aria-label={uiText("选择表格大小","Choose table size")}>
+              <button type="button" role="menuitem" className="rich-document__table-picker-trigger" aria-haspopup="grid" aria-expanded={tablePickerOpen} onClick={() => setTablePickerOpen((open) => !open)}>{uiText("表格","Table")}</button>
+              {tablePickerOpen && createPortal(<div ref={tableGridRef} className="rich-document__table-picker-grid rich-document__floating-picker" style={tableGridAnchor} data-placement={tablePickerSide} role="grid" aria-label={uiText("选择表格行列","Choose table rows and columns")} onPointerDown={event=>event.stopPropagation()} onClick={event=>event.stopPropagation()}>
                 {Array.from({ length: 8 }, (_, row) => Array.from({ length: 8 }, (_, column) => {
                   const rows = row + 1
                   const cols = column + 1
-                  return <button key={rows + '-' + cols} type="button" role="gridcell" aria-label={rows + ' 行 ' + cols + ' 列'} className={rows <= tablePickerSize.rows && cols <= tablePickerSize.cols ? 'is-selected' : ''} onMouseEnter={() => setTablePickerSize({ rows, cols })} onFocus={() => setTablePickerSize({ rows, cols })} onClick={() => {
+                  return <button key={rows + '-' + cols} type="button" role="gridcell" aria-label={uiText(rows + ' 行 ' + cols + ' 列', rows + ' rows, ' + cols + ' columns')} className={rows <= tablePickerSize.rows && cols <= tablePickerSize.cols ? 'is-selected' : ''} onMouseEnter={() => setTablePickerSize({ rows, cols })} onFocus={() => setTablePickerSize({ rows, cols })} onClick={() => {
                     run(() => { editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run() })
                     setTablePickerOpen(false)
                     setInsertOpen(false);setContextPosition(null)
                     setTablePickerSize({ rows: 0, cols: 0 })
                   }} />
                 })).flat()}
-                <output>{tablePickerSize.rows > 0 ? tablePickerSize.rows + ' × ' + tablePickerSize.cols : '选择行列'}</output>
+                <output>{tablePickerSize.rows > 0 ? tablePickerSize.rows + ' × ' + tablePickerSize.cols : uiText("选择行列","Choose rows and columns")}</output>
                   </div>, document.body)}
             </div>
-            {links && <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setLinkPickerOpen(true);setInsertOpen(false);setContextPosition(null)}}>引用笔记</button>}
-            <button type="button" role="menuitem" onClick={()=>{run(()=>{editor.chain().focus().setHorizontalRule().run()});setInsertOpen(false);setContextPosition(null)}}>分隔线</button>
-            <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setUrlDialog({url:'',text:editor.state.doc.textBetween(editor.state.selection.from,editor.state.selection.to,'')});setInsertOpen(false);setContextPosition(null)}}>超链接</button>
-            {assets&&noteId&&<button type="button" role="menuitem" onClick={()=>{imagePickerRef.current?.click();setInsertOpen(false);setContextPosition(null)}}>图片</button>}
+            {links && <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setLinkPickerOpen(true);setInsertOpen(false);setContextPosition(null)}}>{uiText("引用笔记","Reference a note")}</button>}
+            <button type="button" role="menuitem" onClick={()=>{run(()=>{editor.chain().focus().setHorizontalRule().run()});setInsertOpen(false);setContextPosition(null)}}>{uiText("分隔线","Divider")}</button>
+            <button type="button" role="menuitem" onClick={()=>{prepareBlockInsertion();setUrlDialog({url:'',text:editor.state.doc.textBetween(editor.state.selection.from,editor.state.selection.to,'')});setInsertOpen(false);setContextPosition(null)}}>{uiText("超链接","Hyperlink")}</button>
+            {assets&&noteId&&<button type="button" role="menuitem" onClick={()=>{imagePickerRef.current?.click();setInsertOpen(false);setContextPosition(null)}}>{uiText("图片","Image")}</button>}
   </>
   return (
     <section className="rich-document">
       <ErrorNotification error={assetError} />
       <ErrorNotification error={commandError} />
-      {editable && <div className={`rich-document__toolbar${toolbarCollapsed ? ' rich-document__toolbar--collapsed' : ''}`} role="toolbar" aria-label="文档格式">
-        <button type="button" aria-label="撤销" title="撤销" disabled={!editor.can().undo()} onClick={() => run(() => { editor.chain().focus().undo().run() })}><Icon name="undo" size={16} /></button>
-        <button type="button" aria-label="重做" title="重做" disabled={!editor.can().redo()} onClick={() => run(() => { editor.chain().focus().redo().run() })}><Icon name="redo" size={16} /></button>
+      {editable && <div className={`rich-document__toolbar${toolbarCollapsed ? ' rich-document__toolbar--collapsed' : ''}`} role="toolbar" aria-label={uiText("文档格式","Document formatting")}>
+        <button type="button" aria-label={uiText("撤销","Undo")} title={uiText("撤销","Undo")} disabled={!editor.can().undo()} onClick={() => run(() => { editor.chain().focus().undo().run() })}><Icon name="undo" size={16} /></button>
+        <button type="button" aria-label={uiText("重做","Redo")} title={uiText("重做","Redo")} disabled={!editor.can().redo()} onClick={() => run(() => { editor.chain().focus().redo().run() })}><Icon name="redo" size={16} /></button>
         <span className="rich-document__toolbar-separator" />
-        <button type="button" aria-label="格式刷" title={painting ? '选择目标文字应用格式，Esc 取消' : '格式刷'} aria-pressed={painting} onMouseDown={event=>event.preventDefault()} onClick={() => { if (painting) {paintRef.current=null;setPainting(false)} else {paintRef.current=captureFormat(editor);setPainting(true);editor.commands.focus()} }}><Icon name="brush" size={16} /></button>
-        <button type="button" aria-label="粗体" title="粗体" aria-pressed={editor.isActive('bold')} onClick={() => run(() => { editor.chain().focus().toggleBold().run() })}><strong>B</strong></button>
-        <button type="button" aria-label="斜体" title="斜体" aria-pressed={editor.isActive('italic')} onClick={() => run(() => { editor.chain().focus().toggleItalic().run() })}><em>I</em></button>
-        <button type="button" aria-label="下划线" title="下划线" aria-pressed={editor.isActive('underline')} onClick={() => run(() => { editor.chain().focus().toggleUnderline().run() })}><u>U</u></button>
-        <button type="button" aria-label="删除线" title="删除线" aria-pressed={editor.isActive('strike')} onClick={() => run(() => { editor.chain().focus().toggleStrike().run() })}><s>S</s></button>
-        <button type="button" aria-label="下标" title="下标" aria-pressed={editor.isActive('subscript')} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { toggleSubscript(editor) })}>x<sub>2</sub></button>
-        <button type="button" aria-label="上标" title="上标" aria-pressed={editor.isActive('superscript')} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { toggleSuperscript(editor) })}>x<sup>2</sup></button>
-        <button type="button" aria-label="高亮" title="高亮" aria-pressed={editor.isActive('highlight')} onClick={() => run(() => { toggleYellowHighlight(editor); editor.commands.focus() })}><span className="rich-document__highlight-glyph" aria-hidden="true">✎</span></button>
+        <button type="button" aria-label={uiText("格式刷","Format painter")} title={painting ? uiText("选择目标文字应用格式，Esc 取消","Select text to apply formatting; Esc cancels") : uiText("格式刷","Format painter")} aria-pressed={painting} onMouseDown={event=>event.preventDefault()} onClick={() => { if (painting) {paintRef.current=null;setPainting(false)} else {paintRef.current=captureFormat(editor);setPainting(true);editor.commands.focus()} }}><Icon name="brush" size={16} /></button>
+        <button type="button" aria-label={uiText("粗体","Bold")} title={uiText("粗体","Bold")} aria-pressed={editor.isActive('bold')} onClick={() => run(() => { editor.chain().focus().toggleBold().run() })}><strong>B</strong></button>
+        <button type="button" aria-label={uiText("斜体","Italic")} title={uiText("斜体","Italic")} aria-pressed={editor.isActive('italic')} onClick={() => run(() => { editor.chain().focus().toggleItalic().run() })}><em>I</em></button>
+        <button type="button" aria-label={uiText("下划线","Underline")} title={uiText("下划线","Underline")} aria-pressed={editor.isActive('underline')} onClick={() => run(() => { editor.chain().focus().toggleUnderline().run() })}><u>U</u></button>
+        <button type="button" aria-label={uiText("删除线","Strikethrough")} title={uiText("删除线","Strikethrough")} aria-pressed={editor.isActive('strike')} onClick={() => run(() => { editor.chain().focus().toggleStrike().run() })}><s>S</s></button>
+        <button type="button" aria-label={uiText("下标","Subscript")} title={uiText("下标","Subscript")} aria-pressed={editor.isActive('subscript')} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { toggleSubscript(editor) })}>x<sub>2</sub></button>
+        <button type="button" aria-label={uiText("上标","Superscript")} title={uiText("上标","Superscript")} aria-pressed={editor.isActive('superscript')} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { toggleSuperscript(editor) })}>x<sup>2</sup></button>
+        <button type="button" aria-label={uiText("高亮","Highlight")} title={uiText("高亮","Highlight")} aria-pressed={editor.isActive('highlight')} onClick={() => run(() => { toggleYellowHighlight(editor); editor.commands.focus() })}><span className="rich-document__highlight-glyph" aria-hidden="true">✎</span></button>
 
         <HeadingStyleMenu level={editor.isActive('heading') ? Number(editor.getAttributes('heading').level) : 0} onChange={(level) => run(() => {
           if (level) editor.chain().focus().setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run()
@@ -661,24 +662,24 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
             } else editor.chain().focus().setParagraph().run()
           }
         })} />
-        <div className='rich-document__alignment-tools' role='group' aria-label='正文对齐'>
+        <div className='rich-document__alignment-tools' role='group' aria-label={uiText("正文对齐","Text alignment")}>
           {richAlignmentOptions.map((option) => <button key={option.value} type='button' aria-label={option.label} title={option.label} aria-pressed={activeTextAlign === option.value} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { editor.chain().focus().setTextAlign(option.value).run() })}>
             {richAlignmentIcon(option.value)}
           </button>)}
         </div>
-        <FormatMenu label="字体" value={activeFontFamily} options={[{value:'',label:'默认字体'}, ...RICH_FONT_FAMILY_OPTIONS]} onChange={value => run(() => { setRichFontAttribute(editor, 'family', value === '' ? null : value as RichFontFamily) })} />
-        <span className='rich-document__font-size-control' role='group' aria-label='字号'>
-          <input type='text' inputMode='numeric' aria-label='字号' value={fontSizeDraft} placeholder='11' title='字号（磅）' onMouseDown={(event) => { event.preventDefault(); event.currentTarget.focus() }} onChange={(event) => setFontSizeDraft(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); applyFontSize(event.currentTarget.value) } else if (event.key === 'Escape') { setFontSizeDraft(String(activeFontSizePoints ?? 11)); event.currentTarget.blur() } }} />
-          <FormatMenu compact label="字号选项" value={fontSizeDraft} options={RICH_FONT_SIZE_SUGGESTIONS.map(size => ({value:String(size),label:String(size)}))} onChange={value => {setFontSizeDraft(value);applyFontSize(value)}} />
+        <FormatMenu label={uiText("字体","Font")} value={activeFontFamily} options={[{value:'',label:uiText("默认字体","Default font")}, ...RICH_FONT_FAMILY_OPTIONS]} onChange={value => run(() => { setRichFontAttribute(editor, 'family', value === '' ? null : value as RichFontFamily) })} />
+        <span className='rich-document__font-size-control' role='group' aria-label={uiText("字号","Font size")}>
+          <input type='text' inputMode='numeric' aria-label={uiText("字号","Font size")} value={fontSizeDraft} placeholder='11' title={uiText("字号（磅）","Font size (points)")} onMouseDown={(event) => { event.preventDefault(); event.currentTarget.focus() }} onChange={(event) => setFontSizeDraft(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); applyFontSize(event.currentTarget.value) } else if (event.key === 'Escape') { setFontSizeDraft(String(activeFontSizePoints ?? 11)); event.currentTarget.blur() } }} />
+          <FormatMenu compact label={uiText("字号选项","Font size options")} value={fontSizeDraft} options={RICH_FONT_SIZE_SUGGESTIONS.map(size => ({value:String(size),label:String(size)}))} onChange={value => {setFontSizeDraft(value);applyFontSize(value)}} />
         </span>        <span className="rich-document__toolbar-separator" />
         <div ref={insertMenuRef} className="rich-document__insert-menu">
-          <button type="button" className="rich-document__insert-trigger" aria-label="插入" title="插入" aria-haspopup="menu" aria-expanded={insertOpen} onClick={event => {pendingBlockInsertionRef.current=null; const rect=event.currentTarget.getBoundingClientRect();setInsertAnchor({left:rect.left,top:rect.bottom+6});setInsertOpen(open=>!open)}}><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4.5h8M5 9h8M5 13.5h5M5 18h6" /><path d="M17 11v9m-4.5-4.5h9" /></svg></button>
+          <button type="button" className="rich-document__insert-trigger" aria-label={uiText("插入","Insert")} title={uiText("插入","Insert")} aria-haspopup="menu" aria-expanded={insertOpen} onClick={event => {pendingBlockInsertionRef.current=null; const rect=event.currentTarget.getBoundingClientRect();setInsertAnchor({left:rect.left,top:rect.bottom+6});setInsertOpen(open=>!open)}}><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4.5h8M5 9h8M5 13.5h5M5 18h6" /><path d="M17 11v9m-4.5-4.5h9" /></svg></button>
         </div>
         <button
           type="button"
           className="rich-document__toolbar-toggle"
-          aria-label={toolbarCollapsed ? '展开格式工具栏' : '收起格式工具栏'}
-          title={toolbarCollapsed ? '展开格式工具栏' : '收起格式工具栏'}
+          aria-label={toolbarCollapsed ? uiText("展开格式工具栏","Expand formatting toolbar") : uiText("收起格式工具栏","Collapse formatting toolbar")}
+          title={toolbarCollapsed ? uiText("展开格式工具栏","Expand formatting toolbar") : uiText("收起格式工具栏","Collapse formatting toolbar")}
           aria-expanded={!toolbarCollapsed}
           onClick={() => setToolbarCollapsed((collapsed) => !collapsed)}
         >
@@ -686,7 +687,7 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         </button>
       </div>}
 
-      {mathDialog && <form className="rich-document__math-dialog" aria-label="编辑公式" onSubmit={(event) => {
+      {mathDialog && <form className="rich-document__math-dialog" aria-label={uiText("编辑公式","Edit equation")} onSubmit={(event) => {
         event.preventDefault()
         const latex = mathDialog.latex.trim()
         if (!latex) return
@@ -704,19 +705,17 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         }
         setMathDialog(null)
       }}>
-        <label>LaTeX 公式
-          <input aria-label="LaTeX 公式" autoFocus value={mathDialog.latex} onChange={(event) => { const latex = event.currentTarget.value; setMathDialog((current) => current ? { ...current, latex } : current) }} placeholder="例如：x_i、\\frac{a}{b} 或 \\sqrt{x}" />
+        <label>{uiText("LaTeX 公式","LaTeX equation")}<input aria-label={uiText("LaTeX 公式","LaTeX equation")} autoFocus value={mathDialog.latex} onChange={(event) => { const latex = event.currentTarget.value; setMathDialog((current) => current ? { ...current, latex } : current) }} placeholder={uiText("例如：x_i、\\\\frac{a}{b} 或 \\\\sqrt{x}","For example: x_i, \\\\frac{a}{b} or \\\\sqrt{x}")} />
         </label>
-        {mathDialog.mode === 'insert' && <label>显示方式
-          <select aria-label="公式显示方式" value={mathDialog.displayMode ? 'block' : 'inline'} onChange={(event) => { const displayMode = event.currentTarget.value === 'block'; setMathDialog((current) => current ? { ...current, displayMode } : current) }}>
-            <option value="inline">行内公式</option>
-            <option value="block">独立公式</option>
+        {mathDialog.mode === 'insert' && <label>{uiText("显示方式","Display mode")}<select aria-label={uiText("公式显示方式","Equation display mode")} value={mathDialog.displayMode ? 'block' : 'inline'} onChange={(event) => { const displayMode = event.currentTarget.value === 'block'; setMathDialog((current) => current ? { ...current, displayMode } : current) }}>
+            <option value="inline">{uiText("行内公式","Inline equation")}</option>
+            <option value="block">{uiText("独立公式","Block equation")}</option>
           </select>
         </label>}
-        <p>支持下标、上标、根号、分式、希腊字母等 LaTeX 语法。</p>
+        <p>{uiText("支持下标、上标、根号、分式、希腊字母等 LaTeX 语法。","Supports LaTeX subscripts, superscripts, roots, fractions and Greek letters.")}</p>
         <div className="rich-document__math-dialog-actions">
-          <button type="button" onClick={() => setMathDialog(null)}>取消</button>
-          <button type="submit">保存公式</button>
+          <button type="button" onClick={() => setMathDialog(null)}>{uiText("取消","Cancel")}</button>
+          <button type="submit">{uiText("保存公式","Save equation")}</button>
         </div>
       </form>}
 {linkPickerOpen && links && (
@@ -729,18 +728,18 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         />
       )}
 
-      {insertOpen && createPortal(<div ref={insertPopupRef} className="rich-document__insert-popover rich-document__block-popover" role="menu" aria-label="插入内容" style={{left:Math.max(8,Math.min(insertAnchor.left,window.innerWidth-240)),top:Math.min(insertAnchor.top,window.innerHeight-360)}} onKeyDown={event=>{if(event.key==='Escape'){pendingBlockInsertionRef.current=null;setInsertOpen(false);editor.commands.focus()}}}>{renderInsertionItems()}</div>,document.body)}
+      {insertOpen && createPortal(<div ref={insertPopupRef} className="rich-document__insert-popover rich-document__block-popover" role="menu" aria-label={uiText("插入内容","Insert content")} style={{left:Math.max(8,Math.min(insertAnchor.left,window.innerWidth-240)),top:Math.min(insertAnchor.top,window.innerHeight-360)}} onKeyDown={event=>{if(event.key==='Escape'){pendingBlockInsertionRef.current=null;setInsertOpen(false);editor.commands.focus()}}}>{renderInsertionItems()}</div>,document.body)}
       <input ref={imagePickerRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={event=>{
         const file=event.currentTarget.files?.[0];event.currentTarget.value=''
         if(!file||!assets||!noteId)return
         prepareBlockInsertion()
-        pendingAssetWrites.track(file.arrayBuffer().then(bytes=>assets.saveImage({noteId,mediaType:file.type,bytes:new Uint8Array(bytes)})).then(image=>{if(!editor.isDestroyed)insertSavedImage(editor,image.relativePath,file.name)}).catch(()=>setAssetError('图片未能保存，请重试。')))
+        pendingAssetWrites.track(file.arrayBuffer().then(bytes=>assets.saveImage({noteId,mediaType:file.type,bytes:new Uint8Array(bytes)})).then(image=>{if(!editor.isDestroyed)insertSavedImage(editor,image.relativePath,file.name)}).catch(()=>setAssetError(uiText("图片未能保存，请重试。","Could not save the image. Try again."))))
       }}/>
-      {urlDialog&&<form className="rich-document__math-dialog" role="dialog" aria-label="插入超链接" onSubmit={event=>{
+      {urlDialog&&<form className="rich-document__math-dialog" role="dialog" aria-label={uiText("插入超链接","Insert hyperlink")} onSubmit={event=>{
         event.preventDefault()
-        try { const url=new URL(urlDialog.url); if(!['http:','https:'].includes(url.protocol))throw new Error('protocol') } catch {setCommandError('请输入完整的 http 或 https 链接。');return}
+        try { const url=new URL(urlDialog.url); if(!['http:','https:'].includes(url.protocol))throw new Error('protocol') } catch {setCommandError(uiText("请输入完整的 http 或 https 链接。","Enter a complete http or https URL."));return}
         editor.chain().focus().insertContent({type:'text',text:urlDialog.text.trim()||urlDialog.url,marks:[{type:'link',attrs:{href:urlDialog.url}}]}).run();setUrlDialog(null);setCommandError(null)
-      }}><label>显示文字<input aria-label="链接文字" value={urlDialog.text} onChange={event=>setUrlDialog({...urlDialog,text:event.target.value})}/></label><label>地址<input autoFocus aria-label="链接地址" value={urlDialog.url} onChange={event=>setUrlDialog({...urlDialog,url:event.target.value})}/></label><div className="rich-document__math-dialog-actions"><button type="button" onClick={()=>setUrlDialog(null)}>取消</button><button type="submit">插入</button></div></form>}
+      }}><label>{uiText("显示文字","Display text")}<input aria-label={uiText("链接文字","Link text")} value={urlDialog.text} onChange={event=>setUrlDialog({...urlDialog,text:event.target.value})}/></label><label>{uiText("地址","Address")}<input autoFocus aria-label={uiText("链接地址","Link address")} value={urlDialog.url} onChange={event=>setUrlDialog({...urlDialog,url:event.target.value})}/></label><div className="rich-document__math-dialog-actions"><button type="button" onClick={()=>setUrlDialog(null)}>{uiText("取消","Cancel")}</button><button type="submit">{uiText("插入","Insert")}</button></div></form>}
       <div onPointerUp={() => { requestAnimationFrame(() => { if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }) }} onKeyUp={event => { if (event.key === 'Escape') { paintRef.current=null; setPainting(false) } else if (paintRef.current && applyFormat(editor,paintRef.current)) { paintRef.current=null; setPainting(false) } }} ref={surfaceRef} className="rich-document__surface" style={{ "--rich-document-zoom": documentZoom } as CSSProperties} onWheel={handleDocumentZoom} onMouseMove={event=>{
         handleSurfaceMouseMove(event)
         if(event.target instanceof Element && event.target.closest('.rich-document__block-controls'))return
@@ -769,16 +768,16 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         setContextMenuKind(image === null ? 'default' : 'image')
         setContextPosition({ x: event.clientX, y: event.clientY })
       }}>
-        {editor.isActive('table') && editable && createPortal(<div ref={tableToolsRef} className="rich-document__table-tools rich-document__floating-table-tools" style={{left:tableToolsAnchor?.left??8,top:tableToolsAnchor?.top??8,visibility:tableToolsAnchor?'visible':'hidden'}} role="toolbar" aria-label="表格工具" onMouseDown={event=>{if(event.target instanceof Element && event.target.closest('button'))event.preventDefault()}}>
-          <div className="rich-document__table-actions-group" data-menu-side={(tableToolsAnchor?.top??0)>180?'above':'below'}><button type="button" aria-label="行列操作" title="行列操作" aria-haspopup="menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18M14 15h5m-2.5-2.5v5"/></svg></button><div role="menu" aria-label="行列操作">
-          <button type="button" onClick={() => run(() => { editor.chain().focus().addRowAfter().run() })}>在下方插入行</button>
-          <button type="button" onClick={() => run(() => { editor.chain().focus().addColumnAfter().run() })}>在右侧插入列</button>
-          <button type="button" onClick={() => run(() => { editor.chain().focus().deleteRow().run() })}>删除行</button>
-          <button type="button" onClick={() => run(() => { editor.chain().focus().deleteColumn().run() })}>删除列</button>
+        {editor.isActive('table') && editable && createPortal(<div ref={tableToolsRef} className="rich-document__table-tools rich-document__floating-table-tools" style={{left:tableToolsAnchor?.left??8,top:tableToolsAnchor?.top??8,visibility:tableToolsAnchor?'visible':'hidden'}} role="toolbar" aria-label={uiText("表格工具","Table tools")} onMouseDown={event=>{if(event.target instanceof Element && event.target.closest('button'))event.preventDefault()}}>
+          <div className="rich-document__table-actions-group" data-menu-side={(tableToolsAnchor?.top??0)>180?'above':'below'}><button type="button" aria-label={uiText("行列操作","Rows and columns")} title={uiText("行列操作","Rows and columns")} aria-haspopup="menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18M14 15h5m-2.5-2.5v5"/></svg></button><div role="menu" aria-label={uiText("行列操作","Rows and columns")}>
+          <button type="button" onClick={() => run(() => { editor.chain().focus().addRowAfter().run() })}>{uiText("在下方插入行","Insert row below")}</button>
+          <button type="button" onClick={() => run(() => { editor.chain().focus().addColumnAfter().run() })}>{uiText("在右侧插入列","Insert column right")}</button>
+          <button type="button" onClick={() => run(() => { editor.chain().focus().deleteRow().run() })}>{uiText("删除行","Delete rows")}</button>
+          <button type="button" onClick={() => run(() => { editor.chain().focus().deleteColumn().run() })}>{uiText("删除列","Delete columns")}</button>
           </div></div>
-          <button type="button" aria-label="合并单元格" title="合并单元格" onClick={() => run(() => { editor.chain().focus().mergeCells().run() })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m6 9 3 3-3 3m12-6-3 3 3 3"/></svg></button>
-          <button type="button" aria-label="拆分单元格" title="拆分单元格" onClick={() => run(() => { editor.chain().focus().splitCell().run() })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14m-4-9-2 2 2 2m8-4 2 2-2 2"/></svg></button>
-          <div className='rich-document__alignment-tools rich-document__table-alignment-tools' role='group' aria-label='单元格对齐方式'>
+          <button type="button" aria-label={uiText("合并单元格","Merge cells")} title={uiText("合并单元格","Merge cells")} onClick={() => run(() => { editor.chain().focus().mergeCells().run() })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m6 9 3 3-3 3m12-6-3 3 3 3"/></svg></button>
+          <button type="button" aria-label={uiText("拆分单元格","Split cells")} title={uiText("拆分单元格","Split cells")} onClick={() => run(() => { editor.chain().focus().splitCell().run() })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14m-4-9-2 2 2 2m8-4 2 2-2 2"/></svg></button>
+          <div className='rich-document__alignment-tools rich-document__table-alignment-tools' role='group' aria-label={uiText("单元格对齐方式","Cell alignment")}>
             {richAlignmentOptions.filter((option) => option.value !== 'justify').map((option) => <button key={option.value} type='button' aria-label={option.label} title={option.label} aria-pressed={activeCellTextAlign === option.value} onMouseDown={(event) => event.preventDefault()} onClick={() => run(() => { editor.chain().focus().setCellAttribute('textAlign', option.value).run() })}>
               {richAlignmentIcon(option.value)}
             </button>)}
@@ -787,15 +786,15 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
         </div>,document.body)}
         {editable && <div className={`rich-document__block-controls${hoverBlock.visible||(insertOpen&&pendingBlockInsertionRef.current!==null)?' is-visible':''}`} style={{top:hoverBlock.top,left:hoverBlock.left}} onMouseEnter={()=>setHoverBlock(previous=>({...previous,visible:true}))}>
           <span aria-hidden="true" className="rich-document__block-number">{hoverBlock.number}</span>
-          <button type="button" aria-label="添加内容块" title="添加内容块" aria-haspopup="menu" onMouseDown={event=>event.preventDefault()} onClick={event=>{pendingBlockInsertionRef.current=hoverBlock.position;const rect=event.currentTarget.getBoundingClientRect();setInsertAnchor({left:rect.left,top:rect.bottom+6});setInsertOpen(true)}}>+</button>
+          <button type="button" aria-label={uiText("添加内容块","Add block")} title={uiText("添加内容块","Add block")} aria-haspopup="menu" onMouseDown={event=>event.preventDefault()} onClick={event=>{pendingBlockInsertionRef.current=hoverBlock.position;const rect=event.currentTarget.getBoundingClientRect();setInsertAnchor({left:rect.left,top:rect.bottom+6});setInsertOpen(true)}}>+</button>
         </div>}
 
         <EditorContent editor={editor} />
         {tableSelectTarget && editable && <button
           type="button"
           className="rich-document__table-select-all"
-          aria-label="选择整个表格"
-          title="选择整个表格"
+          aria-label={uiText("选择整个表格","Select entire table")}
+          title={uiText("选择整个表格","Select entire table")}
           style={{ left: tableSelectTarget.left, top: tableSelectTarget.top }}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => selectWholeTable(tableSelectTarget.table)}
@@ -807,10 +806,10 @@ export const RichDocumentEditor = forwardRef<RichDocumentEditorHandle, RichDocum
           </svg>
         </button>}
       </div>
-      {contextPosition !== null && createPortal(<div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label="正文快捷操作" style={{ left: contextPosition.x, top: contextPosition.y, maxHeight: 'calc(100dvh - 46px)', overflowY:'auto' }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
-        {contextMenuKind === 'image' ? <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); void copyImageToClipboard() }}>复制图片</button> : <>
+      {contextPosition !== null && createPortal(<div ref={contextMenuRef} className="rich-document__context-menu" role="menu" aria-label={uiText("正文快捷操作","Content actions")} style={{ left: contextPosition.x, top: contextPosition.y, maxHeight: 'calc(100dvh - 46px)', overflowY:'auto' }} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => event.stopPropagation()}>
+        {contextMenuKind === 'image' ? <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); void copyImageToClipboard() }}>{uiText("复制图片","Copy image")}</button> : <>
           {renderInsertionItems()}
-          <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().clearNodes().unsetAllMarks().run() }); setContextPosition(null) }}>清除格式</button>
+          <button type="button" role="menuitem" onClick={() => { run(() => { editor.chain().focus().clearNodes().unsetAllMarks().run() }); setContextPosition(null) }}>{uiText("清除格式","Clear formatting")}</button>
         </>}
       </div>,document.body)}
     </section>

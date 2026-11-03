@@ -1,3 +1,5 @@
+import {UI_LOCALE} from '../../shared/i18n'
+import {text as uiText} from '../../shared/i18n'
 import { ErrorNotification, OperationNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Folder, NoteId } from '../../domain/model'
@@ -103,15 +105,15 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
       setEntries((current) => current.filter((entry) => !restoredIds.has(entry.noteId)))
       setSelected((current) => new Set([...current].filter((id) => !restoredIds.has(id))))
       const errors = result.failed.map((failure) => failure.message)
-      if (surroundingRefreshFailed) errors.push('项目已恢复，但资料库刷新失败，请手动刷新。')
+      if (surroundingRefreshFailed) errors.push(uiText("项目已恢复，但资料库刷新失败，请手动刷新。","Items were restored, but the library could not refresh. Refresh it manually."))
       if (errors.length > 0) setError(errors.join('；'))
       if (restoredIds.size > 0) {
-        setFeedback(`已恢复 ${restoredIds.size} 项。${usedRecoveryFolder ? '原文件夹不可用的项目已放入“已恢复”。' : ''}`)
+        setFeedback(uiText(`已恢复 ${restoredIds.size} 项。${usedRecoveryFolder ? uiText("原文件夹不可用的项目已放入“已恢复”。","Items whose original folders are unavailable were placed in Recovered.") : ''}`,`Restored ${restoredIds.size} items.${usedRecoveryFolder ? uiText("原文件夹不可用的项目已放入“已恢复”。","Items whose original folders are unavailable were placed in Recovered.") : ''}`))
       }
       setState('ready')
     } catch {
       if (mountedRef.current) {
-        setError('无法恢复所选项目，请重试。')
+        setError(uiText("无法恢复所选项目，请重试。","Could not restore selected items. Try again."))
         setState('ready')
       }
     } finally {
@@ -136,11 +138,11 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
       setEntries((current) => current.filter((entry) => !purged.has(entry.noteId)))
       setSelected((current) => new Set([...current].filter((id) => !purged.has(id))))
       if (result.failed.length > 0) setError(result.failed.map((failure) => failure.message).join('；'))
-      if (purged.size > 0) setFeedback(`已永久删除 ${purged.size} 项，之后无法恢复。`)
+      if (purged.size > 0) setFeedback(uiText(`已永久删除 ${purged.size} 项，之后无法恢复。`,`Permanently deleted ${purged.size} items. This cannot be undone.`))
       setState('ready')
     } catch {
       if (mountedRef.current) {
-        setError('无法永久删除所选项目，请重试。')
+        setError(uiText("无法永久删除所选项目，请重试。","Could not permanently delete selected items. Try again."))
         setState('ready')
       }
     } finally {
@@ -150,48 +152,42 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
   }
 
   return (
-    <section className="trash-view" aria-label="回收站">
+    <section className="trash-view" aria-label={uiText("回收站","Trash")}>
       <header className="trash-view__header">
         <div>
-          <span className="library-pane__eyebrow">安全恢复</span>
-          <h2 ref={headingRef} tabIndex={-1}>回收站</h2>
+          <span className="library-pane__eyebrow">{uiText("安全恢复","Restore safely")}</span>
+          <h2 ref={headingRef} tabIndex={-1}>{uiText("回收站","Trash")}</h2>
         </div>
       </header>
-      <div className="trash-view__actions" aria-label="回收站操作">
+      <div className="trash-view__actions" aria-label={uiText("回收站操作","Trash actions")}>
         <button
           type="button"
           disabled={busy !== null || entries.length === 0}
           onClick={() => setSelected(new Set(entries.map((entry) => entry.noteId)))}
-        >
-          全选
-        </button>
-        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
+        >{uiText("全选","Select all")}</button>
+        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>{uiText("清除选择","Clear selection")}</button>
         <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void restoreSelected()}>
-          {busy === 'restore' ? '正在恢复…' : '恢复所选'}
+          {busy === 'restore' ? uiText("正在恢复…","Restoring…") : uiText("恢复所选","Restore selected")}
         </button>
-        <button type="button" className="trash-view__danger-action" disabled={busy !== null || selectedIds.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(selectedIds)}>
-          永久删除
-        </button>
-        <button type="button" className="trash-view__danger-action" disabled={busy !== null || entries.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(entries.map((entry) => entry.noteId))}>
-          清空回收站
-        </button>
+        <button type="button" className="trash-view__danger-action" disabled={busy !== null || selectedIds.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(selectedIds)}>{uiText("永久删除","Delete permanently")}</button>
+        <button type="button" className="trash-view__danger-action" disabled={busy !== null || entries.length === 0 || trash.purge === undefined} onClick={() => openPurgeDialog(entries.map((entry) => entry.noteId))}>{uiText("清空回收站","Empty Trash")}</button>
       </div>
       <OperationNotification notice={feedback} />
       <ErrorNotification error={error} />
-      {state === 'loading' && <p role="status" className="library-status">正在加载回收站…</p>}
-      <ErrorNotification error={state === 'error' ? '无法加载回收站。' : null} />
-      {state === 'ready' && entries.length === 0 && <p className="library-status">回收站为空。</p>}
+      {state === 'loading' && <p role="status" className="library-status">{uiText("正在加载回收站…","Loading Trash…")}</p>}
+      <ErrorNotification error={state === 'error' ? uiText("无法加载回收站。","Could not load Trash.") : null} />
+      {state === 'ready' && entries.length === 0 && <p className="library-status">{uiText("回收站为空。","Trash is empty.")}</p>}
       {state === 'ready' && entries.length > 0 && (
-        <div className="trash-view__sections" aria-label="已删除项目">
+        <div className="trash-view__sections" aria-label={uiText("已删除项目","Deleted items")}>
           {(['temporary', 'formal'] as const).map((kind) => {
             const sectionEntries = entries.filter((entry) => entry.kind === kind)
             if (sectionEntries.length === 0) return null
-            const label = kind === 'temporary' ? '临时便笺' : '笔记'
+            const label = kind === 'temporary' ? uiText("临时便笺","Sticky notes") : uiText("笔记","Note")
             return (
               <section key={kind} className="trash-view__section" aria-labelledby={`trash-${kind}-heading`}>
                 <header className="trash-view__section-header">
                   <h3 id={`trash-${kind}-heading`}>{label}</h3>
-                  <span>{sectionEntries.length} 条</span>
+                  <span>{sectionEntries.length}{uiText(" 条"," items")}</span>
                 </header>
                 <ul className="trash-view__list">
                   {sectionEntries.map((entry) => {
@@ -201,15 +197,15 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
                         <label>
                           <input
                             type="checkbox"
-                            aria-label={`选择 ${entry.title}`}
+                            aria-label={uiText(`选择 ${entry.title}`,`Select ${entry.title}`)}
                             checked={selected.has(entry.noteId)}
                             disabled={busy !== null}
                             onChange={() => toggleSelected(entry.noteId)}
                           />
                           <span className="trash-view__item">
                             <strong>{entry.title}</strong>
-                            <span>{missingFolder ? missingFolderMessage(entry) : `原位置：${folderName(entry, folders)}`}</span>
-                            <time dateTime={entry.deletedAt}>删除于 {formatDate(entry.deletedAt)}</time>
+                            <span>{missingFolder ? missingFolderMessage(entry) : uiText(`原位置：${folderName(entry, folders)}`,`Original location: ${folderName(entry, folders)}`)}</span>
+                            <time dateTime={entry.deletedAt}>{uiText("删除于 ","Deleted ")}{formatDate(entry.deletedAt)}</time>
                           </span>
                         </label>
                       </li>
@@ -224,12 +220,12 @@ export function TrashView({ trash, folders, onLibraryChanged }: TrashViewProps) 
       {purgeTarget !== null && (
         <div className="trash-view__dialog-backdrop" role="presentation">
           <section className="trash-view__dialog" role="alertdialog" aria-modal="true" aria-labelledby="trash-purge-heading">
-            <span className="library-pane__eyebrow">不可撤销</span>
-            <h3 id="trash-purge-heading">确定永久删除这些笔记吗？</h3>
-            <p>删除后将清除笔记及其附件，之后无法恢复。</p>
+            <span className="library-pane__eyebrow">{uiText("不可撤销","Cannot be undone")}</span>
+            <h3 id="trash-purge-heading">{uiText("确定永久删除这些笔记吗？","Permanently delete these notes?")}</h3>
+            <p>{uiText("删除后将清除笔记及其附件，之后无法恢复。","The notes and their attachments will be removed and cannot be recovered.")}</p>
             <footer>
-              <button type="button" onClick={() => setPurgeTarget(null)}>先不删除</button>
-              <button type="button" className="trash-view__danger-action" onClick={() => void purgePermanently()}>永久删除</button>
+              <button type="button" onClick={() => setPurgeTarget(null)}>{uiText("先不删除","Keep for now")}</button>
+              <button type="button" className="trash-view__danger-action" onClick={() => void purgePermanently()}>{uiText("永久删除","Delete permanently")}</button>
             </footer>
           </section>
         </div>
@@ -243,22 +239,22 @@ function isMissingFolder(entry: TrashEntry, folders: Folder[]) {
 }
 
 function folderName(entry: TrashEntry, folders: Folder[]) {
-  if (entry.kind === 'temporary') return '临时便笺'
-  if (entry.previousFolderId === null) return '未归档笔记'
-  return folders.find((folder) => folder.id === entry.previousFolderId)?.name ?? '已恢复'
+  if (entry.kind === 'temporary') return uiText("临时便笺","Sticky notes")
+  if (entry.previousFolderId === null) return uiText("未归档笔记","Unfiled notes")
+  return folders.find((folder) => folder.id === entry.previousFolderId)?.name ?? uiText("已恢复","Recovered")
 }
 
 function missingFolderMessage(entry: TrashEntry) {
-  if (entry.kind === 'temporary') return '原文件夹不可用，将恢复到“已恢复”'
+  if (entry.kind === 'temporary') return uiText("原文件夹不可用，将恢复到“已恢复”","The original folder is unavailable. Restores to Recovered.")
   return entry.previousFolderName
-    ? `原文件夹“${entry.previousFolderName}”已被删除，恢复时将重新创建该文件夹`
-    : '原文件夹已被删除，恢复时将放入“已恢复”'
+    ? uiText(`原文件夹“${entry.previousFolderName}”已被删除，恢复时将重新创建该文件夹`,`The original folder “${entry.previousFolderName}” was deleted and will be recreated on restore`)
+    : uiText("原文件夹已被删除，恢复时将放入“已恢复”","The original folder was deleted. Restores to Recovered.")
 }
 
 function formatDate(value: string) {
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '未知时间'
-  return new Intl.DateTimeFormat('zh-CN', {
+  if (Number.isNaN(date.getTime())) return uiText("未知时间","Unknown time")
+  return new Intl.DateTimeFormat(UI_LOCALE, {
     year: 'numeric',
     month: 'numeric',
     day: 'numeric',

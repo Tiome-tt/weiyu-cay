@@ -69,7 +69,7 @@ export function validateReleaseMetadata(options: ValidateReleaseMetadataOptions)
     if (signatureAsset === undefined || !releaseAssets.has(assetApiUrl(signatureAsset, options.repository))) {
       throw new Error(`${platformName} updater signature is not a release asset.`)
     }
-    if (updaterNames.has(asset.name) || signatureNames.has(signatureAsset.name)) {
+    if ((updaterNames.has(asset.name) || signatureNames.has(signatureAsset.name)) && !isUniversalMacAsset(asset.name)) {
       throw new Error(`${platformName} reuses another platform's updater asset or signature.`)
     }
     updaterNames.add(asset.name)
@@ -90,7 +90,7 @@ export function createVerifiedReleaseAssetManifest(options: Pick<ValidateRelease
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(options.repository) || !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(options.tag)) {
     throw new Error('Release repository or tag is invalid.')
   }
-  const releaseAssets = options.releaseAssets.filter((asset) => asset.name !== 'SHA256SUMS')
+  const releaseAssets = options.releaseAssets.filter((asset) => !['SHA256SUMS','release-asset-identities.json'].includes(asset.name))
   const names = new Set<string>()
   const apiUrls = new Set<string>()
   const verifiedAssets = releaseAssets.map((asset) => {
@@ -104,7 +104,7 @@ export function createVerifiedReleaseAssetManifest(options: Pick<ValidateRelease
     return { ...asset, apiUrl, sha256: sha256(bytes) }
   }).sort((left, right) => left.name.localeCompare(right.name, 'en'))
   for (const name of options.downloadedAssets.keys()) {
-    if (name !== 'SHA256SUMS' && !names.has(name)) throw new Error(`${name} does not have a release asset identity.`)
+    if (!['SHA256SUMS','release-asset-identities.json'].includes(name) && !names.has(name)) throw new Error(`${name} does not have a release asset identity.`)
   }
   return { repository: options.repository, tag: options.tag, assets: verifiedAssets }
 }
@@ -138,6 +138,7 @@ function apiAssetUrl(value: string, repository: string): string {
 }
 
 function isPlatformAsset(platform: typeof REQUIRED_PLATFORMS[number], name: string): boolean {
+  if(platform.startsWith('darwin-') && isUniversalMacAsset(name))return true
   const x64 = /(?:^|[_-])(?:x64|x86_64)(?:[_.-]|$)/i
   const arm64 = /(?:^|[_-])(?:arm64|aarch64)(?:[_.-]|$)/i
   const architecture = platform === 'darwin-aarch64' ? arm64 : x64
@@ -147,6 +148,9 @@ function isPlatformAsset(platform: typeof REQUIRED_PLATFORMS[number], name: stri
     ? /(?:^|[_.-])(?:apple|darwin|linux|macos|osx|windows)(?:[_.-]|$)/i
     : /(?:^|[_.-])(?:exe|linux|msi|nsis|win32|win64|windows)(?:[_.-]|$)/i
   return architecture.test(name) && !oppositeArchitecture.test(name) && extension.test(name) && !wrongPlatform.test(name)
+}
+function isUniversalMacAsset(name:string):boolean {
+  return /^weiyu-cay_\d+\.\d+\.\d+(?:-[\w.-]+)?_macos-universal-(?:zh-CN|en-US)\.app\.tar\.gz$/.test(name)
 }
 
 function optionValue(name: string): string {
@@ -176,6 +180,10 @@ function runCommand(): void {
     releaseAssets: assets.assets,
     repository: optionValue('--repository'),
     tag: optionValue('--tag'),
+  })
+  if(downloadedAssets.has('latest-en.json'))validateReleaseMetadata({
+    metadata:JSON.parse(Buffer.from(downloadedAssets.get('latest-en.json')!).toString('utf8')) as ReleaseMetadata,
+    downloadedAssets,releaseAssets:assets.assets,repository:optionValue('--repository'),tag:optionValue('--tag'),
   })
   const identityOutput = optionalOptionValue('--identity-output')
   if (identityOutput !== undefined) {

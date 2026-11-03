@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { codeLanguages } from './codeLanguages'
 
 interface CodeLanguageControlOptions {
@@ -16,17 +17,18 @@ export function createCodeLanguageControl(options: CodeLanguageControlOptions) {
   const input = document.createElement('input')
   input.type = 'text'
   input.setAttribute('role', 'combobox')
-  input.setAttribute('aria-label', '代码块语言')
+  input.dataset.codeLanguageInput='true'
+  input.setAttribute('aria-label', uiText("代码块语言","Code block language"))
   input.setAttribute('aria-autocomplete', 'none')
   input.setAttribute('aria-haspopup', 'listbox')
   input.setAttribute('aria-expanded', 'false')
   input.autocomplete = 'off'
   input.spellcheck = false
-  input.title = '输入语言后按 Enter 应用；清空即不指定语言'
+  input.title = uiText("输入语言后按 Enter 应用；清空即不指定语言","Enter a language and press Enter; clear to leave unspecified")
   const toggle = document.createElement('button')
   toggle.type = 'button'
   toggle.className = 'cm-code-language__toggle'
-  toggle.setAttribute('aria-label', '选择代码语言')
+  toggle.setAttribute('aria-label', uiText("选择代码语言","Choose code language"))
   toggle.innerHTML = '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4 6 4 4 4-4"/></svg>'
   dom.append(input, toggle)
   let savedValue = options.value
@@ -72,7 +74,7 @@ export function createCodeLanguageControl(options: CodeLanguageControlOptions) {
     menu.className = 'code-language-options'
     menu.id = id
     menu.setAttribute('role', 'listbox')
-    menu.setAttribute('aria-label', '代码语言')
+    menu.setAttribute('aria-label', uiText("代码语言","Code language"))
     // A portal avoids clipping by editor scroll containers and content zoom.
     const theme = getComputedStyle(dom)
     for (const key of ['--color-surface', '--color-text', '--color-muted', '--color-border-soft', '--color-accent-soft', '--color-focus', '--code-font']) {

@@ -112,7 +112,11 @@ pub fn derive_temporary_title(markdown: &str, timestamp: &str) -> Result<String,
         let parsed = DateTime::parse_from_rfc3339(timestamp).map_err(|source| {
             CommandError::validation(format!("temporary title timestamp is invalid: {source}"))
         })?;
-        return Ok(format!("未命名笔记 {}", parsed.format("%Y-%m-%d %H-%M")));
+        return Ok(format!(
+            "{} {}",
+            crate::brand::text("未命名笔记", "Untitled note"),
+            parsed.format("%Y-%m-%d %H-%M")
+        ));
     };
     let mut value = first;
     let hashes = value
@@ -148,7 +152,11 @@ pub fn derive_temporary_title(markdown: &str, timestamp: &str) -> Result<String,
         let parsed = DateTime::parse_from_rfc3339(timestamp).map_err(|source| {
             CommandError::validation(format!("temporary title timestamp is invalid: {source}"))
         })?;
-        Ok(format!("未命名笔记 {}", parsed.format("%Y-%m-%d %H-%M")))
+        Ok(format!(
+            "{} {}",
+            crate::brand::text("未命名笔记", "Untitled note"),
+            parsed.format("%Y-%m-%d %H-%M")
+        ))
     } else {
         Ok(title)
     }

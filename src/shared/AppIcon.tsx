@@ -1,3 +1,4 @@
+import {text as uiText} from './i18n'
 interface AppIconProps {
   size?: number
   decorative?: boolean
@@ -10,7 +11,7 @@ export function AppIcon({ size = 24, decorative = true }: AppIconProps) {
   return (
     <svg
       aria-hidden={decorative ? true : undefined}
-      aria-label={decorative ? undefined : '微屿'}
+      aria-label={decorative ? undefined : uiText("微屿","Cay")}
       data-testid="weiyu-app-icon"
       height={size}
       role={decorative ? undefined : 'img'}

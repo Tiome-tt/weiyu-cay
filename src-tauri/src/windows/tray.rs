@@ -134,20 +134,43 @@ pub fn report_failure(app: &tauri::AppHandle, action: &'static str) {
 }
 
 fn try_setup(app: &mut tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "打开微屿", true, None::<&str>)?;
-    let new_temporary =
-        MenuItem::with_id(app, "new-temporary", "新建临时便笺", true, None::<&str>)?;
+    let open = MenuItem::with_id(
+        app,
+        "open",
+        crate::brand::text("打开微屿", "Open Cay"),
+        true,
+        None::<&str>,
+    )?;
+    let new_temporary = MenuItem::with_id(
+        app,
+        "new-temporary",
+        crate::brand::text("新建临时便笺", "New sticky note"),
+        true,
+        None::<&str>,
+    )?;
     let inbox = MenuItem::with_id(
         app,
         "temporary-inbox",
-        "打开临时便笺收件箱",
+        crate::brand::text("打开临时便笺收件箱", "Open sticky-note inbox"),
         true,
         None::<&str>,
     )?;
     let first_separator = PredefinedMenuItem::separator(app)?;
-    let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+    let settings = MenuItem::with_id(
+        app,
+        "settings",
+        crate::brand::text("设置", "Settings"),
+        true,
+        None::<&str>,
+    )?;
     let second_separator = PredefinedMenuItem::separator(app)?;
-    let exit = MenuItem::with_id(app, "exit", "退出微屿", true, None::<&str>)?;
+    let exit = MenuItem::with_id(
+        app,
+        "exit",
+        crate::brand::text("退出微屿", "Quit Cay"),
+        true,
+        None::<&str>,
+    )?;
     let menu = Menu::with_items(
         app,
         &[

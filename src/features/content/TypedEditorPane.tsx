@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { selectedExportPort } from '../../domain/exportSelection'
 import type { ExportSelection } from '../../domain/ports'
 import { ErrorNotification } from '../../shared/notifications'
@@ -40,7 +41,7 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  const body=useRef<HTMLDivElement>(null)
  const [fileActions,setFileActions]=useState<HTMLDivElement|null>(null)
  const commit=useCallback(async()=>{await rich.current?.commitComposition();await text.current?.commitComposition()},[])
- const flush=useCallback(async()=>{try{await commit();if(props.preferences)await pdfReadingPositionStore(props.preferences).flush().catch(()=>undefined);return await save.flush()}catch{setError('请先完成当前输入，再重试保存。');return false}},[commit,save.flush,props.preferences]); const reloadLatest=useCallback(async()=>{const latest=await save.reloadLatest();if(latest){onDocumentAdopt?.(latest)}else setError('无法载入最新版本，请重试。')},[onDocumentAdopt,save.reloadLatest])
+ const flush=useCallback(async()=>{try{await commit();if(props.preferences)await pdfReadingPositionStore(props.preferences).flush().catch(()=>undefined);return await save.flush()}catch{setError(uiText("请先完成当前输入，再重试保存。","Finish the current input before saving again."));return false}},[commit,save.flush,props.preferences]); const reloadLatest=useCallback(async()=>{const latest=await save.reloadLatest();if(latest){onDocumentAdopt?.(latest)}else setError(uiText("无法载入最新版本，请重试。","Could not load the latest version. Try again."))},[onDocumentAdopt,save.reloadLatest])
  useImperativeHandle(ref,()=>({
    flush,
    beginEditBarrier:async()=>{await commit();flushSync(()=>setBlocked(true))},
@@ -59,7 +60,7 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
  },[document.id,notes,onDocumentAdopt,save.savedRevision,save.state.status])
  useEffect(()=>setTitle(document.title),[document.title])
  const update=(content:NoteContent)=>{save.update(content);onDraftChange?.(contentOutlineMarkdown({content}))}
- const action=async(fn:()=>Promise<boolean|void>):Promise<boolean>=>{setError(null);try{return (await fn())!==false}catch{setError('操作未完成，请检查保存状态后重试。');return false}}
+ const action=async(fn:()=>Promise<boolean|void>):Promise<boolean>=>{setError(null);try{return (await fn())!==false}catch{setError(uiText("操作未完成，请检查保存状态后重试。","The operation did not finish. Check the save status and try again."));return false}}
  const readOnly=blocked||exporting
  const exportDocument=async(kind:NoteExportKind,selection?:ExportSelection):Promise<boolean>=>{
   if(readOnly)return false
@@ -101,16 +102,16 @@ export const TypedEditorPane=forwardRef<EditorPaneHandle,EditorPaneProps>(functi
 
   return <div className="typed-editor">
   <div className="typed-editor__header">
-   <input className="typed-editor__title" aria-label="笔记标题" value={title} readOnly={readOnly||!props.onRenameNote} onChange={e=>setTitle(e.target.value)} onBlur={()=>{if(title.trim()&&title!==document.title&&props.onRenameNote)void action(async()=>{if(!await flush())throw new Error();await props.onRenameNote!(title.trim())})}}/>
+   <input className="typed-editor__title" aria-label={uiText("笔记标题","Note title")} value={title} readOnly={readOnly||!props.onRenameNote} onChange={e=>setTitle(e.target.value)} onBlur={()=>{if(title.trim()&&title!==document.title&&props.onRenameNote)void action(async()=>{if(!await flush())throw new Error();await props.onRenameNote!(title.trim())})}}/>
    {save.content.type==='file'&&<div className="typed-editor__file-actions" ref={setFileActions}/>}
   </div>
   <div className="typed-editor__metadata">{search&&<TagsEditor tags={document.tags} onChange={async tags=>{if(blocked||!await flush())throw new Error('save');await search.updateTags(document.id,tags);onDocumentAdopt?.(await notes.loadNote(document.id))}}/>}</div>
   <ErrorNotification error={error} />
-  {save.state.status==='error'&&<><ErrorNotification error={save.state.message} /><div className="typed-editor__recovery"><button type="button" onClick={save.state.retry}>重试保存</button>{save.state.message.includes('其他窗口')&&<button type="button" onClick={()=>void reloadLatest()}>载入最新版本</button>}</div></>}
+  {save.state.status==='error'&&<><ErrorNotification error={save.state.message} /><div className="typed-editor__recovery"><button type="button" onClick={save.state.retry}>{uiText("重试保存","Retry save")}</button>{save.state.message.includes(uiText("其他窗口","Another window"))&&<button type="button" onClick={()=>void reloadLatest()}>{uiText("载入最新版本","Load latest version")}</button>}</div></>}
   <div className="typed-editor__body" ref={body}>
    {save.content.type==='text'&&<PlainTextEditor onSelectionChange={setSelectedText} ref={text} value={save.content.text} editable={!readOnly} onChange={value=>update({type:'text',text:value})}/>}
    {save.content.type==='file'&&<FileViewer preferences={props.preferences} actionsContainer={fileActions} onDocumentAdopt={onDocumentAdopt} document={{...document,content:save.content}} files={files} onSaveAs={exportDocument} onConvertToDocument={onConvertFileToDocument}/>}
-   {save.content.type==='document'&&<Suspense fallback={<p role="status">正在打开文档…</p>}><RichDocumentEditor onSelectionChange={setSelectedText} onBlockCountChange={setLiveBlockCount} ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
+   {save.content.type==='document'&&<Suspense fallback={<p role="status">{uiText("正在打开文档…","Opening document…")}</p>}><RichDocumentEditor onSelectionChange={setSelectedText} onBlockCountChange={setLiveBlockCount} ref={rich} value={save.content.document} onChange={value=>update({type:'document',document:value})} editable={!readOnly} noteId={document.id} folders={folders} assets={assets} assetReader={assetReader} links={links} external={external} onNavigateNote={onNavigateNote} onNavigateEntry={onNavigateNote}/></Suspense>}
   </div>
   <AiSummaryWidget unsupported={save.content.type==='file'} noteId={document.id} title={title} markdown={aiMarkdown} ai={ai} model={deepseekModel} onOpenSettings={onOpenSettings} waitForImages={waitForImages}/>
   <EditorStatusBar blockCount={save.content.type==='document'?liveBlockCount??initialBlockCount:undefined} text={statusText} selectedText={selectedText} updatedAt={save.updatedAt} state={save.state} related={links&&onNavigateNote?<Backlinks noteId={document.id} noteTitle={title} links={links} onNavigate={onNavigateNote} refreshToken={`${save.updatedAt}:${save.state.status}`}/>:undefined}/>

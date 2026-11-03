@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { createCodeLanguageControl } from './codeLanguageControl'
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import { Annotation, EditorSelection, StateEffect, type ChangeSet, type EditorState, type Extension, type Range, type SelectionRange } from '@codemirror/state'
@@ -596,8 +597,8 @@ class TaskCheckboxWidget extends WidgetType {
     checkbox.className = 'cm-live-task-checkbox'
     checkbox.checked = this.checked
     checkbox.setAttribute('aria-label', this.checked
-      ? `标记任务“${this.label}”为未完成`
-      : `标记任务“${this.label}”为完成`)
+      ? uiText(`标记任务“${this.label}”为未完成`,`Mark task “${this.label}” as incomplete`)
+      : uiText(`标记任务“${this.label}”为完成`,`Mark task “${this.label}” as complete`))
     checkbox.addEventListener('change', () => {
       const from = view.posAtDOM(checkbox)
       view.dispatch({ changes: { from: from + 1, to: from + 2, insert: checkbox.checked ? 'x' : ' ' } })
@@ -616,7 +617,7 @@ class DividerWidget extends WidgetType {
     const divider = document.createElement('span')
     divider.className = 'cm-live-divider'
     divider.setAttribute('role', 'separator')
-    divider.setAttribute('aria-label', '分隔线')
+    divider.setAttribute('aria-label', uiText("分隔线","Divider"))
     return divider
   }
 }

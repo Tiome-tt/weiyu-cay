@@ -192,3 +192,5 @@ The MVP excludes cloud sync, required login, mobile apps, collaboration, AI writ
 - Run the relevant lint, type-check, unit, integration, and build checks before declaring work complete.
 - Describe data migrations, compatibility impact, and Windows/macOS verification in reviews.
 - Never commit secrets, local application data, generated note libraries, signing material, or `.superpowers/` brainstorming files.
+
+- v1.1.5 发布提供 Windows x64 EXE 与 macOS 通用 DMG 的中文、英文四个安装包；构建期语言同时应用于前端、原生托盘、新资料库引导和安装器，保留用户原文与存储兼容标识。中文使用 latest.json，英文使用 latest-en.json，更新载荷不得跨语言；通用 macOS 载荷须校验 arm64 与 x86_64 架构。

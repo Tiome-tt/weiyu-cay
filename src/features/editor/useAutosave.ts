@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument, NoteId } from '../../domain/model'
 import type { NotePort } from '../../domain/ports'
@@ -273,9 +274,9 @@ export function useAutosave(
 
 function saveErrorMessage(error: unknown): string {
   if (isConflict(error)) {
-    return '便笺已在其他窗口中发生变化。当前修改已保留，请重试保存。'
+    return uiText("便笺已在其他窗口中发生变化。当前修改已保留，请重试保存。","This sticky note changed in another window. Your changes were kept. Retry saving.")
   }
-  return '无法保存，修改内容已保留在本地。'
+  return uiText("无法保存，修改内容已保留在本地。","Could not save. Your changes were kept locally.")
 }
 
 function isConflict(error: unknown): boolean {

@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { Icon } from '../../shared/Icon'
 
 interface MainWindowEmptyStateProps {
@@ -22,16 +23,14 @@ export function MainWindowEmptyState({ onCreateNote }: MainWindowEmptyStateProps
         <path className="main-window-empty-state__wave main-window-empty-state__wave--lower" d="M34 101c10-3 20-3 30 0s20 3 30 0 20-3 30 0 20 3 30 0" />
       </svg>
       <div className="main-window-empty-state__copy">
-        <h2>每个念头，都是一座小岛。</h2>
+        <h2>{uiText("每个念头，都是一座小岛。","Every thought is an island.")}</h2>
       </div>
       <button
         type="button"
         className="main-window-empty-state__action"
         onClick={(event) => onCreateNote(event.currentTarget)}
       >
-        <Icon name="plus" size={17} />
-        新建笔记
-      </button>
+        <Icon name="plus" size={17} />{uiText("新建笔记","New note")}</button>
     </div>
   )
 }

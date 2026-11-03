@@ -1,4 +1,12 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=VITE_CAY_LOCALE");
+    println!("cargo:rustc-check-cfg=cfg(cay_english)");
+    match std::env::var("VITE_CAY_LOCALE").as_deref() {
+        Ok("en-US") => println!("cargo:rustc-cfg=cay_english"),
+        Ok("zh-CN") | Err(_) => {}
+        Ok(_) => panic!("Unsupported application UI locale"),
+    }
+
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "create_note",

@@ -1,3 +1,4 @@
+import {text as uiText} from './i18n'
 import { ErrorNotification } from './notifications'
 
 export type StatusNoticeState =
@@ -17,7 +18,7 @@ export function StatusNotice({ state, className }: StatusNoticeProps) {
     return (
       <span className={className}>
         <ErrorNotification error={state.message} />
-        <button type="button" aria-label={state.retryLabel ?? '重试保存'} disabled={state.busy} onClick={state.retry}>重试</button>
+        <button type="button" aria-label={state.retryLabel ?? uiText("重试保存","Retry save")} disabled={state.busy} onClick={state.retry}>{uiText("重试","Retry")}</button>
       </span>
     )
   }

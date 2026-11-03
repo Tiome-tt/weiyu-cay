@@ -1,3 +1,4 @@
+import {text as uiText} from './i18n'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -25,7 +26,7 @@ export function OperationNotification({ notice }: { notice: OperationNotice | nu
   const dismiss = useCallback(() => setLocal(null), [])
   useEffect(() => {
     if (notice && lastNotified.current !== notice) {
-      const item: Notification = { ...notice, id: ++nextId, source:source.current, kind: notice.kind ?? 'status' }
+      const item: Notification = { ...notice, focus:notice.focus && lastNotified.current?.message!==notice.message, id: ++nextId, source:source.current, kind: notice.kind ?? 'status' }
       if (hosted) listeners.forEach(listener => listener(item))
       else setLocal(item)
     }
@@ -40,7 +41,7 @@ export function OperationNotification({ notice }: { notice: OperationNotice | nu
     lastNotified.current=null
   },[])
   if (hosted || local === null) return null
-  return createPortal(<div className="notification-center" aria-label="通知"><NotificationCard key={local.id} item={local} onDismiss={dismiss}/></div>,document.body)
+  return createPortal(<div className="notification-center" aria-label={uiText("通知","Notifications")}><NotificationCard key={local.id} item={local} onDismiss={dismiss}/></div>,document.body)
 }
 
 export function ErrorNotification({ error }: { error: string | null | undefined }) {
@@ -67,7 +68,7 @@ export function NotificationCenter() {
     return () => { listeners.delete(add) }
   }, [])
   if (items.length === 0) return null
-  return <div ref={stack} className="notification-center" aria-label="通知">
+  return <div ref={stack} className="notification-center" aria-label={uiText("通知","Notifications")}>
     {items.map((item) => <NotificationCard key={item.id} item={item} onDismiss={dismiss} />)}
   </div>
 }
@@ -82,6 +83,6 @@ function NotificationCard({ item, onDismiss }: { item: Notification; onDismiss: 
   return <div className={`notification-center__item notification-center__item--${item.kind}`} role={item.kind}>
     <span ref={message} tabIndex={item.focus?-1:undefined} className="notification-center__message">{item.message}</span>
     {item.action && <button className="notification-center__action" type="button" disabled={item.action.disabled} onClick={item.action.onClick}>{item.action.label}</button>}
-    <button type="button" aria-label="关闭通知" onClick={() => {item.onDismiss?.();onDismiss(item.id)}}>×</button>
+    <button type="button" aria-label={uiText("关闭通知","Close notification")} onClick={() => {item.onDismiss?.();onDismiss(item.id)}}>×</button>
   </div>
 }

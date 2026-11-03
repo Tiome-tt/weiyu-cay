@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { contentFormat } from '../../domain/content'
 import type { Folder, FolderId, NoteSummary } from '../../domain/model'
 
@@ -16,9 +17,9 @@ const NAME_COLLATOR = new Intl.Collator('zh-CN', { numeric: true, sensitivity: '
 
 export function libraryEntryPresentation(note: NoteSummary): LibraryEntryPresentation {
   const format = contentFormat(note)
-  if (format === 'document') return { format, label: '文档', extension: null }
+  if (format === 'document') return { format, label: uiText("文档","Document"), extension: null }
   if (format === 'markdown') return { format, label: 'Markdown', extension: 'MD' }
-  if (format === 'text') return { format, label: '纯文本', extension: 'TXT' }
+  if (format === 'text') return { format, label: uiText("纯文本","Plain text"), extension: 'TXT' }
 
   const managed = note.content?.type === 'file' ? note.content.file : null
   const extension = fileExtension(managed?.originalName ?? note.title)
@@ -28,12 +29,12 @@ export function libraryEntryPresentation(note: NoteSummary): LibraryEntryPresent
     return { format: 'pdf', label: 'PDF', extension: extension ?? 'PDF' }
   }
   if (mediaType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp'].includes(normalizedExtension)) {
-    return { format: 'image', label: '图片', extension }
+    return { format: 'image', label: uiText("图片","Image"), extension }
   }
   if (OFFICE_EXTENSIONS.has(normalizedExtension)) {
     return { format: 'office', label: 'Office', extension }
   }
-  return { format: 'other', label: '附件', extension }
+  return { format: 'other', label: uiText("附件","Attachment"), extension }
 }
 
 export function matchesLibraryType(note: NoteSummary, filter: LibraryTypeFilter): boolean {

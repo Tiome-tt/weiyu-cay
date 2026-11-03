@@ -1,4 +1,4 @@
-import {text} from './i18n'
+import {text as uiText} from './i18n'
 import { APP_NAME } from './brand'
 import { AppIcon } from './AppIcon'
 import type { ReactNode } from 'react'
@@ -23,9 +23,9 @@ interface WindowControl {
 /** Frameless main-window shell. Branding and application actions share the native titlebar. */
 export function AppChrome({ children, actions, actionsDisabled = false, windowChrome, dailyLyricsEnabled = false }: AppChromeProps) {
   const controls: WindowControl[] = [
-    { icon: 'minimize', label: text('最小化窗口','Minimize window'), run: () => windowChrome.minimize() },
-    { icon: 'maximize', label: text('最大化或还原窗口','Maximize or restore window'), run: () => windowChrome.toggleMaximize() },
-    { icon: 'close', label: text('关闭窗口','Close window'), run: () => windowChrome.requestClose() },
+    { icon: 'minimize', label: uiText('最小化窗口','Minimize window'), run: () => windowChrome.minimize() },
+    { icon: 'maximize', label: uiText('最大化或还原窗口','Maximize or restore window'), run: () => windowChrome.toggleMaximize() },
+    { icon: 'close', label: uiText('关闭窗口','Close window'), run: () => windowChrome.requestClose() },
   ]
   const orderedControls = windowChrome.platform === 'macos'
     ? [controls[2], controls[0], controls[1]]

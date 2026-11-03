@@ -1,10 +1,11 @@
+import {text as uiText} from '../../shared/i18n'
 import type { NoteDocument } from '../../domain/model'
 import type { FilePort } from '../../domain/ports'
 import type { NoteExportKind } from '../../domain/noteExport'
 import { parseOfficePreview, type OfficeSection } from './officeXml'
 
 export function officeProjection(sections:OfficeSection[]):{element:HTMLElement;text:string} {
-  if(sections.some(section=>section.truncated))throw new Error('文件超出转换范围，请使用系统应用转换完整文件。')
+  if(sections.some(section=>section.truncated))throw new Error(uiText("文件超出转换范围，请使用系统应用转换完整文件。","The file exceeds conversion limits. Use a system app to convert it completely."))
   const element=document.createElement('article')
   const text:string[]=[]
   for(const section of sections){
@@ -20,11 +21,11 @@ export function officeProjection(sections:OfficeSection[]):{element:HTMLElement;
 }
 
 export async function convertManagedFile(note:NoteDocument,kind:NoteExportKind,files:FilePort):Promise<boolean>{
-  if(note.content?.type!=='file')throw new Error('文件转换不可用。')
+  if(note.content?.type!=='file')throw new Error(uiText("文件转换不可用。","File conversion is unavailable."))
   if(kind==='original')return files.saveFileAs(note.id)
   const file=note.content.file
   if(['image/png','image/jpeg','image/webp'].includes(file.mediaType)){
-    if(kind!=='pdf'||!files.savePdfExport)throw new Error('此转换格式不可用。')
+    if(kind!=='pdf'||!files.savePdfExport)throw new Error(uiText("此转换格式不可用。","This conversion format is unavailable."))
     const bytes=files.readFileBytes ? await files.readFileBytes(note.id) : (await files.readFile(note.id)).bytes
     const {jsPDF}=await import('jspdf')
     const pdf=new jsPDF({unit:'pt',format:'a4'})
@@ -35,20 +36,20 @@ export async function convertManagedFile(note:NoteDocument,kind:NoteExportKind,f
     return files.savePdfExport(note.id,new Uint8Array(pdf.output('arraybuffer')),note.title)
   }
   const extension=file.originalName.split('.').pop()?.toLowerCase()??''
-  if(!['docx','xlsx','pptx'].includes(extension)||!files.readOfficeParts)throw new Error('此文件暂不支持转换。')
+  if(!['docx','xlsx','pptx'].includes(extension)||!files.readOfficeParts)throw new Error(uiText("此文件暂不支持转换。","This file cannot be converted yet."))
   const sections=parseOfficePreview(extension,await files.readOfficeParts(note.id))
-  if(file.size>0&&sections.length===0)throw new Error('无法读取完整的转换内容。')
+  if(file.size>0&&sections.length===0)throw new Error(uiText("无法读取完整的转换内容。","Could not read the complete content for conversion."))
   const projection=officeProjection(sections)
   if(kind==='pdf'){
     const {exportTypedDocumentToPdf}=await import('./pdfExport')
     return exportTypedDocumentToPdf(note.id,note.title,projection.element,files)
   }
-  if(!files.saveTextExport)throw new Error('此转换格式不可用。')
+  if(!files.saveTextExport)throw new Error(uiText("此转换格式不可用。","This conversion format is unavailable."))
   if(kind==='text')return files.saveTextExport(note.id,projection.text,note.title,'text')
   if(kind==='html'){
     const title=document.createElement('title');title.textContent=note.title
     const html=`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">${title.outerHTML}<style>body{font-family:system-ui;max-width:1000px;margin:32px auto;padding:0 24px}table{border-collapse:collapse}td{border:1px solid #ccc;padding:8px;white-space:pre-wrap}p{white-space:pre-wrap}</style></head><body>${projection.element.outerHTML}</body></html>`
     return files.saveTextExport(note.id,html,note.title,'html')
   }
-  throw new Error('此转换格式不可用。')
+  throw new Error(uiText("此转换格式不可用。","This conversion format is unavailable."))
 }

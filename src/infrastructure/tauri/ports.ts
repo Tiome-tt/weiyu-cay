@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { TauriFilePort } from './filePort'
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -516,7 +517,7 @@ class TauriSettingsPort implements SettingsPort {
   }
 
   async chooseStorageDirectory(): Promise<string | null> {
-    const selected = await open({directory:true,multiple:false,title:'选择数据目录'})
+    const selected = await open({directory:true,multiple:false,title:uiText("选择数据目录","Choose library folder")})
     return typeof selected === 'string' ? selected : null
   }
 

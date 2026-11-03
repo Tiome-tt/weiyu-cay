@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useMemo, useState, type ReactNode } from 'react'
 import type { Folder, FolderId, NoteId, NoteSummary } from '../../domain/model'
 import { Icon } from '../../shared/Icon'
@@ -56,7 +57,7 @@ export function InternalLinkTree({ folders, targets, selectedId, onSelect }: Int
 
   const rendered = renderLevel(null, 1, childrenByParent, targetsByFolder, new Set(), collapsedFolders, selectedId, onSelect, toggleFolder)
   return (
-    <div className="internal-link-tree" role="tree" aria-label="可引用笔记">
+    <div className="internal-link-tree" role="tree" aria-label={uiText("可引用笔记","Notes to reference")}>
       {rendered}
     </div>
   )
@@ -88,7 +89,7 @@ function renderLevel(
         role="treeitem"
         aria-level={level}
         aria-expanded={!collapsed}
-        aria-label={`${collapsed ? '展开' : '折叠'}文件夹：${folder.name}`}
+        aria-label={uiText(`${collapsed ? uiText("展开","Expand") : uiText("折叠","Collapse")}文件夹：${folder.name}`,`${collapsed ? uiText("展开","Expand") : uiText("折叠","Collapse")} folder: ${folder.name}`)}
         style={{ paddingLeft: `${6 + (level - 1) * 14}px` }}
         onClick={() => onToggleFolder(folder.id)}
       >
@@ -108,7 +109,7 @@ function renderLevel(
         role="treeitem"
         aria-level={level}
         aria-selected={selectedId === note.id}
-        aria-label={`选择链接：${note.title}`}
+        aria-label={uiText(`选择链接：${note.title}`,`Select link: ${note.title}`)}
         className={`internal-link-tree__note${selectedId === note.id ? ' is-selected' : ''}`}
         style={{ paddingLeft: `${6 + (level - 1) * 14}px` }}
         onClick={() => onSelect(note.id)}

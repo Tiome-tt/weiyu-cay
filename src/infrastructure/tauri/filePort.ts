@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import type { ExportSelection, FileImportResult, FilePort } from '../../domain/ports'
@@ -15,17 +16,17 @@ export class TauriFilePort implements FilePort {
     return convertFileSrc(token, 'cay-html')
   }
   constructor(private readonly client: TauriClient) {}
-  async chooseExportDirectory():Promise<string|null>{const value=await open({directory:true,multiple:false,title:'选择保存目录'});return typeof value==='string'?value:null}
+  async chooseExportDirectory():Promise<string|null>{const value=await open({directory:true,multiple:false,title:uiText("选择保存目录","Choose save folder")});return typeof value==='string'?value:null}
   readOfficeParts(noteId: NoteId): Promise<Array<{ name: string; text: string }>> { return this.client.invoke('read_office_preview_parts', { noteId }) }
   async saveTextExport(noteId: NoteId, text: string, title: string, format: 'text' | 'html', selection?:ExportSelection): Promise<boolean> {
     const extension = format === 'text' ? 'txt' : 'html'
-    const destination = await save({ title: `导出 ${extension.toUpperCase()}`, defaultPath: exportPath(title,extension,selection), filters: [{ name: format === 'text' ? '文本文件' : 'HTML 网页', extensions: [extension] }] })
+    const destination = await save({ title: uiText(`导出 ${extension.toUpperCase()}`,`Export ${extension.toUpperCase()}`), defaultPath: exportPath(title,extension,selection), filters: [{ name: format === 'text' ? uiText("文本文件","Text file") : uiText("HTML 网页","HTML page"), extensions: [extension] }] })
     if (!destination) return false
     await this.client.invoke('save_note_text_export', { input: { noteId, destination, text, format } })
     return true
   }
   async exportMarkdownNote(noteId: NoteId, markdown: string, selection?:ExportSelection): Promise<boolean> {
-    const destination = selection?.directory ?? await open({ directory: true, multiple: false, title: '选择 Markdown 与附件的导出位置' })
+    const destination = selection?.directory ?? await open({ directory: true, multiple: false, title: uiText("选择 Markdown 与附件的导出位置","Choose export location for Markdown and attachments") })
     if (typeof destination !== 'string') return false
     const result = await this.client.invoke<{ completed: boolean; notesExported: number; failed: unknown[] }>('export_note_markdown', { noteId, destination, markdown, ...(selection?{exportName:selection.filename.replace(/\.md$/i,'')}: {}) })
     if (!result.completed || result.notesExported !== 1 || result.failed.length > 0) throw new Error('Markdown export incomplete')
@@ -37,18 +38,18 @@ export class TauriFilePort implements FilePort {
     })
   }
   async saveDocumentExport(noteId: NoteId, bytes: Uint8Array, title: string, selection?:ExportSelection): Promise<boolean> {
-    const destination = await save({title:'导出 DOCX',defaultPath:exportPath(title,'docx',selection),filters:[{name:'Word 文档',extensions:['docx']}]})
+    const destination = await save({title:uiText("导出 DOCX","Export DOCX"),defaultPath:exportPath(title,'docx',selection),filters:[{name:uiText("Word 文档","Word document"),extensions:['docx']}]})
     if (!destination) return false
     await this.client.invoke('save_document_export',{input:{noteId,destination,bytes:Array.from(bytes)}})
     return true
   }
   async savePdfExport(noteId: NoteId, bytes: Uint8Array, title: string, selection?:ExportSelection): Promise<boolean> {
-    const destination = await save({title:'导出 PDF',defaultPath:exportPath(title,'pdf',selection),filters:[{name:'PDF 文件',extensions:['pdf']}]})
+    const destination = await save({title:uiText("导出 PDF","Export PDF"),defaultPath:exportPath(title,'pdf',selection),filters:[{name:uiText("PDF 文件","PDF file"),extensions:['pdf']}]})
     if (!destination) return false
     await this.client.invoke('save_pdf_export',{input:{noteId,destination,bytes:Array.from(bytes)}})
     return true
   }  async chooseFiles(): Promise<string[]> {
-    const paths = await open({multiple:true,directory:false,title:'导入文件'})
+    const paths = await open({multiple:true,directory:false,title:uiText("导入文件","Import files")})
     return paths === null ? [] : Array.isArray(paths) ? paths : [paths]
   }
   importFiles(input: {paths:string[];folderId:FolderId|null}): Promise<FileImportResult> {
@@ -63,7 +64,7 @@ export class TauriFilePort implements FilePort {
     return decodeBinaryPayload(result)
   }
   async saveFileAs(noteId: NoteId, selection?:ExportSelection): Promise<boolean> {
-    const destination = await save({title:'另存为',...(selection?{defaultPath:exportPath(selection.filename,'',selection)}:{})})
+    const destination = await save({title:uiText("另存为","Save as"),...(selection?{defaultPath:exportPath(selection.filename,'',selection)}:{})})
     if (destination === null) return false
     await this.client.invoke('export_managed_file',{noteId,destination})
     return true

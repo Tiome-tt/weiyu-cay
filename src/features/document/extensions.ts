@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { RichCodeBlock, RichCodeHighlight } from './codeBlock'
 import { BlockNumbers } from './blockNumbers'
@@ -225,7 +226,7 @@ export const AttachmentNode = Node.create({
       role: 'link',
       tabindex: '0',
       contenteditable: 'false',
-    }), ['span', { class: 'rich-document__attachment-kind' }, '附件'], ['span', {}, node.attrs.label || node.attrs.fileName || '未命名附件']]
+    }), ['span', { class: 'rich-document__attachment-kind' }, uiText("附件","Attachment")], ['span', {}, node.attrs.label || node.attrs.fileName || uiText("未命名附件","Untitled attachment")]]
   },
 })
 
@@ -240,8 +241,8 @@ export const RawMarkdownNode = Node.create({
     return ['pre', mergeAttributes(HTMLAttributes, {
       'data-raw-markdown': '',
       class: 'rich-document__raw-markdown',
-      title: '保留的 Markdown 原文，尚未转换为可编辑内容',
-      'aria-label': '保留的 Markdown 原文，尚未转换为可编辑内容',
+      title: uiText("保留的 Markdown 原文，尚未转换为可编辑内容","Preserved Markdown source; not yet converted to editable content"),
+      'aria-label': uiText("保留的 Markdown 原文，尚未转换为可编辑内容","Preserved Markdown source; not yet converted to editable content"),
       contenteditable: 'false',
     }), ['code', {}, node.attrs.source]]
   },
@@ -280,8 +281,8 @@ function managedImage(reader: RichAssetReader | undefined, noteId: NoteId | unde
         const handle = document.createElement('button')
         handle.type = 'button'
         handle.className = 'rich-document__image-resize-handle'
-        handle.setAttribute('aria-label', '调整图片大小')
-        handle.title = '拖动调整图片大小'
+        handle.setAttribute('aria-label', uiText("调整图片大小","Resize image"))
+        handle.title = uiText("拖动调整图片大小","Drag to resize image")
         let currentNode = props.node
         let objectUrl: string | undefined
         let generation = 0

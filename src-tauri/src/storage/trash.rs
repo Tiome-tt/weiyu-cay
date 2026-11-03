@@ -25,7 +25,7 @@ const MANIFEST_SUFFIX: &str = ".trash.json";
 const MANIFEST_NAME_BYTES: usize = 36 + MANIFEST_SUFFIX.len();
 const FOLDER_MANIFEST_SUFFIX: &str = ".folder.json";
 const FOLDER_MANIFEST_NAME_BYTES: usize = 36 + FOLDER_MANIFEST_SUFFIX.len();
-const RECOVERED_FOLDER_NAME: &str = "已恢复";
+const RECOVERED_FOLDER_NAME: &str = crate::brand::text("已恢复", "Recovered");
 const RECOVERED_FOLDER_ID: &str = "019c0000-0000-7000-8000-00000000fffe";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,7 +243,9 @@ impl TrashService {
                     .folder_snapshot
                     .first()
                     .map(|folder| folder.name.clone())
-                    .unwrap_or_else(|| "未命名文件夹".to_owned()),
+                    .unwrap_or_else(|| {
+                        crate::brand::text("未命名文件夹", "Untitled folder").to_owned()
+                    }),
                 deleted_at: manifest.deleted_at,
                 operation_id: manifest.operation_id,
                 folder_count: manifest.folder_snapshot.len(),

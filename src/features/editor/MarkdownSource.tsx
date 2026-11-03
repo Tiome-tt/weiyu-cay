@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useFloatingTableHeaders } from '../../shared/floatingTableHeaders'
 import {fitMenuToBounds} from '../../shared/menuPosition'
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
@@ -294,7 +295,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             annotations: pasteTokenAnnotation.of(token),
           })
         } catch {
-          onImageErrorRef.current?.('无法保存截图。')
+          onImageErrorRef.current?.(uiText("无法保存截图。","Could not save the screenshot."))
         }
         pendingPastesRef.current.delete(token)
         authorizedPasteTokensRef.current.delete(token)
@@ -433,7 +434,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
             view.dispatch({changes:{from:line.to,insert:'\n'},selection:{anchor:line.to+1}})
             requestAnimationFrame(()=> {
               if (viewRef.current !== view || view.state.readOnly || barrierDepthRef.current>0) return
-              for(const input of view.dom.querySelectorAll<HTMLInputElement>('[role="combobox"][aria-label="代码块语言"]')) {
+              for(const input of view.dom.querySelectorAll<HTMLInputElement>('[data-code-language-input]')) {
                 if(view.state.doc.lineAt(view.posAtDOM(input)).from===line.from){input.focus();break}
               }
             })
@@ -579,7 +580,7 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
                 drainReadyPastes()
               })
               .catch(() => {
-                pending.outcome = { kind: 'failure', message: '无法保存截图。' }
+                pending.outcome = { kind: 'failure', message: uiText("无法保存截图。","Could not save the screenshot.") }
                 drainReadyPastes()
               })
             return event.defaultPrevented
@@ -741,8 +742,8 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
         <button
           type="button"
           className="markdown-block-handle"
-          aria-label="添加内容块"
-          title="添加内容块"
+          aria-label={uiText("添加内容块","Add block")}
+          title={uiText("添加内容块","Add block")}
           style={{ top: hoverLine.visible ? hoverLine.top : surfaceControls.blockTop, ...(hoverLine.visible ? {left:hoverLine.left+28,transform:'none'} : {}) }}
           onPointerDown={(event) => event.preventDefault()}
           onClick={(event) => {keyboardMenuFocusRef.current=event.detail===0;openInsertionMenu(event.currentTarget)}}
@@ -754,27 +755,27 @@ export const MarkdownSource = forwardRef<MarkdownSourceHandle, MarkdownSourcePro
         <div
           className="markdown-inline-toolbar"
           role="toolbar"
-          aria-label="选区格式"
+          aria-label={uiText("选区格式","Selection formatting")}
           style={{ top: surfaceControls.toolbarTop, left: surfaceControls.toolbarLeft }}
           onPointerDown={(event) => event.preventDefault()}
         >
-          <button type="button" aria-label="加粗" title="加粗" onClick={() => formatSelection('bold')}>B</button>
-          <button type="button" aria-label="斜体" title="斜体" onClick={() => formatSelection('italic')}><i>I</i></button>
-          <button type="button" aria-label="链接" title="链接" onClick={() => formatSelection('link')}>↗</button>
-          <button type="button" aria-label="行内代码" title="行内代码" onClick={() => formatSelection('code')}>{'</>'}</button>
-          <button type="button" aria-label="删除线" title="删除线" onClick={() => formatSelection('strikethrough')}><s>S</s></button>
+          <button type="button" aria-label={uiText("加粗","Bold")} title={uiText("加粗","Bold")} onClick={() => formatSelection('bold')}>B</button>
+          <button type="button" aria-label={uiText("斜体","Italic")} title={uiText("斜体","Italic")} onClick={() => formatSelection('italic')}><i>I</i></button>
+          <button type="button" aria-label={uiText("链接","Link")} title={uiText("链接","Link")} onClick={() => formatSelection('link')}>↗</button>
+          <button type="button" aria-label={uiText("行内代码","Inline code")} title={uiText("行内代码","Inline code")} onClick={() => formatSelection('code')}>{'</>'}</button>
+          <button type="button" aria-label={uiText("删除线","Strikethrough")} title={uiText("删除线","Strikethrough")} onClick={() => formatSelection('strikethrough')}><s>S</s></button>
         </div>
       )}
       {contextMenu && (
-        <div ref={menuRef} className="markdown-context-menu" role="menu" aria-label="Markdown 快捷插入" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); closeContextMenu() }}>插入表格</button>
-          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { closeContextMenu(); onInsertInternalLinkRequest() }}>引用笔记</button>}
-          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.link)}>插入超链接</button>
-          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.image)}>插入图片</button>
-          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.code)}>插入代码块</button>
-          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.quote)}>插入引用</button>
-          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.task)}>插入任务项</button>
-          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.divider)}>插入分隔线</button>
+        <div ref={menuRef} className="markdown-context-menu" role="menu" aria-label={uiText("Markdown 快捷插入","Markdown insert actions")} style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" role="menuitem" onClick={() => { setTableRows(3); setTableColumns(3); setTableDialog(contextMenu); closeContextMenu() }}>{uiText("插入表格","Insert table")}</button>
+          {onInsertInternalLinkRequest && <button type="button" role="menuitem" onClick={() => { closeContextMenu(); onInsertInternalLinkRequest() }}>{uiText("引用笔记","Reference a note")}</button>}
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.link)}>{uiText("插入超链接","Insert hyperlink")}</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.image)}>{uiText("插入图片","Insert image")}</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.code)}>{uiText("插入代码块","Insert code block")}</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.quote)}>{uiText("插入引用","Insert quote")}</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.task)}>{uiText("插入任务项","Insert task")}</button>
+          <button type="button" role="menuitem" onClick={() => insertSnippet(markdownSnippets.divider)}>{uiText("插入分隔线","Insert divider")}</button>
         </div>
       )}
       {tableDialog && (

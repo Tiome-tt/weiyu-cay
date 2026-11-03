@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { ErrorNotification } from '../../shared/notifications'
 import type { NewNoteFormat } from '../../domain/content'
 import { useEffect, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
@@ -97,27 +98,27 @@ export function CreateNotePopover({
       className="create-note-popover"
       onKeyDown={keepFocusInside}
     >
-      <form aria-label="新建笔记" onSubmit={submit}>
-        <h2 id="create-note-title">新建笔记</h2>
+      <form aria-label={uiText("新建笔记","New note")} onSubmit={submit}>
+        <h2 id="create-note-title">{uiText("新建笔记","New note")}</h2>
         <label>
-          <span>笔记标题</span>
+          <span>{uiText("笔记标题","Note title")}</span>
           <input
             ref={titleRef}
-            aria-label="笔记标题"
+            aria-label={uiText("笔记标题","Note title")}
             readOnly={busy}
             value={draft.title}
             onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
           />
         </label>
         <label>
-          <span>保存到目录</span>
+          <span>{uiText("保存到目录","Save in folder")}</span>
           <select
-            aria-label="保存到目录"
+            aria-label={uiText("保存到目录","Save in folder")}
             disabled={busy}
             value={draft.folderId ?? ''}
             onChange={(event) => onDraftChange({ ...draft, folderId: (event.target.value || null) as FolderId | null })}
           >
-            <option value="" disabled hidden>{folders.length === 0 ? '请先创建文件夹' : '请选择文件夹'}</option>
+            <option value="" disabled hidden>{folders.length === 0 ? uiText("请先创建文件夹","Create a folder first") : uiText("请选择文件夹","Choose a folder")}</option>
             {folders
               .slice()
               .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
@@ -125,31 +126,31 @@ export function CreateNotePopover({
           </select>
         </label>
         <label>
-          <span>内容类型</span>
-          <select aria-label="内容类型" disabled={busy} value={draft.format} onChange={e => onDraftChange({...draft, format:e.target.value as NewNoteFormat})}>
-            <option value="document">文档</option><option value="markdown">Markdown</option><option value="text">纯文本</option>
+          <span>{uiText("内容类型","Content type")}</span>
+          <select aria-label={uiText("内容类型","Content type")} disabled={busy} value={draft.format} onChange={e => onDraftChange({...draft, format:e.target.value as NewNoteFormat})}>
+            <option value="document">{uiText("文档","Document")}</option><option value="markdown">Markdown</option><option value="text">{uiText("纯文本","Plain text")}</option>
           </select>
         </label>
         <label>
-          <span>标签（可选）</span>
+          <span>{uiText("标签（可选）","Tags (optional)")}</span>
           <input
-            aria-label="笔记标签"
+            aria-label={uiText("笔记标签","Note tags")}
             readOnly={busy}
-            placeholder="例如：项目，设计"
+            placeholder={uiText("例如：项目，设计","For example: project, design")}
             value={draft.tags}
             onChange={(event) => onDraftChange({ ...draft, tags: event.target.value })}
           />
         </label>
-        {busy && <p role="status">正在创建笔记…</p>}
-        <ErrorNotification error={status === 'error' ? '无法新建笔记，请重试。' : null} />
+        {busy && <p role="status">{uiText("正在创建笔记…","Creating note…")}</p>}
+        <ErrorNotification error={status === 'error' ? uiText("无法新建笔记，请重试。","Could not create a note. Try again.") : null} />
         <div className="create-note-popover__actions">
-          <button type="button" onClick={close}>取消</button>
+          <button type="button" onClick={close}>{uiText("取消","Cancel")}</button>
           <button
             type="submit"
-            aria-label={busy ? '正在创建笔记' : '创建笔记'}
+            aria-label={busy ? uiText("正在创建笔记","Creating note") : uiText("创建笔记","Create note")}
             disabled={busy || !hasFolder || draft.title.trim().length === 0}
           >
-            {busy ? '正在创建…' : '创建笔记'}
+            {busy ? uiText("正在创建…","Creating…") : uiText("创建笔记","Create note")}
           </button>
         </div>
       </form>

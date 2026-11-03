@@ -99,3 +99,11 @@ it('expires standalone operation messages and does not announce them twice in St
   act(() => vi.advanceTimersByTime(10000))
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
 })
+
+it('does not steal focus again when an existing result receives updated action callbacks',()=>{
+ const view=render(<NotificationProvider><button>导航</button><OperationNotification notice={{message:'已删除',focus:true,action:{label:'撤销删除',onClick:()=>undefined}}}/></NotificationProvider>)
+ expect(screen.getByText('已删除')).toHaveFocus()
+ screen.getByRole('button',{name:'导航'}).focus()
+ view.rerender(<NotificationProvider><button>导航</button><OperationNotification notice={{message:'已删除',focus:true,action:{label:'撤销删除',onClick:()=>undefined}}}/></NotificationProvider>)
+ expect(screen.getByRole('button',{name:'导航'})).toHaveFocus()
+})

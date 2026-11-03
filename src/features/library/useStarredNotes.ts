@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isCanonicalUuidV7 } from '../../domain/ids'
 import type { NoteId, NoteSummary } from '../../domain/model'
@@ -21,7 +22,7 @@ export function useStarredNotes(system: SystemPort, links: LinkPort | undefined,
       setIds(valid)
       setResolved(entries.filter((entry): entry is NoteSummary => entry !== null && entry.kind === 'formal'))
       setReady(true)
-    }).catch(() => { if (current) setError('无法读取星标，请重新打开应用。') })
+    }).catch(() => { if (current) setError(uiText("无法读取星标，请重新打开应用。","Could not read starred notes. Reopen the app.")) })
     return () => { current = false; mounted.current = false }
   }, [system, links])
   const visibleKey = visible.map((note) => note.id + ':' + note.revision + ':' + note.title).join('|')
@@ -49,7 +50,7 @@ export function useStarredNotes(system: SystemPort, links: LinkPort | undefined,
       setIds(next)
       setResolved(current=>[...current.filter(note=>!selected.has(note.id)),...eligible])
       setError(null)
-    } catch {if(mounted.current)setError('无法保存星标，请重试。')}
+    } catch {if(mounted.current)setError(uiText("无法保存星标，请重试。","Could not save starred notes. Try again."))}
     finally {busy.current=false}
   }
   const toggle=(note:NoteSummary)=>setStars([note],!ids.includes(note.id))
