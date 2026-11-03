@@ -115,6 +115,8 @@ Do not replace the stack or add a second state, editor, database, styling, or co
 
 - 文档右键菜单使用文档主体外的独立浮层，继承应用字体与主题，不受编辑区的隔离层裁切；编辑器浮层位于关联笔记面板之上，主窗口弹窗与通知仍保持各自层级。
 
+- 前端界面语言由构建参数 VITE_CAY_LOCALE 选择 zh-CN/en-US，默认中文并拒绝未知值；通过显式双语文案函数在界面源头选择，不遍历或替换渲染后的用户笔记。英文品牌为 Cay，技术标识、UUID 与持久化值保持稳定。当前语言接入为部分实现，未完成全界面、原生菜单和四包构建前不作为英文版发布。
+
 ## Code style
 
 - Enable TypeScript strict mode. Do not introduce `any` to bypass a design or typing problem.
