@@ -1,3 +1,5 @@
+import {text as uiText} from '../../shared/i18n'
+import { linkHorizontalScroll } from '../../shared/horizontalScrollSync'
 import { WidgetType, type EditorView } from '@codemirror/view'
 import { undo, redo } from '@codemirror/commands'
 import { elementScale } from '../../shared/elementScale'
@@ -52,8 +54,8 @@ export class DocumentImageWidget extends WidgetType {
     const container = document.createElement('span')
     container.className = 'cm-live-image cm-live-image--loading'
     container.tabIndex = 0
-    container.setAttribute('aria-label', this.alt.length > 0 ? `图片：${this.alt}` : '装饰图片')
-    container.textContent = this.alt.length > 0 ? this.alt : '正在载入图片'
+    container.setAttribute('aria-label', this.alt.length > 0 ? uiText(`图片：${this.alt}`,`Image: ${this.alt}`) : uiText("装饰图片","Decorative image"))
+    container.textContent = this.alt.length > 0 ? this.alt : uiText("正在载入图片","Loading image")
     container.addEventListener('click', () => this.select(view, container))
     container.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return
@@ -118,8 +120,8 @@ export class DocumentImageWidget extends WidgetType {
   private showFailure(container: HTMLElement) {
     container.className = 'cm-live-image cm-live-image--missing'
     container.setAttribute('role', 'img')
-    container.setAttribute('aria-label', this.alt.length > 0 ? `找不到图片：${this.alt}` : '找不到图片')
-    container.textContent = this.alt.length > 0 ? `找不到图片 · ${this.alt}` : '找不到图片'
+    container.setAttribute('aria-label', this.alt.length > 0 ? uiText(`找不到图片：${this.alt}`,`Image not found: ${this.alt}`) : uiText("找不到图片","Image not found"))
+    container.textContent = this.alt.length > 0 ? uiText(`找不到图片 · ${this.alt}`,`Image not found · ${this.alt}`) : uiText("找不到图片","Image not found")
   }
 }
 
@@ -141,7 +143,7 @@ export class DocumentTableWidget extends WidgetType {
     _to: number,
     private readonly source: string,
     private readonly table: MarkdownTable,
-    private readonly onEdit: (input: { from: number; to: number; table: MarkdownTable; scrollLeft?: number }) => void,
+    private readonly onEdit: (input: { from: number; to: number; table: MarkdownTable; scrollLeft?: number; scrollTop?: number }) => void,
     private readonly editable = true,
     private readonly onOpenExternal?: (href: string) => void | Promise<void>,
     private readonly tableScrollPositions?: Map<number, number>,
@@ -166,7 +168,7 @@ export class DocumentTableWidget extends WidgetType {
   toDOM(view: EditorView) {
     const wrapper = document.createElement('span')
     wrapper.className = 'cm-live-table'
-    wrapper.setAttribute('aria-label', this.editable ? '编辑 Markdown 表格' : 'Markdown 表格')
+    wrapper.setAttribute('aria-label', this.editable ? uiText("编辑 Markdown 表格","Edit Markdown table") : uiText("Markdown 表格","Markdown table"))
     let current = this.table
     const eagerCellActions = current.cells.length * Math.max(1, ...current.cells.map(line => line.length)) <= 800
     let sourceLength = this.source.length
@@ -186,6 +188,7 @@ export class DocumentTableWidget extends WidgetType {
     let selection: TableCellRange | null = null
     let dragAnchor: { row: number; column: number } | null = null
     let dragging = false
+    let pointerOrigin = { x: 0, y: 0 }
     let pendingCellChange = false
     let suppressClick = false
     wrapper.addEventListener('table-flush', () => {
@@ -200,7 +203,7 @@ export class DocumentTableWidget extends WidgetType {
       const position = from()
       const scrollLeft = Math.max(0, viewport.scrollLeft)
       this.tableScrollPositions?.set(position, scrollLeft)
-      this.onEdit({ from: position, to: to(), table: tableModel, scrollLeft })
+      this.onEdit({ from: position, to: to(), table: tableModel, scrollLeft, scrollTop: viewport.scrollTop })
       current = tableModel
       if (focusCell === undefined) return
       const restoreFocus = () => {
@@ -208,7 +211,7 @@ export class DocumentTableWidget extends WidgetType {
           try { return view.posAtDOM(element) === position } catch { return false }
         })
         const target = tableWrapper?.querySelector<HTMLTextAreaElement>(
-          'textarea[aria-label="' + (focusCell.row + 1) + ' 行 ' + (focusCell.column + 1) + ' 列"]',
+          `[data-row="${focusCell.row}"][data-column="${focusCell.column}"] textarea`,
         )
         if (target === null || target === undefined) return
         target.focus({ preventScroll: true })
@@ -242,7 +245,7 @@ export class DocumentTableWidget extends WidgetType {
     scrollRail.className = 'cm-live-table-scrollbar'
     scrollRail.setAttribute('role', 'scrollbar')
     scrollRail.setAttribute('aria-orientation', 'horizontal')
-    scrollRail.setAttribute('aria-label', '表格横向滚动')
+    scrollRail.setAttribute('aria-label', uiText("表格横向滚动","Scroll table horizontally"))
     scrollRail.setAttribute('aria-valuemin', '0')
     scrollRail.setAttribute('aria-valuemax', '0')
     scrollRail.setAttribute('aria-valuenow', '0')
@@ -252,7 +255,7 @@ export class DocumentTableWidget extends WidgetType {
     const toolbar = document.createElement('div')
     toolbar.className = 'cm-live-table-toolbar cm-live-table-toolbar--floating'
     toolbar.setAttribute('role', 'toolbar')
-    toolbar.setAttribute('aria-label', '表格工具')
+    toolbar.setAttribute('aria-label', uiText("表格工具","Table tools"))
     const summary = document.createElement('span')
     summary.className = 'cm-live-table-toolbar__summary'
     summary.setAttribute('aria-live', 'polite')
@@ -308,8 +311,8 @@ export class DocumentTableWidget extends WidgetType {
       const multi = range !== null && (range.startRow !== range.endRow || range.startColumn !== range.endColumn)
       const merged = selectedMerge() !== undefined
       for (const control of controls.values()) control.disabled = !hasSelection
-      const mergeControl = controls.get('合并单元格')
-      const splitControl = controls.get('拆分单元格')
+      const mergeControl = controls.get(uiText("合并单元格","Merge cells"))
+      const splitControl = controls.get(uiText("拆分单元格","Split cells"))
       if (mergeControl !== undefined) mergeControl.disabled = !multi || merged
       if (splitControl !== undefined) splitControl.disabled = !merged
       toolbar.hidden = !hasSelection
@@ -392,33 +395,33 @@ export class DocumentTableWidget extends WidgetType {
     }
     if (this.editable) {
       const deletionGroup = group()
-      button('row-delete', '删除行', () => {
+      button('row-delete', uiText("删除行","Delete rows"), () => {
         const range = rangeOrCell()
         let next = current
         for (let row = Math.max(range.startRow, range.endRow); row >= Math.min(range.startRow, range.endRow); row -= 1) next = tableWithDeletedRow(next, row)
         commit(next)
       }, deletionGroup)
-      button('column-delete', '删除列', () => {
+      button('column-delete', uiText("删除列","Delete columns"), () => {
         const range = rangeOrCell()
         let next = current
         for (let column = Math.max(range.startColumn, range.endColumn); column >= Math.min(range.startColumn, range.endColumn); column -= 1) next = tableWithDeletedColumn(next, column)
         commit(next)
       }, deletionGroup)
       const mergeGroup = group()
-      button('merge', '合并单元格', () => {
+      button('merge', uiText("合并单元格","Merge cells"), () => {
         if (selection !== null) commit(mergeTableCells(current, selection))
       }, mergeGroup)
-      button('split', '拆分单元格', () => {
+      button('split', uiText("拆分单元格","Split cells"), () => {
         const range = selection
         if (range !== null) commit(splitTableCell(current, range.startRow, range.startColumn))
       }, mergeGroup)
       const alignmentGroup = group()
-      button('align-left', '左对齐', () => setAlignment('left'), alignmentGroup)
-      button('align-center', '居中对齐', () => setAlignment('center'), alignmentGroup)
-      button('align-right', '右对齐', () => setAlignment('right'), alignmentGroup)
+      button('align-left', uiText("左对齐","Align left"), () => setAlignment('left'), alignmentGroup)
+      button('align-center', uiText("居中对齐","Align center"), () => setAlignment('center'), alignmentGroup)
+      button('align-right', uiText("右对齐","Align right"), () => setAlignment('right'), alignmentGroup)
     }
     const table = document.createElement('table')
-    table.setAttribute('aria-label', 'Markdown 表格')
+    table.setAttribute('aria-label', uiText("Markdown 表格","Markdown table"))
     const grid = document.createElement('tbody')
     const mergeAt = (row: number, column: number) => current.merges?.find((merge) => row >= merge.row && row < merge.row + merge.rowSpan && column >= merge.column && column < merge.column + merge.columnSpan)
     const renderCell = (row: number, column: number) => {
@@ -439,6 +442,7 @@ export class DocumentTableWidget extends WidgetType {
       }
       cell.addEventListener('pointerdown', (event) => {
         if (!this.editable || event.button !== 0) return
+        pointerOrigin = { x: event.clientX, y: event.clientY }
         event.stopPropagation()
         const target = event.target
         selectCell()
@@ -455,11 +459,6 @@ export class DocumentTableWidget extends WidgetType {
         event.preventDefault()
         if (Number.isFinite(event.pointerId)) wrapper.setPointerCapture?.(event.pointerId)
       })
-      cell.addEventListener('pointerenter', () => {
-        if (!this.editable || !dragging || dragAnchor === null) return
-        if (row !== dragAnchor.row || column !== dragAnchor.column) suppressClick = true
-        setSelection({ startRow: dragAnchor.row, startColumn: dragAnchor.column, endRow: row, endColumn: column })
-      })
       cell.addEventListener('click', (event) => {
         event.stopPropagation()
         if (suppressClick) return
@@ -471,7 +470,7 @@ export class DocumentTableWidget extends WidgetType {
         input.wrap = 'soft'
         collapseMarkdownCellEditor(input)
         input.value = current.cells[merge?.row ?? row]?.[merge?.column ?? column] ?? ''
-        input.setAttribute('aria-label', `${row + 1} 行 ${column + 1} 列`)
+        input.setAttribute('aria-label', uiText(`${row + 1} 行 ${column + 1} 列`,`Row ${row + 1}, column ${column + 1}`))
         input.title = input.value
         cell.title = input.value
         const alignment = current.alignments[column]
@@ -572,9 +571,9 @@ export class DocumentTableWidget extends WidgetType {
           if (actionsReady) return
           actionsReady = true
           actions.append(
-          cellInsertButton('在左侧添加列', 'column-left', () => commit(tableWithInsertedColumn(current, logicalColumn))),
-          cellInsertButton('在右侧添加列', 'column-right', () => commit(tableWithInsertedColumn(current, logicalColumn + columnSpan))),
-          cellInsertButton('在下方添加行', 'row-below', () => commit(tableWithInsertedRow(current, logicalRow + rowSpan))),
+          cellInsertButton(uiText("在左侧添加列","Add column left"), 'column-left', () => commit(tableWithInsertedColumn(current, logicalColumn))),
+          cellInsertButton(uiText("在右侧添加列","Add column right"), 'column-right', () => commit(tableWithInsertedColumn(current, logicalColumn + columnSpan))),
+          cellInsertButton(uiText("在下方添加行","Add row below"), 'row-below', () => commit(tableWithInsertedRow(current, logicalRow + rowSpan))),
           )
         }
         if (eagerCellActions) ensureActions()
@@ -641,7 +640,6 @@ export class DocumentTableWidget extends WidgetType {
     viewport.scrollLeft = initialScrollLeft
     scrollRail.scrollLeft = initialScrollLeft
 
-    let syncingScroll = false
     const updateScrollbar = () => {
       const hasLayout = viewport.clientWidth > 0
       const maxScroll = hasLayout ? Math.max(0, viewport.scrollWidth - viewport.clientWidth) : 0
@@ -650,29 +648,16 @@ export class DocumentTableWidget extends WidgetType {
       scrollRail.setAttribute('aria-valuenow', String(Math.round(Math.min(viewport.scrollLeft, maxScroll))))
       wrapper.classList.toggle('cm-live-table--scrollable', hasLayout && maxScroll > 1)
     }
-    const syncRailFromViewport = () => {
-      if (!syncingScroll) {
-        syncingScroll = true
-        scrollRail.scrollLeft = viewport.scrollLeft
-        syncingScroll = false
-      }
-      updateToolbar()
-      updateScrollbar()
+    let scrollFrame=0
+    const scheduleScrollControls=()=>{
+      if(scrollFrame)return
+      scrollFrame=window.requestAnimationFrame(()=>{
+        scrollFrame=0
+        scrollRail.setAttribute('aria-valuenow',String(Math.round(viewport.scrollLeft)))
+        positionToolbar()
+      })
     }
-    const syncViewportFromRail = () => {
-      if (!syncingScroll) {
-        syncingScroll = true
-        viewport.scrollLeft = scrollRail.scrollLeft
-        syncingScroll = false
-      }
-      updateScrollbar()
-      positionToolbar()
-    }
-    const repositionOnScroll = () => {
-      syncRailFromViewport()
-    }
-    viewport.addEventListener('scroll', repositionOnScroll, { passive: true })
-    scrollRail.addEventListener('scroll', syncViewportFromRail, { passive: true })
+    const stopScrollSync=linkHorizontalScroll(viewport,scrollRail,scheduleScrollControls)
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateScrollbar)
     resizeObserver?.observe(viewport)
     resizeObserver?.observe(table)
@@ -680,8 +665,8 @@ export class DocumentTableWidget extends WidgetType {
     this.cleanupOutsidePointer = () => {
       window.cancelAnimationFrame(renderFrame)
       for (const eventName of outsideEvents) document.removeEventListener(eventName, clearSelectionOutsideTable, true)
-      viewport.removeEventListener('scroll', repositionOnScroll)
-      scrollRail.removeEventListener('scroll', syncViewportFromRail)
+      stopScrollSync()
+      window.cancelAnimationFrame(scrollFrame)
       document.removeEventListener('pointerup', stopDrag, true)
       document.removeEventListener('pointercancel', stopDrag, true)
       resizeObserver?.disconnect()
@@ -689,6 +674,7 @@ export class DocumentTableWidget extends WidgetType {
 
     wrapper.addEventListener('pointermove', (event) => {
       if (!this.editable || !dragging || dragAnchor === null) return
+      if (Math.hypot(event.clientX - pointerOrigin.x, event.clientY - pointerOrigin.y) < 4) return
       if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return
       const target = document.elementFromPoint?.(event.clientX, event.clientY) ?? event.target
       const hoveredCell = target instanceof Element

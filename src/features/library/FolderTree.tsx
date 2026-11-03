@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Folder, FolderId, NoteId } from '../../domain/model'
@@ -440,7 +441,7 @@ export function FolderTree(props: FolderTreeProps) {
               <form className="folder-form" onSubmit={(event) => void finishRename(event)}>
                 <input
                   autoFocus
-                  aria-label="重命名文件夹"
+                  aria-label={uiText("重命名文件夹","Rename folder")}
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                 />
@@ -507,7 +508,7 @@ export function FolderTree(props: FolderTreeProps) {
     <li role="none" className="folder-tree__draft">
       <form className="folder-form folder-form--inline" onSubmit={(event) => void finishCreate(event)}>
         <Icon name="folder" size={22} />
-        <input ref={createInputRef} aria-label="文件夹名称" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => {
+        <input ref={createInputRef} aria-label={uiText("文件夹名称","Folder name")} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => {
           if (event.key !== 'Escape') return
           event.preventDefault()
           setCreating(false)
@@ -525,15 +526,15 @@ export function FolderTree(props: FolderTreeProps) {
     : undefined
 
   return (
-    <nav aria-label="文件夹" className="folder-tree" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }}>
+    <nav aria-label={uiText("文件夹","Folder")} className="folder-tree" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }}>
       <header className="library-pane__header">
         <div>
-          <span className="library-pane__eyebrow">本地笔记</span>
-          <h1>资料库</h1>
+          <span className="library-pane__eyebrow">{uiText("本地笔记","Local notes")}</span>
+          <h1>{uiText("资料库","Library")}</h1>
         </div>
           <div className="library-pane__header-actions">
           {props.onCollapse && (
-            <button className="icon-button" type="button" aria-label="折叠资料库" onClick={props.onCollapse}>
+            <button className="icon-button" type="button" aria-label={uiText("折叠资料库","Collapse library")} onClick={props.onCollapse}>
               <Icon name="collapse" size={18} />
             </button>
           )}
@@ -541,24 +542,24 @@ export function FolderTree(props: FolderTreeProps) {
       </header>
       {props.searchSlot}
       {contextPosition !== null && (
-        <div ref={contextMenuRef} className="folder-context-menu" role="menu" aria-label="文件夹快捷操作" style={{ left: contextPosition?.x ?? 8, top: contextPosition?.y ?? 8 }} onContextMenu={(event) => event.preventDefault()}>
-          <button type="button" role="menuitem" onClick={() => { if (contextTarget !== null) { userToggledFoldersRef.current.add(contextTarget); revealFolder(contextTarget) }; setRenaming(null); setCreateParent(contextTarget); setCreating(true); setName(''); setError(false); setContextTarget(null); setContextPosition(null) }}>新建文件夹</button>
-          {props.onCreateNote && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>新建笔记</button>}
-          {props.onImportFiles && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onImportFiles?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>导入文件</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>重命名文件夹</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setMoving(folder.id); setMoveTarget(folder.parentId) }; setContextTarget(null); setContextPosition(null) }}>移动文件夹</button>}
-          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>删除文件夹</button>}
+        <div ref={contextMenuRef} className="folder-context-menu" role="menu" aria-label={uiText("文件夹快捷操作","Folder actions")} style={{ left: contextPosition?.x ?? 8, top: contextPosition?.y ?? 8 }} onContextMenu={(event) => event.preventDefault()}>
+          <button type="button" role="menuitem" onClick={() => { if (contextTarget !== null) { userToggledFoldersRef.current.add(contextTarget); revealFolder(contextTarget) }; setRenaming(null); setCreateParent(contextTarget); setCreating(true); setName(''); setError(false); setContextTarget(null); setContextPosition(null) }}>{uiText("新建文件夹","New folder")}</button>
+          {props.onCreateNote && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onCreateNote?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>{uiText("新建笔记","New note")}</button>}
+          {props.onImportFiles && contextTarget !== null && <button type="button" role="menuitem" onClick={() => { props.onImportFiles?.(contextTarget); setContextTarget(null); setContextPosition(null) }}>{uiText("导入文件","Import files")}</button>}
+          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setRenaming(folder.id); setName(folder.name) }; setContextTarget(null); setContextPosition(null) }}>{uiText("重命名文件夹","Rename folder")}</button>}
+          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { const folder = props.folders.find((candidate) => candidate.id === contextTarget); if (folder) { setMoving(folder.id); setMoveTarget(folder.parentId) }; setContextTarget(null); setContextPosition(null) }}>{uiText("移动文件夹","Move folder")}</button>}
+          {contextTarget !== null && <button type="button" role="menuitem" onClick={() => { setDeleteTarget(contextTarget); setContextTarget(null); setContextPosition(null) }}>{uiText("删除文件夹","Delete folder")}</button>}
         </div>
       )}
       {moving && (
         <form className="folder-move" onSubmit={(event) => void finishMove(event)}>
           <select
             autoFocus
-            aria-label="移动到"
+            aria-label={uiText("移动到","Move to")}
             value={moveTarget ?? ''}
             onChange={(event) => setMoveTarget((event.target.value || null) as FolderId | null)}
           >
-            <option value="">顶层</option>
+            <option value="">{uiText("顶层","Top level")}</option>
             {props.folders
               .filter((folder) => !excludedMoveTargets.has(folder.id))
               .map((folder) => (
@@ -567,13 +568,13 @@ export function FolderTree(props: FolderTreeProps) {
                 </option>
               ))}
           </select>
-          <button type="submit">确认移动</button>
-          <button type="button" onClick={() => setMoving(null)}>取消</button>
+          <button type="submit">{uiText("确认移动","Confirm move")}</button>
+          <button type="button" onClick={() => setMoving(null)}>{uiText("取消","Cancel")}</button>
         </form>
       )}
-      {props.state === 'loading' && <p className="library-status">正在加载文件夹…</p>}
-      <ErrorNotification error={props.state === 'error' ? '无法加载文件夹。' : null} />
-      <ul role="tree" aria-label="笔记文件夹" className="folder-tree__list" data-folder-parent-id="root" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, null)}>
+      {props.state === 'loading' && <p className="library-status">{uiText("正在加载文件夹…","Loading folders…")}</p>}
+      <ErrorNotification error={props.state === 'error' ? uiText("无法加载文件夹。","Could not load folders.") : null} />
+      <ul role="tree" aria-label={uiText("笔记文件夹","Note folders")} className="folder-tree__list" data-folder-parent-id="root" onContextMenu={(event) => { if (event.target === event.currentTarget) openContextMenu(event, null) }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropFolder(event, null)}>
         {props.showUnfiled !== false && <li role="none">
           <button
             ref={(node) => registerItem('root', node)}
@@ -589,7 +590,7 @@ export function FolderTree(props: FolderTreeProps) {
             onDrop={(event) => void dropFolder(event, null)}
           >
             <Icon name="folder" size={22} />
-            <span>未归档笔记</span>
+            <span>{uiText("未归档笔记","Unfiled notes")}</span>
           </button>
         </li>}
         {props.onTemporaryInbox && (
@@ -606,7 +607,7 @@ export function FolderTree(props: FolderTreeProps) {
               onClick={props.onTemporaryInbox}
             >
               <Icon name="inbox" size={22} />
-              <span>临时便笺</span>
+              <span>{uiText("临时便笺","Sticky notes")}</span>
             </button>
           </li>
         )}
@@ -624,29 +625,29 @@ export function FolderTree(props: FolderTreeProps) {
               onClick={props.onTrash}
             >
               <Icon name="trash" size={22} />
-              <span>回收站</span>
+              <span>{uiText("回收站","Trash")}</span>
             </button>
           </li>
         )}
-        {props.folders.some((folder) => folder.parentId === null) && <li role="separator" className="folder-tree__separator" aria-label="系统入口与文件夹分隔线" />}
+        {props.folders.some((folder) => folder.parentId === null) && <li role="separator" className="folder-tree__separator" aria-label={uiText("系统入口与文件夹分隔线","System shortcuts and folders divider")} />}
         {props.searching ? <li role="none">{props.searchResultsSlot}</li> : renderBranch(null)}
         {!props.searching && <li role="none" hidden>{props.searchResultsSlot}</li>}
         {!props.searching && rootContents !== undefined && <li role="none" className="folder-tree__root-notes">{rootContents}</li>}
         {creating && createParent === null && renderCreateRow()}
       </ul>
-      <ErrorNotification error={error ? "文件夹操作未完成。" : null} />
+      <ErrorNotification error={error ? uiText("文件夹操作未完成。","The folder operation did not finish.") : null} />
       {deleteTarget !== null && (
         <div className="folder-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null) }}>
           <section className="folder-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="folder-delete-heading">
             <div className="folder-delete-dialog__icon" aria-hidden="true"><Icon name="trash" size={20} /></div>
             <div className="folder-delete-dialog__body">
-              <span className="folder-delete-dialog__eyebrow">删除文件夹</span>
-              <h2 id="folder-delete-heading">确定删除“{props.folders.find((folder) => folder.id === deleteTarget)?.name ?? '此文件夹'}”？</h2>
-              <p>文件夹及其全部笔记和子文件夹会移入回收站，之后仍可恢复。</p>
+              <span className="folder-delete-dialog__eyebrow">{uiText("删除文件夹","Delete folder")}</span>
+              <h2 id="folder-delete-heading">{uiText("确定删除“","Delete “")}{props.folders.find((folder) => folder.id === deleteTarget)?.name ?? uiText("此文件夹","this folder")}”？</h2>
+              <p>{uiText("文件夹及其全部笔记和子文件夹会移入回收站，之后仍可恢复。","The folder, its notes and subfolders will move to Trash and can be restored.")}</p>
             </div>
             <div className="folder-delete-dialog__actions">
-              <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button type="button" className="folder-delete-dialog__confirm" onClick={() => void runDelete()}>删除文件夹</button>
+              <button type="button" onClick={() => setDeleteTarget(null)}>{uiText("取消","Cancel")}</button>
+              <button type="button" className="folder-delete-dialog__confirm" onClick={() => void runDelete()}>{uiText("删除文件夹","Delete folder")}</button>
             </div>
           </section>
         </div>

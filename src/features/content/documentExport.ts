@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,HeadingLevel,WidthType,AlignmentType,ExternalHyperlink,ImageRun,type ParagraphChild} from 'docx'
 import type {RichNode} from '../../domain/content'
 import type {NoteDocument} from '../../domain/model'
@@ -63,7 +64,7 @@ export async function buildDocumentDocx(note:NoteDocument,reader?:ImageReadPort)
    }
    return [new Paragraph({children:[new TextRun({text:attr(node,'source'),font:'Consolas'})]})]
   }
-  if(node.type==='attachment')return [new Paragraph('附件：'+(attr(node,'label')||attr(node,'fileName')))]
+  if(node.type==='attachment')return [new Paragraph(uiText("附件：","Attachment: ")+(attr(node,'label')||attr(node,'fileName')))]
   if(node.type==='horizontalRule')return [new Paragraph({border:{bottom:{style:'single',size:4,color:'B0B8B2'}}})]
   const children:Array<Paragraph|Table>=[]
   for(const child of node.content??[]){
@@ -73,6 +74,6 @@ export async function buildDocumentDocx(note:NoteDocument,reader?:ImageReadPort)
   return children
  }
  const content=await blocks(root)
- const documentFile=new Document({title:note.title,creator:'Cay (微屿)',styles:{default:{document:{run:{font:'Microsoft YaHei',size:22}}}},numbering:{config:[{reference:'cay-list',levels:Array.from({length:9},(_,level)=>({level,format:'decimal',text:`%${level+1}.`,alignment:AlignmentType.LEFT,style:{paragraph:{indent:{left:720*(level+1),hanging:260}}}}))}]},sections:[{children:[new Paragraph({text:note.title,heading:HeadingLevel.TITLE}),...content]}]})
+ const documentFile=new Document({title:note.title,creator:uiText("Cay (微屿)","Cay"),styles:{default:{document:{run:{font:'Microsoft YaHei',size:22}}}},numbering:{config:[{reference:'cay-list',levels:Array.from({length:9},(_,level)=>({level,format:'decimal',text:`%${level+1}.`,alignment:AlignmentType.LEFT,style:{paragraph:{indent:{left:720*(level+1),hanging:260}}}}))}]},sections:[{children:[new Paragraph({text:note.title,heading:HeadingLevel.TITLE}),...content]}]})
  return Packer.toArrayBuffer(documentFile).then(buffer=>new Uint8Array(buffer))
 }

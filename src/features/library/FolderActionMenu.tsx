@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Icon } from '../../shared/Icon'
 
@@ -83,10 +84,10 @@ export function FolderActionMenu({ enabled, starred = false, onRename, onMove, o
   }
 
   const actions = [
-    ...(onToggleStar === undefined ? [] : [{ label: starred ? '取消星标' : '添加星标', run: onToggleStar, restoreFocus: true }]),
-    { label: '重命名文件夹', run: onRename, restoreFocus: false },
-    { label: '移动文件夹', run: onMove, restoreFocus: false },
-    { label: '删除文件夹', run: onDelete, danger: true, restoreFocus: true },
+    ...(onToggleStar === undefined ? [] : [{ label: starred ? uiText("取消星标","Remove star") : uiText("添加星标","Add star"), run: onToggleStar, restoreFocus: true }]),
+    { label: uiText("重命名文件夹","Rename folder"), run: onRename, restoreFocus: false },
+    { label: uiText("移动文件夹","Move folder"), run: onMove, restoreFocus: false },
+    { label: uiText("删除文件夹","Delete folder"), run: onDelete, danger: true, restoreFocus: true },
   ]
 
   return (
@@ -101,7 +102,7 @@ export function FolderActionMenu({ enabled, starred = false, onRename, onMove, o
         ref={triggerRef}
         type="button"
         className="icon-button"
-        aria-label="文件夹更多操作"
+        aria-label={uiText("文件夹更多操作","More folder actions")}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={!enabled}
@@ -119,7 +120,7 @@ export function FolderActionMenu({ enabled, starred = false, onRename, onMove, o
         <Icon name="more" size={18} />
       </button>
       {open && (
-        <div role="menu" aria-label="文件夹操作" className="folder-action-menu__popover">
+        <div role="menu" aria-label={uiText("文件夹操作","Folder actions")} className="folder-action-menu__popover">
           {actions.map((action, index) => (
             <button
               key={action.label}

@@ -574,6 +574,10 @@ impl SafeDirectory {
     }
 
     pub fn entry_names(&self) -> Result<Vec<String>, CommandError> {
+        self.entry_names_bounded(usize::MAX)
+    }
+
+    pub(crate) fn entry_names_bounded(&self, limit: usize) -> Result<Vec<String>, CommandError> {
         let mut names = Vec::new();
         let mut directory = Dir::read_from(&self.fd).map_err(|source| {
             CommandError::io(format!("could not enumerate safe directory: {source}"))
@@ -592,6 +596,9 @@ impl SafeDirectory {
             }
             validate_child_name(&name)?;
             names.push(name);
+            if names.len() >= limit {
+                break;
+            }
         }
         names.sort();
         Ok(names)

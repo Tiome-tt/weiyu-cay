@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { shortcutLabel } from './shortcuts'
 import { Icon } from '../../shared/Icon'
 import { createPortal } from 'react-dom'
@@ -67,7 +68,7 @@ export function SearchBox({ search, onSelect, onSubmit, resultsContainer, onQuer
       if (generation.current !== request) return
       if (query.kind === 'invalid') {
         setState('invalid')
-        setGuidance(query.reason === 'empty-tag' ? '请在 # 后输入标签关键词' : '搜索内容无效或过长')
+        setGuidance(query.reason === 'empty-tag' ? uiText('请在 # 后输入标签关键词','Enter a tag after #') : uiText('搜索内容无效或过长','Search is invalid or too long'))
         return
       }
       if (query.value.length === 0) {
@@ -148,12 +149,12 @@ export function SearchBox({ search, onSelect, onSubmit, resultsContainer, onQuer
         ref={inputRef}
         type="search"
         role="searchbox"
-        aria-label="搜索笔记"
+        aria-label={uiText('搜索笔记','Search notes')}
         aria-autocomplete="list"
         aria-controls={resultsId}
         aria-expanded={open}
         aria-activedescendant={activeIndex >= 0 ? `${resultsId}-${activeIndex}` : undefined}
-        placeholder="搜索笔记"
+        placeholder={uiText('搜索笔记','Search notes')}
         value={input}
         onChange={(event) => {
           generation.current += 1
@@ -169,9 +170,9 @@ export function SearchBox({ search, onSelect, onSubmit, resultsContainer, onQuer
       {results.length === 0 && (
         <div className="search-results search-results--message" id={resultsId}>
           <p role={state === 'error' ? 'alert' : 'status'}>
-            {guidance || (state === 'loading' ? '正在搜索…' : state === 'empty' ? '没有匹配的笔记' : '搜索失败，请重试')}
+            {guidance || (state === 'loading' ? uiText('正在搜索…','Searching…') : state === 'empty' ? uiText('没有匹配的笔记','No matching notes') : uiText('搜索失败，请重试','Search failed. Try again.'))}
           </p>
-          {state === 'error' && <button type="button" onClick={retry}>重新搜索</button>}
+          {state === 'error' && <button type="button" onClick={retry}>{uiText('重新搜索','Search again')}</button>}
         </div>
       )}
       {results.length > 0 && <SearchResults query={input} id={resultsId} results={results} activeIndex={activeIndex} onActiveIndexChange={setActiveIndex} onSelect={select} />}

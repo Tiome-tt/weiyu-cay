@@ -1,5 +1,6 @@
-import { ErrorNotification } from '../../shared/notifications'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {text as uiText} from '../../shared/i18n'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ExportPort, ExportReport } from '../../domain/ports'
 
 interface ExportLibraryProps {
@@ -53,7 +54,7 @@ export function useExportLibraryController(
       const destination = await chooseDestination()
       if (!mounted.current || request.current !== current) return
       if (destination === null) {
-        setStatus('已取消导出，未修改任何文件。')
+        setStatus(uiText("已取消导出，未修改任何文件。","Export cancelled. No files were changed."))
         return
       }
       const next = await exporter.exportLibrary(destination)
@@ -63,14 +64,14 @@ export function useExportLibraryController(
         setStatus(reportSummary(next))
       } else {
         const retained = next.incompleteRoot === null
-          ? '没有可保留的输出位置。'
-          : `不完整的文件可能仍保留在 ${next.incompleteRoot}。`
-        setError(`导出未发布。${retained}${next.globalFailure ?? '操作未完成。'}`)
+          ? uiText("没有可保留的输出位置。","No output location was retained.")
+          : uiText(`不完整的文件可能仍保留在 ${next.incompleteRoot}。`,`Incomplete files may remain in ${next.incompleteRoot}.`)
+        setError(uiText(`导出未完成。${retained}请检查保存位置后重试。`,`Export did not finish. ${retained}Check the save location and try again.`))
       }
     } catch {
       if (mounted.current && request.current === current) {
         setError(
-          '导出命令失败。重试前请检查所选父文件夹中是否存在不完整的导出文件。',
+          uiText("导出失败。重试前请检查所选文件夹中是否存在不完整的导出文件。","Export failed. Check the selected folder for incomplete exported files before retrying."),
         )
       }
     } finally {
@@ -85,31 +86,30 @@ export function useExportLibraryController(
 export function ExportLibrary({ exporter, chooseDestination, controller }: ExportLibraryProps) {
   const localController = useExportLibraryController(exporter, chooseDestination)
   const { busy, report, status, error, startExport } = controller ?? localController
+  const notice = useMemo(() => status ? { message: status } : null, [status, report])
 
   return (
     <div className="settings-export">
-      <p>导出全部正式笔记、附件和恢复清单到所选文件夹，原笔记保持完整。</p>
+      <p>{uiText("导出全部正式笔记、附件和恢复清单到所选文件夹，原笔记保持完整。","Export all notes, attachments and a recovery manifest to the selected folder. Original notes are kept.")}</p>
       <button type="button" disabled={busy} onClick={() => void startExport()}>
-        {busy ? '正在导出资料库…' : '导出完整资料库'}
+        {busy ? uiText("正在导出资料库…","Exporting library…") : uiText("导出完整资料库","Export entire library")}
       </button>
-      {status && <p role="status">{status}</p>}
+      <OperationNotification notice={notice} />
       <ErrorNotification error={error} />
       {report !== null && report.renamedPaths.length > 0 && (
-        <p>为保证可移植性，已重命名 {report.renamedPaths.length} 个路径。</p>
+        <p>{uiText("为保证可移植性，已重命名 ","For portability, renamed ")}{report.renamedPaths.length}{uiText(" 个路径。"," paths.")}</p>
       )}
       {report !== null && report.failed.length > 0 && (
-        <ul aria-label="无法导出的笔记">
-          {report.failed.map((failure) => <li key={failure.noteId}><code>{failure.noteId}</code>: {failure.message}</li>)}
-        </ul>
+        <p>{uiText("有 ","There are ")}{report.failed.length}{uiText(" 篇笔记未能导出，请重试完整导出。"," notes that could not be exported. Retry the full export.")}</p>
       )}
     </div>
   )
 }
 
 function reportSummary(report: ExportReport) {
-  const completed = `已导出 ${report.notesExported} 篇笔记和 ${report.assetsExported} 个附件`
+  const completed = uiText(`已导出 ${report.notesExported} 篇笔记和 ${report.assetsExported} 个附件`,`Exported ${report.notesExported} notes and ${report.assetsExported} attachments`)
   const counts = report.failed.length === 0
     ? `${completed}。`
-    : `${completed}，但有 ${report.failed.length} 项失败。`
-  return report.outputRoot === null ? counts : `${counts} 输出位置：${report.outputRoot.replace(/^\\\\\?\\/u, '')}。`
+    : uiText(`${completed}，但有 ${report.failed.length} 项失败。`,`${completed}, but ${report.failed.length} items failed.`)
+  return report.outputRoot === null ? counts : uiText(`${counts} 输出位置：${report.outputRoot.replace(/^\\\\\?\\/u, '')}。`,`${counts} Output location: ${report.outputRoot.replace(/^\\\\\?\\/u, '')}.`)
 }

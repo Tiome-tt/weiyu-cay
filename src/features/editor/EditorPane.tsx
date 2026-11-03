@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { selectedExportPort } from '../../domain/exportSelection'
 import type { ExportSelection } from '../../domain/ports'
 import { ErrorNotification } from '../../shared/notifications'
@@ -28,6 +29,7 @@ import { AiSummaryWidget } from '../ai/AiSummaryWidget'
 import { waitForImageAssets } from '../content/imageAssetLoader'
 
 export interface EditorPaneProps {
+  preferences?: import('../../domain/ports').WindowPreferencePort
   onConvertFileToDocument?(source: NoteDocument, bytes: Uint8Array): Promise<void>
   files?: import('../../domain/ports').FilePort
   document: NoteDocument
@@ -61,9 +63,9 @@ export interface EditorPaneHandle {
 }
 
 const modes: ReadonlyArray<{ mode: EditorMode; label: string; icon: IconName }> = [
-  { mode: 'source', label: '文档编辑', icon: 'source' },
-  { mode: 'split', label: '分栏校对', icon: 'split' },
-  { mode: 'preview', label: '阅读视图', icon: 'preview' },
+  { mode: 'source', label: uiText("文档编辑","Edit"), icon: 'source' },
+  { mode: 'split', label: uiText("分栏校对","Split view"), icon: 'split' },
+  { mode: 'preview', label: uiText("阅读视图","Read"), icon: 'preview' },
 ]
 
 const minimumSplitPercent = 25
@@ -197,7 +199,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
         if (!current) return
         setLinkTargets(targets)
       },
-      () => { if (current) setLinkActionError('无法加载可引用笔记。') },
+      () => { if (current) setLinkActionError(uiText("无法加载可引用笔记。","Could not load notes to reference.")) },
     )
     return () => { current = false }
   }, [document.id, links, linkDialogOpen])
@@ -243,7 +245,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       if (!targetFiles?.savePdfExport) throw new Error('Direct PDF export is unavailable')
       return await exportMarkdownDocumentToPdf(current, assetReader, targetFiles)
     } catch {
-      setMetadataError('操作未完成，原笔记已保留。请检查保存状态后重试。')
+      setMetadataError(uiText("操作未完成，原笔记已保留。请检查保存状态后重试。","The operation did not finish. The original note was kept. Check the save status and retry."))
       return false
     } finally {
       source?.endEditBarrier()
@@ -285,11 +287,11 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       setTitleDraft(result.document.title)
       setMetadataNotice(
         result.linkRepair.failure !== null || result.linkRepair.failedSourceIds.length > 0
-          ? `标题已更新；${result.linkRepair.failedSourceIds.length} 个引用标签将在重试时修复。`
-          : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`,
+          ? uiText("标题已保存，但部分笔记中的引用名称未更新，请重试。","The title was saved, but some reference labels were not updated. Try again.")
+          : null,
       )
     } catch {
-      setMetadataError('无法重命名笔记，请解决保存错误后重试。')
+      setMetadataError(uiText("无法重命名笔记，请解决保存错误后重试。","Could not rename the note. Resolve the save error and retry."))
     } finally {
       setMetadataBusy(false)
     }
@@ -302,7 +304,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
 
   const insertInternalLinkFromDialog = (target: NoteSummary) => {
     const applied = sourceRef.current?.insertInternalLink(target) === true
-    setLinkActionError(applied ? null : '无法在当前位置引用笔记。')
+    setLinkActionError(applied ? null : uiText("无法在当前位置引用笔记。","A note reference cannot be inserted here."))
     return applied
   }
   const syncSourceToPreview = useCallback((scrollTop: number) => {
@@ -353,8 +355,8 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
 
   return (
     <div className="editor-pane">
-      <header className="editor-toolbar" role="toolbar" aria-label="编辑器视图">
-        <nav className="editor-breadcrumbs" aria-label="当前位置">
+      <header className="editor-toolbar" role="toolbar" aria-label={uiText("编辑器视图","Editor view")}>
+        <nav className="editor-breadcrumbs" aria-label={uiText("当前位置","Current location")}>
           {breadcrumbs.map((label, index) => (
             <span key={`${label}-${index}`}>
               {index > 0 && <span className="editor-breadcrumbs__separator" aria-hidden="true">/</span>}
@@ -393,11 +395,11 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
         <div className="editor-document-heading">
           {onRenameNote ? (
             <form onSubmit={(event) => { event.preventDefault(); void renameNote() }}>
-              <label className="sr-only" htmlFor={`note-title-${document.id}`}>笔记标题</label>
+              <label className="sr-only" htmlFor={`note-title-${document.id}`}>{uiText("笔记标题","Note title")}</label>
               <h1>
                 <input
                   id={`note-title-${document.id}`}
-                  aria-label="笔记标题"
+                  aria-label={uiText("笔记标题","Note title")}
                   value={titleDraft}
                   disabled={metadataBusy}
                   onChange={(event) => setTitleDraft(event.target.value)}
@@ -409,7 +411,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
           )}
           <div className="editor-document-heading__meta">
             {search ? <TagsEditor tags={document.tags} onChange={updateTags} /> : document.tags.length > 0 && (
-              <ul className="editor-document-heading__tags" aria-label="笔记标签">
+              <ul className="editor-document-heading__tags" aria-label={uiText("笔记标签","Note tags")}>
                 {document.tags.map((tag) => <li key={tag}>#{tag}</li>)}
               </ul>
             )}
@@ -496,6 +498,7 @@ const MarkdownEditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(functio
       )}
       <EditorStatusBar ref={statisticsRef} text={autosave.markdown} selectedText={selectedText} updatedAt={autosave.updatedAt} state={autosave.state} related={links && onNavigateNote ? (
         <Backlinks
+          noteTitle={displayTitle}
           noteId={document.id}
           links={links}
           onNavigate={onNavigateNote}
@@ -513,7 +516,7 @@ function SaveStatus({ state }: { state: SaveState }) {
       ? state
       : {
           status: state.status === 'saved' ? 'success' : 'status',
-          message: { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status],
+          message: { dirty: uiText("待保存","Unsaved"), saving: uiText("保存中…","Saving…"), saved: uiText("已保存","Saved") }[state.status],
         }
   return <StatusNotice state={notice} className="editor-metadata-status editor-save-notice editor-save--error" />
 }
@@ -540,14 +543,14 @@ function documentBreadcrumb(document: NoteDocument, folders?: Folder[]) {
     labels.unshift(folder.name)
     folderId = folder.parentId
   }
-  if (labels.length === 0) labels.push('未归档')
+  if (labels.length === 0) labels.push(uiText("未归档","Unfiled"))
   labels.push(localizedDocumentTitle(document))
   return labels
 }
 
 function localizedDocumentTitle(document: NoteDocument) {
   return document.kind === 'temporary' && document.title === 'Temporary capture'
-    ? '临时便笺'
+    ? uiText("临时便笺","Sticky notes")
     : document.title
 }
 

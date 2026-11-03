@@ -9,6 +9,21 @@ const folderB = '019c0000-0000-7000-8000-000000000122' as FolderId
 
 afterEach(cleanup)
 
+it('publishes an unreferenced rename to cached lists without rereading the whole folder',async()=>{
+  const original=note('body')
+  const renamed={...original,title:'New title',revision:original.revision+1}
+  const listNotes=vi.fn().mockResolvedValue([{...original,excerpt:'body'}])
+  const notes=fakeNotePort({listNotes,renameNote:vi.fn().mockResolvedValue({document:renamed,linkRepair:{updated:0,failedSourceIds:[],failure:null}})})
+  const folders=fakeFolderPort()
+  const hook=renderHook(()=>useLibrary(notes,folders))
+  await waitFor(()=>expect(hook.result.current.noteListState).toBe('ready'))
+  listNotes.mockClear()
+  await act(async()=>{await hook.result.current.renameNote(original.id,'New title')})
+  expect(hook.result.current.notes[0].title).toBe('New title')
+  expect(Object.values(hook.result.current.notesByFolder).flat()[0].title).toBe('New title')
+  expect(listNotes).not.toHaveBeenCalled()
+})
+
 describe('useLibrary createNote', () => {
   it('uses an explicit target folder instead of the active folder', async () => {
     const createNote = vi.fn().mockResolvedValue({ ...note(''), folderId: folderB })

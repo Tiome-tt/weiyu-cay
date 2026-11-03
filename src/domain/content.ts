@@ -1,3 +1,4 @@
+import {text as uiText} from '../shared/i18n'
 export interface RichMark { type: string; attrs?: Record<string, unknown> }
 export interface RichNode {
   type: string
@@ -71,7 +72,7 @@ export function contentSummaryMarkdown(value: { content?: NoteContent; markdown?
     if (node.type === 'hardBreak') return '\n'
     if (node.type === 'image') {
       const src = typeof node.attrs?.src === 'string' ? node.attrs.src.trim() : ''
-      const alt = typeof node.attrs?.alt === 'string' ? node.attrs.alt.trim() : '图表'
+      const alt = typeof node.attrs?.alt === 'string' ? node.attrs.alt.trim() : uiText("图表","Chart")
       return src ? '![' + alt + '](' + src + ')' : ''
     }
     if (node.type === 'math' || node.type === 'mathBlock') {

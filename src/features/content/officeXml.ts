@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 export interface OfficeXmlPart { name: string; text: string }
 export interface OfficeSection { title: string; rows: string[][]; kind: 'text' | 'table' | 'slide'; truncated?: boolean; images?:string[] }
 function xml(source: string): Document {
@@ -44,7 +45,7 @@ export function parseOfficePreview(extension: string, parts: OfficeXmlPart[]): O
     const data=get(target.replace('../','ppt/'))
     return data&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(data)?[data]:[]
    })
-   return {title:`第 ${index+1} 页`,kind:'slide' as const,rows:descendants(slide,'p').map(node=>[bodyText(node)]),images}
+   return {title:uiText(`第 ${index+1} 页`,`Page ${index+1}`),kind:'slide' as const,rows:descendants(slide,'p').map(node=>[bodyText(node)]),images}
   })
  }
  if(extension!=='xlsx')return []
@@ -75,6 +76,6 @@ export function parseOfficePreview(extension: string, parts: OfficeXmlPart[]): O
    }
   }
   const columns=Math.max(0,...Array.from(rows,row=>row?.length??0))
-  return {title:title||`工作表 ${index+1}`,kind:'table' as const,truncated,rows:Array.from({length:rows.length},(_,r)=>Array.from({length:columns},(_,c)=>rows[r]?.[c]??''))}
+  return {title:title||uiText(`工作表 ${index+1}`,`Worksheet ${index+1}`),kind:'table' as const,truncated,rows:Array.from({length:rows.length},(_,r)=>Array.from({length:columns},(_,c)=>rows[r]?.[c]??''))}
  })
 }

@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useState } from 'react'
 import { dailyLyricForDate, loadExpandedDailyLyrics, localDateKey } from './dailyLyrics'
 
@@ -26,10 +27,10 @@ export function DailyLyricDisplay({ enabled }: { enabled: boolean }) {
   }, [])
 
   if (!enabled) return null
-  if (!libraryLoaded) return <div className="daily-lyric" data-testid="daily-lyric" role="note" aria-label="每日歌词" aria-busy="true" />
+  if (!libraryLoaded) return <div className="daily-lyric" data-testid="daily-lyric" role="note" aria-label={uiText("每日歌词","Daily verse")} aria-busy="true" />
   const lyric = dailyLyricForDate(dateKey)
   return (
-    <div className="daily-lyric" data-testid="daily-lyric" role="note" aria-label="每日歌词" title={`“${lyric.text}” —— ${lyric.artist}《${lyric.title}》`}>
+    <div className="daily-lyric" data-testid="daily-lyric" role="note" aria-label={uiText("每日歌词","Daily verse")} title={`“${lyric.text}” —— ${lyric.artist}《${lyric.title}》`}>
       <span className="daily-lyric__text">“{lyric.text}”</span>
       <cite>—— {lyric.artist}《{lyric.title}》</cite>
     </div>

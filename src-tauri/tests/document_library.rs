@@ -239,8 +239,12 @@ fn managed_import_preserves_sources_decodes_bom_and_reports_partial_failure() {
         },
     )
     .unwrap();
-    assert_eq!(result.imported.len(), 3);
-    assert_eq!(result.failed.len(), 3);
+    assert_eq!(result.imported.len(), 6);
+    assert_eq!(result.imported_folders.len(), 1);
+    assert!(result.imported[3..]
+        .iter()
+        .all(|note| note.folder_id == Some(result.imported_folders[0].id)));
+    assert_eq!(result.failed.len(), 2);
     assert_eq!(std::fs::read(&binary).unwrap(), body);
     assert_eq!(
         read_file(&paths, result.imported[0].id).unwrap().bytes,

@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 /** Build an inert snapshot without editing controls or network images. */
 export function printableClone(source: HTMLElement): HTMLElement {
   const clone = source.cloneNode(true) as HTMLElement
@@ -30,7 +31,7 @@ export function printableClone(source: HTMLElement): HTMLElement {
 /** Opens the system print dialog, where the user can choose Save as PDF. */
 export async function printDocument(source: HTMLElement, title: string): Promise<void> {
   const frame = document.createElement('iframe')
-  frame.title = '打印文档'
+  frame.title = uiText("打印文档","Print document")
   frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;top:0;border:0'
   document.body.append(frame)
   const target = frame.contentDocument

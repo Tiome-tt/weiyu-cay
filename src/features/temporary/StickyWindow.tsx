@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { ErrorNotification } from '../../shared/notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteDocument } from '../../domain/model'
@@ -87,7 +88,7 @@ export function StickyWindow({
       }
       await windows.hide(note.id)
     } catch {
-      setWindowError('便笺无法隐藏，请重试。')
+      setWindowError(uiText("便笺无法隐藏，请重试。","Could not hide the sticky note. Try again."))
     } finally {
       sourceRef.current?.endEditBarrier()
     }
@@ -118,7 +119,7 @@ export function StickyWindow({
       )
       setWindowState(authoritative)
     } catch {
-      setWindowError('无法更新置顶状态。')
+      setWindowError(uiText("无法更新置顶状态。","Could not change always-on-top status."))
     }
   }
 
@@ -129,27 +130,27 @@ export function StickyWindow({
           type="button"
           data-testid="sticky-drag-region"
           className="sticky-window__drag"
-          aria-label="拖动便笺"
+          aria-label={uiText("拖动便笺","Drag sticky note")}
           onPointerDown={() => void windows.startDragging()}
         >
           <Icon name="note" size={15} />
-          <span>临时便笺</span>
+          <span>{uiText("临时便笺","Sticky notes")}</span>
         </button>
         <div className="sticky-window__actions">
           <button
             type="button"
-            aria-label="钉在桌面上"
+            aria-label={uiText("钉在桌面上","Keep on top")}
             aria-pressed={windowState.alwaysOnTop}
             onClick={() => void togglePin()}
           >
             <span aria-hidden="true">⌖</span>
           </button>
-          <button type="button" aria-label="关闭便笺" onClick={() => void hideAfterFlush()}>
+          <button type="button" aria-label={uiText("关闭便笺","Close sticky note")} onClick={() => void hideAfterFlush()}>
             <Icon name="close" size={15} />
           </button>
         </div>
       </header>
-      <section className="sticky-window__editor" aria-label="便笺内容">
+      <section className="sticky-window__editor" aria-label={uiText("便笺内容","Sticky-note content")}>
         <MarkdownSource
           ref={sourceRef}
           markdown={autosave.markdown}
@@ -181,12 +182,12 @@ export function shouldHandleTemporaryClose(
 
 function StickySaveStatus({ state }: { state: SaveState }) {
   const notice: StatusNoticeState = state.status === 'idle'
-    ? { status: 'status', message: '已就绪' }
+    ? { status: 'status', message: uiText("已就绪","Ready") }
     : state.status === 'error'
       ? state
       : {
           status: state.status === 'saved' ? 'success' : 'status',
-          message: { dirty: '待保存', saving: '保存中…', saved: '已保存' }[state.status],
+          message: { dirty: uiText("待保存","Unsaved"), saving: uiText("保存中…","Saving…"), saved: uiText("已保存","Saved") }[state.status],
         }
   return <StatusNotice state={notice} className={state.status === 'error' ? 'sticky-window__error' : undefined} />
 }

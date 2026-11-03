@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import {forwardRef,useEffect,useImperativeHandle,useRef} from 'react'
 import {Compartment,EditorState} from '@codemirror/state'
 import {EditorView,keymap} from '@codemirror/view'
@@ -13,7 +14,7 @@ export const PlainTextEditor=forwardRef<PlainTextEditorHandle,{value:string;onCh
  useEffect(()=>{
    const editor=new EditorView({parent:host.current!,state:EditorState.create({doc:initial.current,extensions:[
      history(),keymap.of([...defaultKeymap,...historyKeymap]),EditorView.lineWrapping,
-     EditorView.contentAttributes.of({'aria-label':'纯文本正文',role:'textbox','aria-multiline':'true'}),
+     EditorView.contentAttributes.of({'aria-label':uiText("纯文本正文","Plain text content"),role:'textbox','aria-multiline':'true'}),
      readonly.current.of([EditorState.readOnly.of(!editable),EditorView.editable.of(editable)]),
      EditorView.updateListener.of(update=>{if(update.docChanged)notify.current(update.state.doc.toString());if(update.docChanged||update.selectionSet)selection.current?.(update.state.selection.ranges.map(range=>update.state.doc.sliceString(range.from,range.to)).join("\n"))}),
      EditorView.theme({'&':{height:'100%',fontFamily:'var(--body-font)',fontSize:'var(--note-font-size)',backgroundColor:'var(--color-surface)',color:'var(--color-text)'},'.cm-content':{padding:'24px',minHeight:'100%'},'.cm-scroller':{overflow:'auto',fontFamily:'inherit'},'&.cm-focused':{outline:'none'}}),
@@ -28,7 +29,7 @@ export const PlainTextEditor=forwardRef<PlainTextEditorHandle,{value:string;onCh
    const editor=view.current
    if(!editor)return
    if(editor.composing){editor.contentDOM.blur();await new Promise<void>(resolve=>setTimeout(resolve,0))}
-   if(editor.composing)throw new Error('请先完成当前输入，再重试。')
+   if(editor.composing)throw new Error(uiText("请先完成当前输入，再重试。","Finish the current input and try again."))
    notify.current(editor.state.doc.toString())
  }}),[])
  return <div ref={host} style={{height:'100%'}}/>

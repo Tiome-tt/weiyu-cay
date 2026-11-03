@@ -1,4 +1,5 @@
-const SAFE_MESSAGE = '图片保存失败，请重试。'
+import {text as uiText} from '../../shared/i18n'
+const SAFE_MESSAGE = uiText("图片保存失败，请重试。","Could not save the image. Try again.")
 
 /** Tracks editor-owned asset writes so lifecycle barriers cannot race them. */
 export class PendingAssetWrites {

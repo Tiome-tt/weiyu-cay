@@ -1,5 +1,6 @@
+import {text as uiText} from '../../shared/i18n'
 export function tableMarkdown(rows = 3, columns = 3) {
-  return tableMarkdownFromCells(Array.from({ length: rows }, (_, row) => Array.from({ length: columns }, (_, column) => row === 0 ? `列 ${column + 1}` : `内容 ${row}-${column + 1}`)))
+  return tableMarkdownFromCells(Array.from({ length: rows }, (_, row) => Array.from({ length: columns }, (_, column) => row === 0 ? uiText(`列 ${column + 1}`,`Column ${column + 1}`) : uiText(`内容 ${row}-${column + 1}`,`Content ${row}-${column + 1}`))))
 }
 
 export type MarkdownTableAlignment = 'left' | 'center' | 'right' | null
@@ -41,8 +42,8 @@ export function tableMarkdownFromCells(
     if (header[column] !== '') continue
     if (rowSources.get(normalized[0])?.[column]?.value === '') continue
     let number = column + 1
-    while (usedNames.has(`列 ${number}`)) number += 1
-    header[column] = `列 ${number}`
+    while (usedNames.has(uiText(`列 ${number}`,`Column ${number}`))) number += 1
+    header[column] = uiText(`列 ${number}`,`Column ${number}`)
     usedNames.add(header[column])
   }
   const divider = header.map((_, column) => alignmentMarker(alignments[column] ?? null))
@@ -377,11 +378,11 @@ function escapeTableCell(value: string) {
 }
 
 export const markdownSnippets = {
-  link: '[链接文字](https://example.com)',
-  image: '![图片说明](图片地址)',
-  code: '```\n代码内容\n```',
-  quote: '> 引用内容',
-  task: '- [ ] 待办事项',
+  link: uiText("[链接文字](https://example.com)","[Link text](https://example.com)"),
+  image: uiText("![图片说明](图片地址)","![Image description](image-url)"),
+  code: uiText("```\n代码内容\n```","```\nCode goes here\n```"),
+  quote: uiText("> 引用内容","> Quote goes here"),
+  task: uiText("- [ ] 待办事项","- [ ] Task"),
   divider: '---',
 } as const
 

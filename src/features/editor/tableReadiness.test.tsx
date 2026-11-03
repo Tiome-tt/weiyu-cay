@@ -79,8 +79,8 @@ it('Excel quoted multiline TSV does not create an extra Markdown row', () => {
 it('multi-row delete removes every selected row', () => {
   const onChange = vi.fn()
   render(<MarkdownSource markdown={source + '\n| 3 | 4 |\n| 5 | 6 |'} onChange={onChange} />)
-  fireEvent.pointerDown(screen.getByRole('textbox', { name: '2 行 1 列' }), { button: 0 })
-  fireEvent.pointerEnter(screen.getByRole('textbox', { name: '3 行 2 列' }).closest('td')!)
+  fireEvent.pointerDown(screen.getByRole('textbox', { name: '2 行 1 列' }), { button: 0,clientX:0,clientY:0 })
+  fireEvent.pointerMove(screen.getByRole('textbox', { name: '3 行 2 列' }).closest('td')!, {clientX:40,clientY:40})
   fireEvent.pointerUp(document.body)
   fireEvent.click(screen.getByRole('button', { name: '删除行' }))
   const saved = onChange.mock.lastCall![0] as string
@@ -121,8 +121,8 @@ it.each(['cut', 'Delete'])('copies a rectangle as TSV, clears with %s and undoes
   const onChange = vi.fn()
   render(<MarkdownSource markdown={source + '\n| 3 | 4 |'} onChange={onChange} />)
   const input = screen.getByRole('textbox', { name: '2 行 1 列' })
-  fireEvent.pointerDown(input, { button: 0 })
-  fireEvent.pointerEnter(screen.getByRole('textbox', { name: '3 行 2 列' }).closest('td')!)
+  fireEvent.pointerDown(input, { button: 0,clientX:0,clientY:0 })
+  fireEvent.pointerMove(screen.getByRole('textbox', { name: '3 行 2 列' }).closest('td')!, {clientX:40,clientY:40})
   fireEvent.pointerUp(document.body)
   const setData = vi.fn()
   fireEvent.copy(input, { clipboardData: { setData } })
@@ -137,8 +137,8 @@ it.each(['cut', 'Delete'])('copies a rectangle as TSV, clears with %s and undoes
 it('deletes every selected column while retaining the last column', () => {
   const onChange = vi.fn()
   render(<MarkdownSource markdown={'| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |'} onChange={onChange} />)
-  fireEvent.pointerDown(screen.getByRole('textbox', { name: '2 行 1 列' }), { button: 0 })
-  fireEvent.pointerEnter(screen.getByRole('textbox', { name: '2 行 2 列' }).closest('td')!)
+  fireEvent.pointerDown(screen.getByRole('textbox', { name: '2 行 1 列' }), { button: 0,clientX:0,clientY:0 })
+  fireEvent.pointerMove(screen.getByRole('textbox', { name: '2 行 2 列' }).closest('td')!, {clientX:40,clientY:40})
   fireEvent.pointerUp(document.body)
   fireEvent.click(screen.getByRole('button', { name: '删除列' }))
   expect(parseMarkdownTable(onChange.mock.lastCall![0])!.cells).toEqual([['C'], ['3']])

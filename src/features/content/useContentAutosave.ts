@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NoteContent } from '../../domain/content'
 import type { NoteDocument } from '../../domain/model'
@@ -27,9 +28,9 @@ function stableValue(value: unknown): unknown {
 const key = (content: NoteContent | undefined) => JSON.stringify(stableValue(comparableContent(content)))
 function saveFailureMessage(error: unknown): string {
   const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
-  if (code === 'validation') return '无法保存：文档内容格式未通过校验，当前修改仍保留在编辑器中。请重试；旧表格数据可能需要重新插入。'
-  if (code === 'conflict') return '无法保存：笔记已在其他窗口中发生修改，当前修改仍保留在编辑器中。请先关闭其他编辑窗口后重试。'
-  return '无法保存，当前修改仍保留在编辑器中。请重试；若内容冲突，请先备份当前修改。'
+  if (code === 'validation') return uiText("无法保存：文档内容格式未通过校验，当前修改仍保留在编辑器中。请重试；旧表格数据可能需要重新插入。","Could not save: the document format is invalid. Your changes remain in the editor. Retry; older tables may need to be reinserted.")
+  if (code === 'conflict') return uiText("无法保存：笔记已在其他窗口中发生修改，当前修改仍保留在编辑器中。请先关闭其他编辑窗口后重试。","Could not save: another window changed this note. Your changes remain in the editor. Close other editing windows and retry.")
+  return uiText("无法保存，当前修改仍保留在编辑器中。请重试；若内容冲突，请先备份当前修改。","Could not save. Your changes remain in the editor. Retry; if there is a conflict, back up your current changes first.")
 }
 function session(document: NoteDocument): Session {
   if (!document.content) throw new Error('Typed editor requires typed content')

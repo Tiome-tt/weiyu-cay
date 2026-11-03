@@ -297,6 +297,26 @@ describe('LibraryLayout', () => {
     expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument()
   })
 
+  it('opens and lists creation tags from the saved document rather than the untagged creation snapshot', async () => {
+    const created = { ...note(''), id: noteC, title: '带标签', folderId: folderA }
+    let saved = created
+    const search = { search: vi.fn().mockResolvedValue([]), updateTags: vi.fn(async () => { saved = { ...created, tags: ['申论'], revision: 2 }; return saved.tags }) }
+    const notes = fakeNotePort({ createNote: vi.fn(async () => created), loadNote: vi.fn(async () => saved), listNotes: vi.fn(async () => saved === created ? [] : [{ ...saved, excerpt: '' }]) })
+    const layoutRef = createRef<LibraryLayoutHandle>()
+    const user = userEvent.setup()
+    render(<><button onClick={event => layoutRef.current?.createNote(event.currentTarget)}>创建入口</button><LibraryLayout ref={layoutRef} notes={notes} search={search} folders={fakeFolderPort({ listFolders: vi.fn().mockResolvedValue(folderRows) })} system={fakeSystemPort()}/></>)
+    await user.click(await screen.findByRole('treeitem', { name: '项目 A' }))
+    await user.click(screen.getByRole('button', { name: '创建入口' }))
+    const dialog = screen.getByRole('dialog', { name: '新建笔记' })
+    await user.type(within(dialog).getByRole('textbox', { name: '笔记标题' }), '带标签')
+    await user.type(within(dialog).getByRole('textbox', { name: '笔记标签' }), '申论')
+    await user.click(within(dialog).getByRole('button', { name: '创建笔记' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建笔记' })).not.toBeInTheDocument())
+    expect(search.updateTags).toHaveBeenCalledWith(noteC, ['申论'])
+    expect(screen.getByRole('button', { name: '移除标签 申论' })).toBeVisible()
+    expect(screen.getAllByText('#申论').length).toBeGreaterThanOrEqual(2)
+  })
+
   it('linearizes new-note creation behind the active editor flush barrier', async () => {
     const pendingSave = deferred<NoteDocument>()
     const created = { ...note(''), id: noteC, title: 'Draft title' }
@@ -492,6 +512,7 @@ describe('LibraryLayout', () => {
     const editorAfter = EditorView.findFromDOM(screen.getByRole('textbox', { name: 'Markdown source' }))
     expect(editorAfter).toBe(editorBefore)
     expect(screen.getByRole('button', { name: '重试链接修复' })).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('链接修复未完成')
     await user.click(screen.getByRole('button', { name: '重试链接修复' }))
     await waitFor(() => expect(renameNote).toHaveBeenCalledTimes(2))
     expect(renameNote).toHaveBeenLastCalledWith(noteA, 'New title')
@@ -537,7 +558,7 @@ describe('LibraryLayout', () => {
       'library-columns': { folder: 0.25, noteList: 0.3 },
       'library-collapsed': { folder: true, noteList: false },
       'library-outline-collapsed': {},
-    })[key]) as unknown as SystemPort['getWindowPreference']
+    } as Partial<WindowPreferenceMap>)[key]) as unknown as SystemPort['getWindowPreference']
     const system = fakeSystemPort({
       getWindowPreference,
     })
@@ -557,7 +578,7 @@ describe('LibraryLayout', () => {
       'library-columns': undefined,
       'library-collapsed': { folder: true, noteList: false },
       'library-outline-collapsed': {},
-    })[key]) as unknown as SystemPort['getWindowPreference']
+    } as Partial<WindowPreferenceMap>)[key]) as unknown as SystemPort['getWindowPreference']
     const system = fakeSystemPort({ getWindowPreference })
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={system} />)
 
@@ -574,7 +595,7 @@ describe('LibraryLayout', () => {
       'library-columns': undefined,
       'library-collapsed': { folder: false, noteList: true },
       'library-outline-collapsed': {},
-    })[key]) as unknown as SystemPort['getWindowPreference']
+    } as Partial<WindowPreferenceMap>)[key]) as unknown as SystemPort['getWindowPreference']
     render(<LibraryLayout notes={fakeNotePort()} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)
 
     const folderPane = await screen.findByTestId('folder-pane')
@@ -596,7 +617,7 @@ describe('LibraryLayout', () => {
       'library-columns': undefined,
       'library-collapsed': { folder: true, noteList: false },
       'library-outline-collapsed': {},
-    })[key]) as unknown as SystemPort['getWindowPreference']
+    } as Partial<WindowPreferenceMap>)[key]) as unknown as SystemPort['getWindowPreference']
     const user = userEvent.setup()
     render(<LibraryLayout notes={notes} folders={fakeFolderPort()} system={fakeSystemPort({ getWindowPreference })} />)
 
@@ -1726,6 +1747,7 @@ describe('LibraryLayout', () => {
     expect(importFiles).toHaveBeenCalledWith({ paths: ['C:\\incoming\\预算.final.xlsx'], folderId: folderA })
     expect(await screen.findByRole('button', { name: '预算' })).toHaveAccessibleDescription('XLSX')
     expect(screen.getByRole('status')).toHaveTextContent('已导入 1 项')
+    expect(screen.getByRole('status').closest('.notification-center')).toBeInTheDocument()
   })
 
   it('imports desktop drop paths through FilePort and releases the listener on unmount', async () => {
@@ -1751,6 +1773,26 @@ describe('LibraryLayout', () => {
 
     view.unmount()
     expect(unlisten).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes imported folders after dropping a directory into an empty library', async () => {
+    let dropped: ((paths: string[]) => void) | undefined
+    let rows: Folder[] = []
+    const importedFolder: Folder = { id: folderA, parentId: null, name: '拖入目录', sortOrder: 0 }
+    const importFiles = vi.fn(async () => {
+      rows = [importedFolder]
+      return { imported: [], importedFolders: [importedFolder], failed: [] }
+    })
+    const files: FilePort = {
+      chooseFiles: vi.fn(), importFiles, readFile: vi.fn(), saveFileAs: vi.fn(), openFile: vi.fn(),
+      onDroppedFiles: vi.fn(async handler => { dropped = handler; return () => {} }),
+    }
+    render(<LibraryLayout files={files} notes={fakeNotePort({ listNotes: vi.fn().mockResolvedValue([]) })} folders={fakeFolderPort({ listFolders: vi.fn(async () => rows) })} system={fakeSystemPort()} />)
+    await waitFor(() => expect(files.onDroppedFiles).toHaveBeenCalledOnce())
+    act(() => dropped?.(['C:\\incoming\\拖入目录']))
+    await waitFor(() => expect(importFiles).toHaveBeenCalledWith({ paths: ['C:\\incoming\\拖入目录'], folderId: null }))
+    expect(await screen.findByRole('treeitem', { name: '拖入目录' })).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('已导入 1 项')
   })
 
   it('does not offer Markdown conversion from the note context menu', async () => {

@@ -53,6 +53,11 @@ jobs:
         run: pnpm test:e2e
         env:
           PLAYWRIGHT_CHANNEL: bundled
+      - name: Test English interface
+        run: pnpm test:e2e e2e/english-ui.spec.ts
+        env:
+          VITE_CAY_LOCALE: en-US
+          PLAYWRIGHT_CHANNEL: bundled
       - name: Build web UI
         run: pnpm build
       - name: Build unsigned desktop bundle

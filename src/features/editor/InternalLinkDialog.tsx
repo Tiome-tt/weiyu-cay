@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { Folder, NoteId, NoteSummary } from '../../domain/model'
 import { InternalLinkTree } from './InternalLinkTree'
@@ -63,30 +64,30 @@ export function InternalLinkDialog({
       >
         <header>
           <div>
-            <span className="library-pane__eyebrow">笔记引用</span>
-            <h2 id="internal-link-dialog-title">引用笔记</h2>
+            <span className="library-pane__eyebrow">{uiText("笔记引用","Note reference")}</span>
+            <h2 id="internal-link-dialog-title">{uiText("引用笔记","Reference a note")}</h2>
           </div>
-          <button type="button" aria-label="关闭引用笔记弹窗" onClick={onCancel}>×</button>
+          <button type="button" aria-label={uiText("关闭引用笔记弹窗","Close note reference dialog")} onClick={onCancel}>×</button>
         </header>
         <div className="internal-link-dialog__body">
           <label>
-            <span className="sr-only">筛选笔记</span>
+            <span className="sr-only">{uiText("筛选笔记","Filter notes")}</span>
             <input
               ref={searchRef}
               type="search"
-              aria-label="筛选笔记"
-              placeholder="搜索笔记标题"
+              aria-label={uiText("筛选笔记","Filter notes")}
+              placeholder={uiText("搜索笔记标题","Search note titles")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
           {availableTargets.length > 0
             ? <InternalLinkTree folders={folders} targets={availableTargets} selectedId={selectedId} onSelect={setSelectedId} />
-            : <p className="internal-link-tree__empty">没有可插入的其他笔记。</p>}
+            : <p className="internal-link-tree__empty">{uiText("没有可插入的其他笔记。","No other notes are available to reference.")}</p>}
         </div>
         <footer>
-          <button type="button" onClick={onCancel}>取消</button>
-          <button type="button" className="internal-link-dialog__primary" disabled={selectedId === ''} onClick={insert}>插入链接</button>
+          <button type="button" onClick={onCancel}>{uiText("取消","Cancel")}</button>
+          <button type="button" className="internal-link-dialog__primary" disabled={selectedId === ''} onClick={insert}>{uiText("插入链接","Insert link")}</button>
         </footer>
       </section>
     </div>

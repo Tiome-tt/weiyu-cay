@@ -1,4 +1,5 @@
-import { ErrorNotification } from '../../shared/notifications'
+import {text as uiText} from '../../shared/i18n'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
 import { shortcutMatches } from '../search/shortcuts'
 import { useStarredNotes } from './useStarredNotes'
 import { WorkspaceSearchDialog } from '../search/WorkspaceSearchDialog'
@@ -77,7 +78,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     format: 'document',
     status: 'idle',
   })
-  const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
+  const [metadataNotice, setMetadataNoticeState] = useState<{ message: string; kind: 'status' | 'alert' } | null>(null)
+  const setMetadataNotice = useCallback((message: string | null, kind: 'status' | 'alert' = 'status') => setMetadataNoticeState(message === null ? null : { message, kind }), [])
   const [linkRepairRetry, setLinkRepairRetry] = useState<{ noteId: NoteId; title: string } | null>(null)
   const [linkRepairBusy, setLinkRepairBusy] = useState(false)
   const [deletingNoteId, setDeletingNoteId] = useState<NoteId | null>(null)
@@ -191,9 +193,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     if (pending === null || library.documentState !== 'ready' || library.document?.id !== pending.noteId) return
     setPendingEditorAction(null)
     void editorRef.current?.exportDocument(pending.kind,pending.selection).then((success) => {
-      if (!success && mountedRef.current) setMetadataNotice(pending.kind === 'word' ? '此笔记无法导出为 Word。' : '导出未完成，原笔记已保留。')
+      if (!success && mountedRef.current) setMetadataNotice(pending.kind === 'word' ? uiText("此笔记无法导出为 Word。","This note cannot be exported to Word.") : uiText("导出未完成，原笔记已保留。","Export did not finish. The original note was kept."), 'alert')
     }).catch(() => {
-      if (mountedRef.current) setMetadataNotice('导出未完成，原笔记已保留。')
+      if (mountedRef.current) setMetadataNotice(uiText("导出未完成，原笔记已保留。","Export did not finish. The original note was kept."), 'alert')
     })
   }, [library.document, library.documentState, pendingEditorAction])
 
@@ -324,13 +326,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       if (result === null) throw new Error('link repair retry was blocked')
       if (linkRepairNeedsRetry(result.linkRepair)) {
         setLinkRepairRetry({ noteId: result.document.id, title: result.document.title })
-        setMetadataNotice('标题已提交；链接修复仍未完成，可再次重试。')
+        setMetadataNotice(uiText("标题已提交；链接修复仍未完成，可再次重试。","The title was saved. Reference repair is incomplete and can be retried."), 'alert')
       } else {
         setLinkRepairRetry(null)
-        setMetadataNotice(`链接修复已完成；已刷新 ${result.linkRepair.updated} 篇引用笔记。`)
+        setMetadataNotice(uiText("链接修复已完成。","References have been repaired."))
       }
     } catch {
-      setMetadataNotice('标题保持已提交状态；链接修复重试失败，可再次重试。')
+      setMetadataNotice(uiText("标题保持已提交状态；链接修复重试失败，可再次重试。","The title remains saved. Reference repair failed and can be retried."), 'alert')
     } finally {
       linkRepairBusyRef.current = false
       setLinkRepairBusy(false)
@@ -436,7 +438,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       const saved = (await editor?.flush()) ?? true
       if (!mountedRef.current || trashMutationRef.current !== request) return
       if (!saved) {
-        setTrashError('请先解决保存错误，再删除笔记。')
+        setTrashError(uiText("请先解决保存错误，再删除笔记。","Resolve the save error before deleting the note."))
         return
       }
       const result = await trash.trash(noteIds)
@@ -447,16 +449,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         deletedIds.forEach((id) => library.clearDeletedNote(id))
         setRecentTrashOperationId(result.operationId)
         const deletedTitle = entries.find((entry) => entry.id === deletedIds[0])?.title ?? entries[0]?.title ?? ''
-        setTrashFeedback(deletedIds.length === 1 ? `“${deletedTitle}”已移入回收站。` : `${deletedIds.length} 项已移入回收站。`)
+        setTrashFeedback(deletedIds.length === 1 ? uiText(`“${deletedTitle}”已移入回收站。`,`“${deletedTitle}” was moved to Trash.`) : uiText(`${deletedIds.length} 项已移入回收站。`,`${deletedIds.length} items were moved to Trash.`))
       }
       if (result.failed.length > 0) {
         setTrashError(result.failed.map((failure) => failure.message).join('；'))
       } else if (deletedIds.length === 0) {
-        setTrashError('笔记未能移入回收站，请重试。')
+        setTrashError(uiText("笔记未能移入回收站，请重试。","Could not move the note to Trash. Try again."))
       }
       if (deletedIds.length > 0) await library.refreshNotes()
     } catch {
-      if (mountedRef.current && trashMutationRef.current === request) setTrashError('无法删除笔记，请重试。')
+      if (mountedRef.current && trashMutationRef.current === request) setTrashError(uiText("无法删除笔记，请重试。","Could not delete the note. Try again."))
     } finally {
       if (barrierHeld) editor?.endEditBarrier()
       trashBusyRef.current = null
@@ -475,12 +477,12 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     updateCreateOperation((current) => ({ ...current, status: 'pending' }))
     const operation = (async () => {
       try {
-        const result = await navigateAfterSave(() => library.createNote(title, folderId, format))
+        if (tags.length > 0 && search === undefined) throw new Error('tag service unavailable')
+        const result = await navigateAfterSave(() => library.createNote(title, folderId, format, tags.length > 0 ? async created => {
+          await search!.updateTags(created.id, tags)
+          return notes.loadNote(created.id)
+        } : undefined))
         if (result === null) throw new Error('create was blocked by an unsaved editor')
-        if (tags.length > 0 && search !== undefined) {
-          await search.updateTags(result.id, tags)
-          library.selectNote(result.id)
-        }
         if (!mountedRef.current || createOperationRequest.current !== request) return
         updateCreateOperation(() => ({ title: '', folderId, tags: '', format: 'document', status: 'idle' }))
         if (createPopoverOpenRef.current) {
@@ -499,7 +501,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
   }
 
   const startImport = (providedPaths?: string[], destination = activeFolderIdRef.current) => {
-    if (!files || importBusy || createInFlightRef.current || storageMoveLockedRef.current || destination === null) return
+    if (!files || importBusy || createInFlightRef.current || storageMoveLockedRef.current) return
     const folderId = destination
     setImportBusy(true)
     setImportNotice(null)
@@ -508,15 +510,16 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         const paths = providedPaths ?? await files.chooseFiles()
         if (paths.length === 0) return
         const result = await files.importFiles({ paths, folderId })
+        await library.refreshFolders()
         await library.refreshNotes(folderId, folderId !== activeFolderIdRef.current)
         if (mountedRef.current) {
           setImportNotice({
             kind: result.failed.length > 0 ? 'alert' : 'status',
-            message: '已导入 ' + result.imported.length + ' 项' + (result.failed.length ? '；失败：' + result.failed.map(failure => failure.name + '：' + failure.message).join('；') : '。'),
+            message: uiText('已导入 ','Imported ') + (result.imported.length + (result.importedFolders?.length ?? 0)) + uiText(' 项',' items') + (result.failed.length ? uiText("；失败：","; failed: ") + result.failed.map(failure => failure.name + '：' + failure.message).join('；') : '。'),
           })
         }
       } catch {
-        if (mountedRef.current) setImportNotice({ kind: 'alert', message: '导入失败，原文件已保留。' })
+        if (mountedRef.current) setImportNotice({ kind: 'alert', message: uiText("导入失败，原文件已保留。","Import failed. The original files were kept.") })
       } finally {
         createInFlightRef.current = null
         if (mountedRef.current) setImportBusy(false)
@@ -528,7 +531,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     const folderId = position === undefined
       ? activeFolderIdRef.current
       : (document.elementFromPoint(position.x, position.y)?.closest<HTMLElement>('[data-folder-id]')?.dataset.folderId as FolderId | undefined) ?? activeFolderIdRef.current
-    if (folderId !== null && folderId !== undefined) startImport(paths, folderId)
+    if (folderId !== undefined) startImport(paths, folderId)
   }
 
   useEffect(() => {
@@ -541,7 +544,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       if (active) unlisten = stop
       else stop()
     }).catch(() => {
-      if (active) setImportNotice({ kind: 'alert', message: '暂时无法接收拖入文件，请使用“导入文件”。' })
+      if (active) setImportNotice({ kind: 'alert', message: uiText("暂时无法接收拖入文件，请使用“导入文件”。","Drag-and-drop is unavailable. Use Import files.") })
     })
     return () => {
       active = false
@@ -567,11 +570,11 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     }).catch(() => setPendingEditorAction(null))
   }
   const convertWordFile = async (source: Awaited<ReturnType<typeof notes.loadNote>>, bytes: Uint8Array) => {
-    if (source.content?.type !== 'file' || !/\.docx?$/i.test(source.content.file.originalName)) throw new Error('仅支持 Word 文档转换。')
-    if (trash === undefined) throw new Error('回收站不可用，无法自动移除原文件。')
+    if (source.content?.type !== 'file' || !/\.docx?$/i.test(source.content.file.originalName)) throw new Error(uiText("仅支持 Word 文档转换。","Only Word documents can be converted."))
+    if (trash === undefined) throw new Error(uiText("回收站不可用，无法自动移除原文件。","Trash is unavailable. The original file cannot be removed automatically."))
     const title = source.title.replace(/\.docx?$/i, '').trim() || source.title
-    const copy = await notes.createNote({ folderId: source.folderId, title: `${title}（可编辑）`, format: 'document' })
-    if (copy.id === source.id || copy.content?.type !== 'document') throw new Error('未创建独立文档。')
+    const copy = await notes.createNote({ folderId: source.folderId, title: uiText(`${title}（可编辑）`,`${title} (editable)`), format: 'document' })
+    if (copy.id === source.id || copy.content?.type !== 'document') throw new Error(uiText("未创建独立文档。","No separate document was created."))
     try {
       const converted = bytes.byteLength === 0
         ? emptyRichDocument()
@@ -586,13 +589,13 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       })
     } catch (cause) {
       try { await trash.trash([copy.id]) } catch { /* keep the original file reachable when cleanup is unavailable */ }
-      if (cause instanceof Error && cause.message.startsWith('Word 文档中的图片')) throw cause
-      throw new Error('无法解析此 Word 文件，请确认它是完整的 .docx 文件后重试。')
+      if (cause instanceof Error && cause.message.startsWith(uiText("Word 文档中的图片","Image from Word document"))) throw cause
+      throw new Error(uiText("无法解析此 Word 文件，请确认它是完整的 .docx 文件后重试。","Could not read this Word file. Check that it is a complete .docx file and retry."))
     }
     const removed = await trash.trash([source.id])
     if (!removed.trashed.includes(source.id)) {
       try { await trash.trash([copy.id]) } catch { /* preserve the converted copy if rollback is unavailable */ }
-      throw new Error(removed.failed[0]?.message ?? '原 Word 文件未能移入回收站，转换已取消。')
+      throw new Error(removed.failed[0]?.message ?? uiText("原 Word 文件未能移入回收站，转换已取消。","The original Word file could not be moved to Trash. Conversion was cancelled."))
     }
     library.clearDeletedNote(source.id)
     await library.refreshNotes(copy.folderId, copy.folderId !== activeFolderIdRef.current)
@@ -600,7 +603,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
     if (copy.folderId !== activeFolderIdRef.current) library.selectFolder(copy.folderId)
     metadataNoticeTargetRef.current = copy.id
     library.selectNote(copy.id)
-    setMetadataNotice('Word 已转换为可编辑文档，原文件已移入回收站。')
+    setMetadataNotice(uiText("Word 已转换为可编辑文档，原文件已移入回收站。","Word was converted to an editable document. The original file is in Trash."))
   }
   const renderFolderNotes = (folderId: FolderId | null): ReactNode | undefined => {
     const folderNotes = library.notesByFolder[folderId ?? '__unfiled__']
@@ -635,7 +638,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           for (const noteId of noteIds) await library.moveNote(noteId, targetFolderId)
         })
         if (result === null) throw new Error('move was blocked by an unsaved editor')
-        setMetadataNotice(`${noteIds.length} 项已移动。`)
+        setMetadataNotice(uiText(`${noteIds.length} 项已移动。`,`${noteIds.length} items were moved.`))
       }}
       starredIds={starred.ids}
       onSetStars={starred.ready ? (notes,enabled)=>void starred.setStars(notes,enabled) : undefined}
@@ -657,14 +660,14 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       if (!mountedRef.current || trashMutationRef.current !== request) return
       await library.refreshLibrary()
       if (!mountedRef.current || trashMutationRef.current !== request) return
-      if (result.restored.length > 0) setTrashFeedback(`已撤销删除，恢复 ${result.restored.length} 项。`)
+      if (result.restored.length > 0) setTrashFeedback(uiText(`已撤销删除，恢复 ${result.restored.length} 项。`,`Deletion undone. Restored ${result.restored.length} items.`))
       if (result.failed.length > 0) {
         setTrashError(result.failed.map((failure) => failure.message).join('；'))
       } else {
         setRecentTrashOperationId(null)
       }
     } catch {
-      if (mountedRef.current && trashMutationRef.current === request) setTrashError('无法撤销删除，请重试。')
+      if (mountedRef.current && trashMutationRef.current === request) setTrashError(uiText("无法撤销删除，请重试。","Could not undo deletion. Try again."))
     } finally {
       trashBusyRef.current = null
       if (mountedRef.current && trashMutationRef.current === request) setTrashBusy(null)
@@ -678,9 +681,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         return result === true
       }} />}
       {!createPopoverOpen && createOperation.status === 'pending' && (
-        <p className="sr-only" role="status">正在创建“{createOperation.title.trim()}”…</p>
+        <p className="sr-only" role="status">{uiText("正在创建“","Creating “")}{createOperation.title.trim()}”…</p>
       )}
-      <ErrorNotification error={!createPopoverOpen && createOperation.status === 'error' ? `无法新建“${createOperation.title.trim()}”。请重新打开“新建笔记”重试。` : null} />
+      <ErrorNotification error={!createPopoverOpen && createOperation.status === 'error' ? uiText(`无法新建“${createOperation.title.trim()}”。请重新打开“新建笔记”重试。`,`Could not create “${createOperation.title.trim()}”. Reopen New note and try again.`) : null} />
       {createPopoverOpen && (
         <CreateNotePopover
           folders={library.folders}
@@ -721,7 +724,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
       <SplitPane
         defaultSizes={[240, 190]}
         minimumSizes={[180, 160, 420]}
-        dividerLabels={['调整文件夹栏宽度', '调整笔记列表栏宽度']}
+        dividerLabels={[uiText("调整文件夹栏宽度","Resize folder pane"), uiText("调整笔记列表栏宽度","Resize note list pane")]}
         proportions={columnPreference ? [columnPreference.folder, columnPreference.noteList] : undefined}
         collapsed={[collapsed.folder, collapsed.noteList]}
         collapsedSecondRail={<DirectoryRail onExpand={() => setColumnCollapsed('noteList', false)} />}
@@ -731,7 +734,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
         <div className="library-folder-pane-stack">
         <FolderTree
           searching={Boolean(sidebarQuery.trim())}
-          searchResultsSlot={<div ref={setSidebarResultsTarget} aria-label="资料库搜索结果"/>}
+          searchResultsSlot={<div ref={setSidebarResultsTarget} aria-label={uiText("资料库搜索结果","Library search results")}/>}
           searchSlot={search && <div className="library-sidebar-search"><SearchBox shortcut={searchShortcut} resultsContainer={sidebarResultsTarget} onQueryChange={setSidebarQuery} search={search} dismissSignal={searchDismissSignal} onSelect={(noteId) => void navigateAfterSave(() => { setActiveView('library'); library.selectNote(noteId) })} /></div>}
           folders={library.folders}
           activeId={activeView === 'library' ? library.activeFolderId : null}
@@ -754,7 +757,7 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             const operationId = await navigateAfterSave(() => library.deleteFolder(id))
             if (typeof operationId === 'string' && trash !== undefined) {
               setRecentTrashOperationId(operationId)
-              setTrashFeedback('文件夹已移入回收站。')
+              setTrashFeedback(uiText("文件夹已移入回收站。","The folder was moved to Trash."))
             }
           }}
           onCreateNote={(folderId) => openCreatePopover(null, folderId)}
@@ -764,32 +767,31 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
           }}
           folderContents={activeView === 'library' ? renderFolderNotes : undefined}
         />
-        <ErrorNotification error={importNotice?.kind === 'alert' ? importNotice.message : null} />
-        {importNotice?.kind === 'status' && <p className="library-status" role="status">{importNotice.message}</p>}
+        <OperationNotification notice={importNotice} />
         </div>
       </aside>
       <aside data-testid="note-list-pane" className="library-pane library-pane--notes">
         {activeView === 'temporary' ? (
-          <section className="note-list" aria-label="临时便笺导航">
+          <section className="note-list" aria-label={uiText("临时便笺导航","Sticky-note navigation")}>
             <header className="library-pane__header library-pane__header--compact">
-              <div><span className="library-pane__eyebrow">临时捕捉</span><h2>临时便笺</h2></div>
-              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
+              <div><span className="library-pane__eyebrow">{uiText("临时捕捉","Temporary captures")}</span><h2>{uiText("临时便笺","Sticky notes")}</h2></div>
+              <button className="icon-button" type="button" aria-label={uiText("折叠目录","Collapse outline")} onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
-            <p className="library-status">在右侧查看、编辑和整理临时捕捉。</p>
+            <p className="library-status">{uiText("在右侧查看、编辑和整理临时捕捉。","View, edit and organize temporary captures on the right.")}</p>
           </section>
         ) : activeView === 'trash' ? (
-          <section className="note-list" aria-label="回收站导航">
+          <section className="note-list" aria-label={uiText("回收站导航","Trash navigation")}>
             <header className="library-pane__header library-pane__header--compact">
-              <div><span className="library-pane__eyebrow">安全恢复</span><h2>回收站</h2></div>
-              <button className="icon-button" type="button" aria-label="折叠目录" onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
+              <div><span className="library-pane__eyebrow">{uiText("安全恢复","Restore safely")}</span><h2>{uiText("回收站","Trash")}</h2></div>
+              <button className="icon-button" type="button" aria-label={uiText("折叠目录","Collapse outline")} onClick={() => setColumnCollapsed('noteList', true)}><Icon name="collapse" size={18} /></button>
             </header>
-            <p className="library-status">已删除项目默认保留 30 天，可在右侧恢复。</p>
+            <p className="library-status">{uiText("已删除项目默认保留 30 天，可在右侧恢复。","Deleted items are kept for 30 days by default. Restore them on the right.")}</p>
           </section>
         ) : (
           <NoteOutline key={outlineNoteId ?? 'empty'} markdown={outlineMarkdown} collapsedKeys={outlineNoteId ? outlineCollapsedPreference[outlineNoteId] : undefined} onCollapsedKeysChange={outlineNoteId ? (keys) => setOutlineCollapsed(outlineNoteId, keys) : undefined} onNavigate={(line, headingIndex) => editorRef.current?.navigateToHeading(line, headingIndex)} onCollapse={() => setColumnCollapsed('noteList', true)} />
         )}
       </aside>
-      <section data-testid="content-pane" className="library-content" aria-label="笔记内容">
+      <section data-testid="content-pane" className="library-content" aria-label={uiText("笔记内容","Note content")}>
         {activeView === 'temporary' && temporary && <TemporaryInbox ref={temporaryInboxRef} temporary={temporary} folders={library.folders} assets={assets} assetReader={assets} windows={temporaryWindows} external={system} autosaveDelayMs={autosaveDelayMs} onConversionComplete={async (noteId, folderId) => {
           await library.refreshLibrary()
           setActiveView('library')
@@ -803,8 +805,8 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onLibraryChanged={library.refreshLibrary}
           />
         )}
-        {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">正在打开笔记…</p>}
-        <ErrorNotification error={activeView === 'library' && library.documentState === 'error' ? '无法打开笔记。' : null} />
+        {activeView === 'library' && library.documentState === 'loading' && <p className="content-placeholder">{uiText("正在打开笔记…","Opening note…")}</p>}
+        <ErrorNotification error={activeView === 'library' && library.documentState === 'error' ? uiText("无法打开笔记。","Could not open the note.") : null} />
         {activeView === 'library' && library.documentState === 'ready' && library.document === null && (
           <MainWindowEmptyState onCreateNote={openCreatePopover} />
         )}
@@ -828,17 +830,18 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
               const retryRequired = linkRepairNeedsRetry(result.linkRepair)
               setLinkRepairRetry(retryRequired ? { noteId: result.document.id, title: result.document.title } : null)
               setMetadataNotice(retryRequired
-                ? '标题已提交；链接修复未完成，可安全重试。'
-                : `标题已更新；已刷新 ${result.linkRepair.updated} 个引用标签。`)
+                ? uiText("标题已提交；链接修复未完成，可安全重试。","The title was saved. Reference repair is incomplete and can be safely retried.")
+                : null, retryRequired ? 'alert' : 'status')
               return result
             }}
             onMoveNote={async (folderId) => {
               const result = await navigateAfterSave(() => library.moveNote(library.document!.id, folderId))
               if (result === null) throw new Error('move was blocked by an unsaved editor')
-              setMetadataNotice('笔记已移动。')
+              setMetadataNotice(uiText("笔记已移动。","The note was moved."))
               return result
             }}
             external={system}
+            preferences={system}
             onDocumentAdopt={library.adoptDocument}
             onConvertFileToDocument={convertWordFile}
             initialMode={defaultEditorMode}
@@ -850,11 +853,9 @@ export const LibraryLayout = forwardRef<LibraryLayoutHandle, LibraryLayoutProps>
             onDraftChange={(markdown) => reportOutlineDraft(library.document!.id, markdown)}
           />
         )}
-        {activeView === 'library' && metadataNotice && <p className="editor-metadata-status" role="status">{metadataNotice}</p>}
+        <OperationNotification notice={metadataNotice} />
         {activeView === 'library' && linkRepairRetry && (
-          <button type="button" disabled={linkRepairBusy} onClick={() => void retryLinkRepair()}>
-            重试链接修复
-          </button>
+          <button type="button" disabled={linkRepairBusy} onClick={() => void retryLinkRepair()}>{uiText("重试链接修复","Retry reference repair")}</button>
         )}
       </section>
       </SplitPane>

@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { extractMarkdownHeadings } from '../editor/markdownPipeline'
 import { Icon } from '../../shared/Icon'
@@ -47,16 +48,16 @@ export function NoteOutline({ markdown, onNavigate, onCollapse, collapsedKeys: i
   }
 
   return (
-    <section className="note-outline" aria-label="笔记目录">
+    <section className="note-outline" aria-label={uiText("笔记目录","Note outline")}>
       <header className="library-pane__header library-pane__header--compact">
-        <div><span className="library-pane__eyebrow">当前笔记</span><h2>目录</h2></div>
-        {onCollapse && <button className="icon-button" type="button" aria-label="折叠目录" onClick={onCollapse}>‹</button>}
+        <div><span className="library-pane__eyebrow">{uiText("当前笔记","Current note")}</span><h2>{uiText("目录","Outline")}</h2></div>
+        {onCollapse && <button className="icon-button" type="button" aria-label={uiText("折叠目录","Collapse outline")} onClick={onCollapse}>‹</button>}
       </header>
-      {headings.length === 0 ? <p className="library-status">这篇笔记还没有标题。</p> : (
-        <nav className="note-outline__items" aria-label="标题层级">
+      {headings.length === 0 ? <p className="library-status">{uiText("这篇笔记还没有标题。","This note has no headings yet.")}</p> : (
+        <nav className="note-outline__items" aria-label={uiText("标题层级","Heading level")}>
           {visibleHeadings.map(({ heading, key, collapsed, hasChildren }) => {
-            const label = heading.text || '无标题'
-            const action = collapsed ? '展开' : '折叠'
+            const label = heading.text || uiText("无标题","Untitled")
+            const action = collapsed ? uiText("展开","Expand") : uiText("折叠","Collapse")
             return (
               <div key={key} className={'note-outline__row note-outline__row--level-' + heading.level}>
                 <button
@@ -70,9 +71,9 @@ export function NoteOutline({ markdown, onNavigate, onCollapse, collapsedKeys: i
                   <button
                     type="button"
                     className="note-outline__toggle"
-                    aria-label={action + '“' + label + '”下级标题'}
+                    aria-label={action + '“' + label + uiText("”下级标题","” subheadings")}
                     aria-expanded={!collapsed}
-                    title={action + '下级标题'}
+                    title={action + uiText("下级标题","Subheadings")}
                     onClick={() => toggleHeading(key)}
                   >
                     <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={13} />

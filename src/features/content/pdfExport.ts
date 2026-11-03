@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 import type { NoteId } from '../../domain/model'
@@ -122,7 +123,7 @@ export function pdfLinkLabel(href: string): string {
   return href
 }
 function safeTitle(title: string): string {
-  return title.trim() || '未命名文档'
+  return title.trim() || uiText("未命名文档","Untitled document")
 }
 
 function collectPdfLinkRects(root: HTMLElement): PdfExportLinkRect[] {

@@ -47,17 +47,24 @@ v1.1.4 发布包包含签名的更新清单和更新包。应用内的“检查�
 
 ## 从源码运行
 
+### 安装环境
+
+- 安装 [Git](https://git-scm.com/downloads/)、[Node.js 22](https://nodejs.org/en/download) 和 [Rust 稳定工具链](https://rust-lang.org/tools/install/)。
+- Windows：按 [Tauri 环境安装指南](https://v2.tauri.app/start/prerequisites/#windows) 安装 C++ 构建工具（勾选“使用 C++ 的桌面开发”）和 WebView2。
+- macOS：运行 `xcode-select --install` 安装 Xcode 命令行工具。
+- 安装 [pnpm](https://pnpm.io/installation)：
+
 ```powershell
-pnpm install
-pnpm tauri dev
+npm install -g pnpm@11.21.0
 ```
 
-常用检查命令：
+### 下载并运行
 
 ```powershell
-pnpm typecheck
-pnpm test
-pnpm tauri build
+git clone https://github.com/Tiome-tt/weiyu-cay.git
+cd weiyu-cay
+pnpm install --frozen-lockfile
+pnpm tauri dev
 ```
 
 ## 特别感谢

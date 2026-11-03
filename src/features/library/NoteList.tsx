@@ -1,7 +1,7 @@
-import { ErrorNotification } from '../../shared/notifications'
+import {text as uiText} from '../../shared/i18n'
+import { ErrorNotification, OperationNotification } from '../../shared/notifications'
 import { libraryEntryPresentation } from './libraryEntries'
-import { createPortal } from 'react-dom'
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { ExportSelection, FilePort } from '../../domain/ports'
 import type { Folder, FolderId, NoteId, NoteSummary } from '../../domain/model'
 import { Icon, type IconName } from '../../shared/Icon'
@@ -51,7 +51,6 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
   const listRef=useRef<HTMLElement>(null)
   const [saveTarget,setSaveTarget]=useState<NoteSummary|null>(null)
   const [moveTargets,setMoveTargets]=useState<NoteId[]|null>(null)
-  const feedbackRef = useRef<HTMLParagraphElement>(null)
   const contextTriggerRef = useRef<HTMLButtonElement | null>(null)
   const pointerStartRef = useRef<{ id: NoteId; x: number; y: number } | null>(null)
   const pointerDragRef = useRef<NoteId | null>(null)
@@ -77,9 +76,6 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
     document.addEventListener('pointerdown',cancel,true)
     return()=>document.removeEventListener('pointerdown',cancel,true)
   },[selectedIds])
-  useEffect(() => {
-    if (deleteFeedback !== null) feedbackRef.current?.focus()
-  }, [deleteFeedback])
 
   useEffect(() => {
     const visible = new Set(notes.map((note) => note.id))
@@ -102,11 +98,6 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
     })
   }, [activeId, notes])
 
-  useEffect(() => {
-    if (deleteFeedback === null || onDismissFeedback === undefined) return
-    const timer = window.setTimeout(onDismissFeedback, 10000)
-    return () => window.clearTimeout(timer)
-  }, [deleteFeedback, onDismissFeedback])
 
   useEffect(() => {
     if (contextTarget === null) return
@@ -243,23 +234,16 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
   const contextSelection = contextTarget !== null && effectiveSelectedIds.has(contextTarget.id)
     ? selectedEntries
     : contextTarget === null ? [] : [contextTarget]
+  const deletionNotice = useMemo(()=>deleteFeedback ? {message:deleteFeedback,focus:true,onDismiss:onDismissFeedback,action:undoAvailable && onUndoDelete ? {label:undoBusy?uiText("正在撤销…","Undoing…"):uiText("撤销删除","Undo deletion"),onClick:onUndoDelete,disabled:undoBusy||deletingId!==null}:undefined}:null,[deleteFeedback,onDismissFeedback,undoAvailable,onUndoDelete,undoBusy,deletingId])
   const selectionCount = contextSelection.length
 
   return (
-    <section ref={listRef} aria-label="笔记列表" className="note-list">
-      {deleteFeedback && createPortal(
-        <div className="note-list__mutation-status">
-          <span className="note-list__mutation-icon" aria-hidden="true"><Icon name="note" size={18} /></span><p ref={feedbackRef} role="status" tabIndex={-1} title={deleteFeedback}>{deleteFeedback}</p>
-          <div className="note-list__mutation-actions">
-            {undoAvailable && onUndoDelete && <button type="button" disabled={undoBusy || deletingId !== null} onClick={onUndoDelete}>{undoBusy ? '正在撤销…' : '撤销删除'}</button>}
-            {onDismissFeedback && <button type="button" aria-label="关闭提示" onClick={onDismissFeedback}><Icon name="close" size={15} /></button>}
-          </div>
-        </div>, document.querySelector('.main-window') ?? document.body
-      )}
+    <section ref={listRef} aria-label={uiText("笔记列表","Note list")} className="note-list">
+      <OperationNotification notice={deletionNotice}/>
       <ErrorNotification error={deleteError} />
-      {state === 'loading' && <p className="library-status">正在加载笔记…</p>}
-      <ErrorNotification error={state === 'error' ? '无法加载笔记。' : null} />
-      {showEmptyState && state === 'ready' && notes.length === 0 && <p className="library-status">此文件夹中还没有笔记。</p>}
+      {state === 'loading' && <p className="library-status">{uiText("正在加载笔记…","Loading notes…")}</p>}
+      <ErrorNotification error={state === 'error' ? uiText("无法加载笔记。","Could not load notes.") : null} />
+      {showEmptyState && state === 'ready' && notes.length === 0 && <p className="library-status">{uiText("此文件夹中还没有笔记。","There are no notes in this folder yet.")}</p>}
       {state === 'ready' && notes.length > 0 && (
         <ul className="note-list__items" data-note-list>
           {notes.map((note) => (
@@ -328,7 +312,7 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
         </ul>
       )}
       {contextTarget !== null && contextPosition !== null && (
-        <div className="note-context-menu" role="menu" aria-label="笔记快捷操作" style={{ left: contextPosition.x, top: contextPosition.y }} onKeyDown={(event) => {
+        <div className="note-context-menu" role="menu" aria-label={uiText("笔记快捷操作","Note actions")} style={{ left: contextPosition.x, top: contextPosition.y }} onKeyDown={(event) => {
           if (event.key !== 'Escape') return
           event.preventDefault()
           setContextTarget(null)
@@ -340,19 +324,19 @@ export function NoteList({ files, notes, activeId, state, onSelect, onDelete, on
             if(onSetStars)onSetStars(contextSelection,enabled)
             else if(selectionCount===1)onToggleStar?.(contextTarget)
             setContextTarget(null);setContextPosition(null)
-          }}>{contextSelection.every(note=>starredIds.includes(note.id))?'取消星标':'添加星标'}</button>}
-          {onExport && selectionCount === 1 && <button type="button" role="menuitem" onClick={()=>{setSaveTarget(contextTarget);setContextTarget(null);setContextPosition(null)}}>另存为</button>}
-          {onMoveSelection && folders && <button type="button" role="menuitem" onClick={()=>{setMoveFolderId('');setMoveTargets(contextSelection.map(entry=>entry.id));setContextTarget(null);setContextPosition(null)}}>移动到</button>}
+          }}>{contextSelection.every(note=>starredIds.includes(note.id))?uiText("取消星标","Remove star"):uiText("添加星标","Add star")}</button>}
+          {onExport && selectionCount === 1 && <button type="button" role="menuitem" onClick={()=>{setSaveTarget(contextTarget);setContextTarget(null);setContextPosition(null)}}>{uiText("另存为","Save as")}</button>}
+          {onMoveSelection && folders && <button type="button" role="menuitem" onClick={()=>{setMoveFolderId('');setMoveTargets(contextSelection.map(entry=>entry.id));setContextTarget(null);setContextPosition(null)}}>{uiText("移动到","Move to")}</button>}
           <button type="button" role="menuitem" autoFocus={onExport === undefined} disabled={(onDelete === undefined && onDeleteSelection === undefined) || deletingId !== null || undoBusy} onClick={() => {
             if (onDeleteSelection !== undefined) onDeleteSelection(contextSelection)
             else if (onDelete !== undefined) onDelete(contextTarget.id, contextTarget.title)
             setContextTarget(null)
             setContextPosition(null)
-          }}>删除笔记</button>
+          }}>{uiText("删除笔记","Delete notes")}</button>
         </div>
       )}
       {saveTarget && onExport && <SaveAsDialog note={saveTarget} files={files} onClose={()=>{setSaveTarget(null);contextTriggerRef.current?.focus()}} onSave={(kind,selection)=>{onExport(saveTarget,kind,selection);setSaveTarget(null)}} />}
-      {moveTargets && folders && onMoveSelection && <div className="settings-backdrop"><form className="save-as-dialog" role="dialog" aria-modal="true" aria-label="移动所选条目" onKeyDown={event=>dialogKeyboard(event,()=>{setMoveTargets(null);contextTriggerRef.current?.focus()})} onSubmit={event=>{event.preventDefault();if(moveFolderId==='')return;void onMoveSelection(moveTargets,moveFolderId);setMoveTargets(null)}}><header><div className="library-operation-dialog__heading"><span className="library-operation-dialog__symbol"><Icon name="folder" size={24}/></span><h2>移动到</h2></div><button type="button" aria-label="关闭移动" onClick={()=>{setMoveTargets(null);contextTriggerRef.current?.focus()}}><Icon name="close" size={18}/></button></header><div className="library-operation-dialog__entry"><Icon name="file" size={20}/><span>{moveTargets.length===1?notes.find(note=>note.id===moveTargets[0])?.title:`所选 ${moveTargets.length} 篇笔记`}</span></div><label className="library-operation-dialog__field">目标文件夹<select autoFocus aria-label="移动所选条目到" value={moveFolderId} onChange={event=>setMoveFolderId(event.target.value as FolderId)}><option value="" disabled>选择文件夹</option>{folders.map(folder=><option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label><footer><button type="button" onClick={()=>{setMoveTargets(null);contextTriggerRef.current?.focus()}}>取消</button><button type="submit" disabled={!moveFolderId}>移动</button></footer></form></div>}
+      {moveTargets && folders && onMoveSelection && <div className="settings-backdrop"><form className="save-as-dialog" role="dialog" aria-modal="true" aria-label={uiText("移动所选条目","Move selected items")} onKeyDown={event=>dialogKeyboard(event,()=>{setMoveTargets(null);contextTriggerRef.current?.focus()})} onSubmit={event=>{event.preventDefault();if(moveFolderId==='')return;void onMoveSelection(moveTargets,moveFolderId);setMoveTargets(null)}}><header><div className="library-operation-dialog__heading"><span className="library-operation-dialog__symbol"><Icon name="folder" size={24}/></span><h2>{uiText("移动到","Move to")}</h2></div><button type="button" aria-label={uiText("关闭移动","Close move dialog")} onClick={()=>{setMoveTargets(null);contextTriggerRef.current?.focus()}}><Icon name="close" size={18}/></button></header><div className="library-operation-dialog__entry"><Icon name="file" size={20}/><span>{moveTargets.length===1?notes.find(note=>note.id===moveTargets[0])?.title:uiText(`所选 ${moveTargets.length} 篇笔记`,`Selected ${moveTargets.length} notes`)}</span></div><label className="library-operation-dialog__field">{uiText("目标文件夹","Destination folder")}<select autoFocus aria-label={uiText("移动所选条目到","Move selected items to")} value={moveFolderId} onChange={event=>setMoveFolderId(event.target.value as FolderId)}><option value="" disabled>{uiText("选择文件夹","Choose folder")}</option>{folders.map(folder=><option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label><footer><button type="button" onClick={()=>{setMoveTargets(null);contextTriggerRef.current?.focus()}}>{uiText("取消","Cancel")}</button><button type="submit" disabled={!moveFolderId}>{uiText("移动","Move")}</button></footer></form></div>}
     </section>
   )
 }

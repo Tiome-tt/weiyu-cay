@@ -1,3 +1,5 @@
+import {UI_LOCALE} from '../../shared/i18n'
+import {text as uiText} from '../../shared/i18n'
 import { ErrorNotification } from '../../shared/notifications'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { AssetPort, ImageReadPort, SystemPort, TemporaryPort, TemporaryWindowPort } from '../../domain/ports'
@@ -95,7 +97,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       await windows.show(noteId)
       setError(null)
     } catch {
-      setError('无法重新显示便笺窗口。')
+      setError(uiText("无法重新显示便笺窗口。","Could not reopen the sticky-note window."))
     } finally {
       setShowing((current) => {
         const next = new Set(current)
@@ -133,7 +135,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     try {
       if (activeId !== null && !(await editorRef.current?.flush() ?? true)) {
         if (request === documentRequestRef.current) {
-          setError('当前临时捕捉无法保存。请重试保存后再切换。')
+          setError(uiText("当前临时捕捉无法保存。请重试保存后再切换。","The current capture could not be saved. Retry saving before switching."))
         }
         return
       }
@@ -217,7 +219,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     const release = await acquireEditorBarrier(activeId !== null && ids.includes(activeId))
     try {
       if (!(await flushOpenSelection(ids))) {
-        setError('请先解决保存错误，再删除临时捕捉。')
+        setError(uiText("请先解决保存错误，再删除临时捕捉。","Resolve the save error before deleting captures."))
         return
       }
       const result = await temporary.delete(ids)
@@ -226,7 +228,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       showFailure(result.failed)
       void refresh()
     } catch {
-      setError('无法删除临时捕捉。')
+      setError(uiText("无法删除临时捕捉。","Could not delete the capture."))
     } finally {
       release()
       busyRef.current = null
@@ -248,7 +250,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       showFailure(result.failed)
       await refresh()
     } catch {
-      setError('无法撤销删除临时捕捉。')
+      setError(uiText("无法撤销删除临时捕捉。","Could not undo capture deletion."))
     } finally {
       busyRef.current = null
       setBusy(null)
@@ -264,7 +266,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
     const release = await acquireEditorBarrier(activeId !== null && ids.includes(activeId))
     try {
       if (!(await flushOpenSelection(ids))) {
-        setError('请先解决保存错误，再转换临时捕捉。')
+        setError(uiText("请先解决保存错误，再转换临时捕捉。","Resolve the save error before converting captures."))
         return
       }
       const input = {
@@ -281,7 +283,7 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
       if (firstConverted !== undefined) await onConversionComplete?.(firstConverted.noteId, folderId)
       void refresh()
     } catch {
-      setError('无法转换临时捕捉。')
+      setError(uiText("无法转换临时捕捉。","Could not convert the capture."))
     } finally {
       release()
       busyRef.current = null
@@ -290,33 +292,33 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
   }
 
   return (
-    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label="临时便笺">
+    <section className={`temporary-inbox${document === null ? '' : ' has-editor'}`} aria-label={uiText("临时便笺","Sticky notes")}>
       <header className="temporary-inbox__header">
         <div>
-          <span className="library-pane__eyebrow">临时捕捉</span>
-          <h2>临时便笺</h2>
+          <span className="library-pane__eyebrow">{uiText("临时捕捉","Temporary captures")}</span>
+          <h2>{uiText("临时便笺","Sticky notes")}</h2>
         </div>
       </header>
-      <div className="temporary-inbox__actions" aria-label="临时便笺操作">
-        <button type="button" disabled={busy !== null || visibleItems.length === 0} onClick={() => setSelected(new Set(visibleItems.map((item) => item.id)))}>全选</button>
-        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>清除选择</button>
-        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setDialogOpen(true)}>转为笔记</button>
-        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void deleteSelected()}>{busy === 'delete' ? '正在删除…' : '删除所选'}</button>
-        {deleteOperationId !== null && <button type="button" disabled={busy !== null} onClick={() => void undoDelete()}>{busy === 'undo' ? '正在撤销…' : '撤销删除'}</button>}
+      <div className="temporary-inbox__actions" aria-label={uiText("临时便笺操作","Sticky-note actions")}>
+        <button type="button" disabled={busy !== null || visibleItems.length === 0} onClick={() => setSelected(new Set(visibleItems.map((item) => item.id)))}>{uiText("全选","Select all")}</button>
+        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setSelected(new Set())}>{uiText("清除选择","Clear selection")}</button>
+        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => setDialogOpen(true)}>{uiText("转为笔记","Convert to note")}</button>
+        <button type="button" disabled={busy !== null || selectedIds.length === 0} onClick={() => void deleteSelected()}>{busy === 'delete' ? uiText("正在删除…","Deleting…") : uiText("删除所选","Delete selected")}</button>
+        {deleteOperationId !== null && <button type="button" disabled={busy !== null} onClick={() => void undoDelete()}>{busy === 'undo' ? uiText("正在撤销…","Undoing…") : uiText("撤销删除","Undo deletion")}</button>}
       </div>
       <ErrorNotification error={error} />
-      {state === 'loading' && <p role="status" className="library-status">正在加载临时捕捉…</p>}
-      <ErrorNotification error={state === 'error' ? '无法加载临时捕捉。' : null} />
-      {state === 'ready' && visibleItems.length === 0 && <p className="library-status">临时便笺为空。</p>}
+      {state === 'loading' && <p role="status" className="library-status">{uiText("正在加载临时捕捉…","Loading captures…")}</p>}
+      <ErrorNotification error={state === 'error' ? uiText("无法加载临时捕捉。","Could not load captures.") : null} />
+      {state === 'ready' && visibleItems.length === 0 && <p className="library-status">{uiText("临时便笺为空。","No sticky notes yet.")}</p>}
       {state === 'ready' && visibleItems.length > 0 && (
-        <ul className="temporary-inbox__list" aria-label="临时捕捉列表">
+        <ul className="temporary-inbox__list" aria-label={uiText("临时捕捉列表","Capture list")}>
           {visibleItems.map((item) => {
             const title = safeTitle(item)
             return (
               <li key={item.id} className={activeId === item.id ? 'is-active' : undefined}>
                 <label>
-                  <input type="checkbox" aria-label={`选择 ${title}`} checked={selected.has(item.id)} disabled={busy !== null} onChange={() => toggleSelected(item.id)} />
-                  <span className="sr-only">选择 {title}</span>
+                  <input type="checkbox" aria-label={uiText(`选择 ${title}`,`Select ${title}`)} checked={selected.has(item.id)} disabled={busy !== null} onChange={() => toggleSelected(item.id)} />
+                  <span className="sr-only">{uiText("选择 ","Select ")}{title}</span>
                 </label>
                 <button type="button" className="temporary-inbox__capture" aria-current={activeId === item.id ? 'true' : undefined} disabled={busy !== null} onClick={() => void openCapture(item.id)}>
                   <span className="temporary-inbox__capture-title"><Icon name="note" size={20} /><strong>{title}</strong></span>
@@ -327,13 +329,13 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
                   <button
                     type="button"
                     className="temporary-inbox__show"
-                    aria-label={`重新显示 ${title}`}
+                    aria-label={uiText(`重新显示 ${title}`,`Reopen ${title}`)}
                     disabled={busy !== null || showing.has(item.id)}
                     aria-busy={showing.has(item.id)}
                     onClick={() => void showCapture(item.id)}
                   >
                     <Icon name="preview" size={15} />
-                    <span>{showing.has(item.id) ? '正在显示…' : '显示便笺'}</span>
+                    <span>{showing.has(item.id) ? uiText("正在显示…","Opening…") : uiText("显示便笺","Show sticky note")}</span>
                   </button>
                 )}
               </li>
@@ -341,9 +343,9 @@ export const TemporaryInbox = forwardRef<TemporaryInboxHandle, TemporaryInboxPro
           })}
         </ul>
       )}
-      <div className="temporary-inbox__editor" aria-label="临时捕捉编辑器">
-        {documentState === 'loading' && <p className="content-placeholder">正在打开临时捕捉…</p>}
-        <ErrorNotification error={documentState === 'error' ? '无法打开临时捕捉。' : null} />
+      <div className="temporary-inbox__editor" aria-label={uiText("临时捕捉编辑器","Capture editor")}>
+        {documentState === 'loading' && <p className="content-placeholder">{uiText("正在打开临时捕捉…","Opening capture…")}</p>}
+        <ErrorNotification error={documentState === 'error' ? uiText("无法打开临时捕捉。","Could not open the capture.") : null} />
         {document && <EditorPane ref={editorRef} key={`${document.id}:${document.revision}`} document={document} notes={temporaryNotes} assets={assets} assetReader={assetReader} external={external} autosaveDelayMs={autosaveDelayMs} onDocumentAdopt={(authoritative) => {
           setDocument(authoritative)
           setItems((current) => current.map((item) => item.id === authoritative.id ? authoritative : item))
@@ -436,7 +438,7 @@ function trimStartApplicationWhitespace(value: string) {
 
 function untitledTimestamp(timestamp: string) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/u.exec(timestamp)
-  return match === null ? '未命名笔记' : `未命名笔记 ${match[1]} ${match[2]}-${match[3]}`
+  return match === null ? uiText("未命名笔记","Untitled note") : uiText(`未命名笔记 ${match[1]} ${match[2]}-${match[3]}`,`Untitled note ${match[1]} ${match[2]}-${match[3]}`)
 }
 
 function preview(markdown: string) {
@@ -445,5 +447,5 @@ function preview(markdown: string) {
 
 function formatDate(value: string) {
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(UI_LOCALE, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }

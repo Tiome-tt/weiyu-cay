@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Icon } from '../../shared/Icon'
 
@@ -80,10 +81,10 @@ export function EditorActionsMenu({ children }: EditorActionsMenuProps) {
         ref={triggerRef}
         type="button"
         className="icon-button editor-actions-menu__trigger"
-        aria-label="笔记更多操作"
+        aria-label={uiText("笔记更多操作","More note actions")}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="笔记更多操作"
+        title={uiText("笔记更多操作","More note actions")}
         onClick={() => {
           if (open) close(false)
           else openMenu('first')
@@ -100,7 +101,7 @@ export function EditorActionsMenu({ children }: EditorActionsMenuProps) {
         <div
           ref={menuRef}
           role="menu"
-          aria-label="笔记操作"
+          aria-label={uiText("笔记操作","Note actions")}
           className="editor-actions-menu__popover"
           onKeyDown={handleMenuKeyDown}
         >

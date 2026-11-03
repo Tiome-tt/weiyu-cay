@@ -108,7 +108,10 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
     );
 
     let build = job(&workflow, "build");
-    assert_eq!(build.needs.values(), ["verify-tag", "verify-gates"]);
+    assert_eq!(
+        build.needs.values(),
+        ["verify-tag", "verify-gates", "prepare-draft"]
+    );
     assert_eq!(
         build.permissions,
         Some(Permissions {
@@ -116,7 +119,7 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
         })
     );
     let strategy = build.strategy.as_ref().expect("build strategy");
-    assert_eq!(strategy.max_parallel, Some(1));
+    assert_eq!(strategy.max_parallel, Some(4));
     assert_eq!(
         strategy
             .matrix
@@ -124,24 +127,35 @@ fn release_workflow_is_structurally_valid_and_serializes_signed_metadata_writers
             .as_ref()
             .expect("release matrix")
             .len(),
-        3
+        4
     );
-    assert_step_uses(
+    let draft = job(&workflow, "prepare-draft");
+    assert_eq!(draft.needs.values(), ["verify-tag", "verify-gates"]);
+    assert_step_command(
         build,
-        "tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f",
+        "Build localized installers and signed update payloads",
+        &[
+            "pnpm",
+            "tauri",
+            "build",
+            "--config",
+            "$RUNNER_TEMP/simple-notes-release-config.json",
+            "${{",
+            "matrix.args",
+            "}}",
+        ],
     );
-    assert_step_with(
-        build,
-        "Build and attach unsigned installers with signed updater metadata",
-        "retryAttempts",
-        "3",
-    );
-    assert_step_with(
-        build,
-        "Build and attach unsigned installers with signed updater metadata",
-        "releaseName",
-        "Cay ${{ github.ref_name }}",
-    );
+    let identities = strategy
+        .matrix
+        .include
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|row| (row["target"].as_str(), row["locale"].as_str()))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(identities.len(), 4);
+    assert!(identities.contains(&("universal-apple-darwin", "en-US")));
+    assert!(identities.contains(&("universal-apple-darwin", "zh-CN")));
     assert_step_env(
         build,
         "Materialize release-only updater configuration",
@@ -458,7 +472,7 @@ fn stable_releases_do_not_require_rc_staging_configuration() {
     assert!(source.contains("if (channel === 'rc' && (!staging ||"));
     assert!(source.contains("const endpoints = channel === 'rc'"));
     assert!(
-        source.contains("https://github.com/${repository}/releases/latest/download/latest.json")
+        source.contains("https://github.com/${repository}/releases/latest/download/${manifest}")
     );
 }
 

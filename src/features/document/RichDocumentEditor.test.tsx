@@ -17,6 +17,16 @@ beforeAll(() => {
 afterEach(cleanup)
 
 describe('RichDocumentEditor', () => {
+  it('resets the table size picker each time the context menu is opened and omits cell color controls', () => {
+    render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()}/>)
+    const body = screen.getByRole('textbox', {name:'文档正文'})
+    fireEvent.contextMenu(body)
+    fireEvent.click(screen.getByRole('menuitem', {name:'表格'}))
+    expect(screen.getByRole('grid', {name:'选择表格行列'})).toBeInTheDocument()
+    fireEvent.contextMenu(body)
+    expect(screen.queryByRole('grid', {name:'选择表格行列'})).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('单元格背景色')).not.toBeInTheDocument()
+  })
   it('shows an invalid link error as a bottom-right notification without shifting the toolbar', async () => {
     render(<NotificationProvider><RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} /></NotificationProvider>)
     fireEvent.contextMenu(screen.getByRole('textbox', { name: '文档正文' }), { clientX: 20, clientY: 30 })
@@ -76,6 +86,29 @@ describe('RichDocumentEditor', () => {
     expect(screen.getByRole('button', { name: '字体' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '字号' })).toHaveAttribute('inputmode', 'numeric')
     expect(screen.getByRole('button', { name: '字号选项' })).toBeInTheDocument()
+  })
+
+  it('positions block numbers in scaled surface coordinates and keeps the gutter reachable', () => {
+    render(<RichDocumentEditor value={{ schemaVersion: 1, root: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '缩放后的正文' }] }] } }} onChange={vi.fn()} />)
+    const surface = document.querySelector<HTMLElement>('.rich-document__surface')!
+    const body = screen.getByRole('textbox', { name: '文档正文' })
+    const block = body.querySelector<HTMLElement>('[data-block-number]')!
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 50, 1000, 600))
+    Object.defineProperty(surface, 'offsetWidth', { configurable: true, value: 500 })
+    surface.scrollTop = 30
+    surface.scrollLeft = 20
+    vi.spyOn(body, 'getBoundingClientRect').mockReturnValue(new DOMRect(180, 100, 800, 800))
+    vi.spyOn(block, 'getBoundingClientRect').mockReturnValue(new DOMRect(180, 250, 700, 48))
+    body.style.paddingLeft = '64px'
+    fireEvent.mouseMove(block, { clientX: 200, clientY: 260 })
+    const controls = document.querySelector<HTMLElement>('.rich-document__block-controls')!
+    expect(controls).toHaveStyle({ top: '130px', left: '64px' })
+    expect(controls).toHaveClass('is-visible')
+    // Pointer coordinates use viewport pixels; the gutter state uses layout pixels.
+    fireEvent.mouseMove(surface, { clientX: 200, clientY: 260 })
+    expect(controls).toHaveClass('is-visible')
+    fireEvent.scroll(surface)
+    expect(controls).not.toHaveClass('is-visible')
   })
   it('collapses and expands the rich-document formatting toolbar', async () => {
     render(<RichDocumentEditor value={emptyRichDocument()} onChange={vi.fn()} />)

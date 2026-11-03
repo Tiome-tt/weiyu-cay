@@ -32,6 +32,14 @@ const downloaded = new Map([
 ])
 
 describe('validateReleaseMetadata', () => {
+  it('accepts one explicitly named universal Mac archive for both architectures',()=>{
+    const name='weiyu-cay_0.1.1_macos-universal-zh-CN.app.tar.gz'
+    const assets=[...updaterAssets.slice(0,2),{id:'universal',name,apiUrl:`https://api.github.com/repos/${repository}/releases/assets/401`},{id:'universal-sig',name:name+'.sig',apiUrl:`https://api.github.com/repos/${repository}/releases/assets/402`}]
+    const files=new Map([...downloaded.entries()].filter(([key])=>key.includes('msi')))
+    files.set(name,Buffer.from('universal'));files.set(name+'.sig',Buffer.from('universal-signature'))
+    const value=metadata();value.platforms['darwin-aarch64']={url:assets[2].apiUrl,signature:'universal-signature'};value.platforms['darwin-x86_64']={...value.platforms['darwin-aarch64']}
+    expect(()=>validateReleaseMetadata({metadata:value,repository,tag,releaseAssets:assets,downloadedAssets:files})).not.toThrow()
+  })
   it('accepts the real gh release view asset shape only when API URLs, names, and signatures agree', () => {
     expect(() => validateReleaseMetadata({ metadata: metadata(), repository, tag, releaseAssets: updaterAssets, downloadedAssets: downloaded })).not.toThrow()
   })

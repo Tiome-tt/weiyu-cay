@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Folder, FolderId } from '../../domain/model'
 
@@ -55,23 +56,17 @@ export function ConvertDialog({ folders, open, busy, initialTitle = '', initialT
           focusable[next]?.focus()
         }}
       >
-        <h2 id="convert-dialog-title">转为笔记</h2>
-        <p>所选临时捕捉将分别创建为笔记。</p>
+        <h2 id="convert-dialog-title">{uiText("转为笔记","Convert to note")}</h2>
+        <p>{uiText("所选临时捕捉将分别创建为笔记。","Each selected capture will become a separate note.")}</p>
         {options.length > 0 && <>
-          <label>
-            笔记标题
-            <input ref={titleRef} aria-label="笔记标题" value={title} disabled={busy} onChange={(event) => setTitle(event.target.value)} placeholder="留空则使用正文首行" />
+          <label>{uiText("笔记标题","Note title")}<input ref={titleRef} aria-label={uiText("笔记标题","Note title")} value={title} disabled={busy} onChange={(event) => setTitle(event.target.value)} placeholder={uiText("留空则使用正文首行","Leave blank to use the first line")} />
           </label>
-          <label>
-            笔记标签
-            <input ref={tagsRef} aria-label="笔记标签" value={tagsText} disabled={busy} onChange={(event) => setTagsText(event.target.value)} placeholder="用逗号分隔多个标签" />
+          <label>{uiText("笔记标签","Note tags")}<input ref={tagsRef} aria-label={uiText("笔记标签","Note tags")} value={tagsText} disabled={busy} onChange={(event) => setTagsText(event.target.value)} placeholder={uiText("用逗号分隔多个标签","Separate tags with commas")} />
           </label>
         </>}
-        <label>
-          目标文件夹
-          <select
+        <label>{uiText("目标文件夹","Destination folder")}<select
             ref={selectRef}
-            aria-label="目标文件夹"
+            aria-label={uiText("目标文件夹","Destination folder")}
             disabled={busy}
             value={folderId ?? ''}
             onChange={(event) => setFolderId(event.target.value as FolderId)}
@@ -82,9 +77,9 @@ export function ConvertDialog({ folders, open, busy, initialTitle = '', initialT
           </select>
         </label>
         <footer>
-          <button ref={cancelRef} type="button" disabled={busy} onClick={onCancel}>取消</button>
+          <button ref={cancelRef} type="button" disabled={busy} onClick={onCancel}>{uiText("取消","Cancel")}</button>
           <button ref={confirmRef} type="button" disabled={busy || folderId === null} onClick={() => folderId !== null && onConfirm(folderId, title.trim(), parseTags(tagsText))}>
-            {busy ? '正在转换…' : '确认转换'}
+            {busy ? uiText("正在转换…","Converting…") : uiText("确认转换","Confirm conversion")}
           </button>
         </footer>
       </section>

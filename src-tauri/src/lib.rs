@@ -2,6 +2,7 @@ mod brand;
 pub mod commands;
 pub mod domain;
 pub mod error;
+pub mod html_preview;
 pub mod platform;
 pub mod shortcuts;
 pub mod storage;
@@ -23,6 +24,8 @@ pub fn run() {
         windows::main::activate_main(app);
     }));
     let app = builder
+        .manage(html_preview::HtmlPreviews::default())
+        .register_asynchronous_uri_scheme_protocol("cay-html", html_preview::respond)
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -76,6 +79,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            html_preview::create_html_preview,
             commands::notes::create_note,
             commands::files::import_files,
             commands::files::read_managed_file,
@@ -106,6 +110,7 @@ pub fn run() {
             commands::notes::resolve_link,
             commands::notes::list_link_targets,
             commands::notes::backlinks,
+            commands::notes::link_neighborhood,
             commands::notes::rename_target_labels,
             commands::assets::save_image,
             commands::assets::read_image_asset,

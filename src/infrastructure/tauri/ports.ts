@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import { TauriFilePort } from './filePort'
 import { LazyStore } from '@tauri-apps/plugin-store'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -326,6 +327,10 @@ class TauriLinkPort implements LinkPort {
     return this.client.invoke<NoteSummary[]>('backlinks', { noteId })
   }
 
+  neighborhood(noteId:NoteId){
+    return this.client.invoke<import('../../domain/ports').LinkNeighborhood>('link_neighborhood',{noteId})
+  }
+
   renameTargetLabels(noteId: NoteId, title: string) {
     return this.client.invoke<Awaited<ReturnType<LinkPort['renameTargetLabels']>>>(
       'rename_target_labels',
@@ -348,6 +353,7 @@ class TauriSystemPort implements SystemPort {
     value: WindowPreferenceMap[Key],
   ) {
     await this.preferences.set(key, value)
+    if (key.startsWith('pdf-reading:')) await this.preferences.save()
   }
 
   async hideTemporaryWindow(noteId: NoteId) {
@@ -511,7 +517,7 @@ class TauriSettingsPort implements SettingsPort {
   }
 
   async chooseStorageDirectory(): Promise<string | null> {
-    const selected = await open({directory:true,multiple:false,title:'选择数据目录'})
+    const selected = await open({directory:true,multiple:false,title:uiText("选择数据目录","Choose library folder")})
     return typeof selected === 'string' ? selected : null
   }
 

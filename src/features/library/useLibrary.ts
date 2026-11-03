@@ -193,9 +193,11 @@ export function useLibrary(
     [foldersPort, refreshFolders],
   )
 
-  const createNote = useCallback(async (title: string, folderId: FolderId | null = activeFolderId, format?: NewNoteFormat) => {
+  const createNote = useCallback(async (title: string, folderId: FolderId | null = activeFolderId, format?: NewNoteFormat, initialize?: (created: NoteDocument) => Promise<NoteDocument>) => {
     const request = ++noteRequest.current
-    const created = await notesPort.createNote({ folderId, title, ...(format ? { format } : {}) })
+    let created = await notesPort.createNote({ folderId, title, ...(format ? { format } : {}) })
+    let initializationError: unknown
+    try { if (initialize) created = await initialize(created) } catch (error) { initializationError = error }
     if (!mountedRef.current || noteRequest.current !== request) return created
     activeFolderRef.current = folderId
     setActiveFolderId(folderId)
@@ -204,18 +206,30 @@ export function useLibrary(
     setDocument(created)
     setDocumentState('ready')
     await refreshNotes(folderId)
+    if (initializationError !== undefined) throw initializationError
     return created
   }, [activeFolderId, notesPort, refreshNotes])
 
   const renameNote = useCallback(async (id: NoteId, title: string) => {
+    const navigation=noteRequest.current
     const result = await notesPort.renameNote(id, title)
     if (!mountedRef.current || result.document.id !== id) return result
     rememberDocument(documentCacheRef.current, result.document)
-    if (activeNoteId === id) {
+    if (activeNoteId === id && navigation===noteRequest.current) {
       setDocument(result.document)
       setDocumentState('ready')
     }
-    await refreshNotes()
+    const updateTitle=(items:NoteSummary[])=>items.map(item=>item.id===id ? {...item,title:result.document.title,tags:result.document.tags,revision:result.document.revision,updatedAt:result.document.updatedAt}:item)
+    for(const [key,items] of Object.entries(notesByFolderRef.current))if(items.some(item=>item.id===id)){
+      folderNoteRequests.current.set(key,(folderNoteRequests.current.get(key)??0)+1)
+      if(key===folderKey(activeFolderRef.current))noteListRequest.current+=1
+    }
+    setNotes(current=>updateTitle(current))
+    setNotesByFolder(current=>Object.fromEntries(Object.entries(current).map(([key,items])=>{
+      if(!items.some(item=>item.id===id))return [key,items]
+      return [key,updateTitle(items)]
+    })))
+    if(result.linkRepair.updated>0)await refreshNotes()
     return result
   }, [activeNoteId, notesPort, refreshNotes])
 

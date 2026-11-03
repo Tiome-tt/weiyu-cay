@@ -1,3 +1,4 @@
+import {text as uiText} from '../../shared/i18n'
 import type { NoteId } from '../../domain/model'
 import type { AssetPort } from '../../domain/ports'
 
@@ -29,8 +30,8 @@ export async function handleImagePaste(
       mediaType: file.type,
       bytes: new Uint8Array(await file.arrayBuffer()),
     })
-    return { kind: 'success', markdown: `![截图](${saved.relativePath})` }
+    return { kind: 'success', markdown: uiText(`![截图](${saved.relativePath})`,`![Screenshot](${saved.relativePath})`) }
   } catch {
-    return { kind: 'failure', message: '无法保存截图。' }
+    return { kind: 'failure', message: uiText("无法保存截图。","Could not save the screenshot.") }
   }
 }

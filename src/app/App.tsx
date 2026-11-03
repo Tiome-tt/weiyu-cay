@@ -1,3 +1,4 @@
+import {text as uiText} from '../shared/i18n'
 import '../styles/tokens.css'
 import '../styles/app.css'
 import '../styles/main-window.css'
@@ -35,13 +36,13 @@ export function App({ services = defaultServices }: { services?: AppServices }) 
 function startupRecoveryFailureMessage(failure: StartupRecoveryReport['failure']): string {
   switch (failure?.code) {
     case 'database':
-      return '本地索引恢复未完成：索引或笔记记录不完整，Markdown 内容保持不变。'
+      return uiText("本地索引恢复未完成：索引或笔记记录不完整，Markdown 内容保持不变。","Index recovery is incomplete. Some index or note records are missing. Your Markdown is unchanged.")
     case 'io':
-      return '本地索引恢复未完成：恢复文件无法写入，请检查磁盘空间或文件权限。'
+      return uiText("本地索引恢复未完成：恢复文件无法写入，请检查磁盘空间或文件权限。","Index recovery is incomplete. Check disk space and file permissions.")
     case 'validation':
-      return '本地索引恢复未完成：发现不符合格式的本地数据，Markdown 内容保持不变。'
+      return uiText("本地索引恢复未完成：发现不符合格式的本地数据，Markdown 内容保持不变。","Index recovery found invalid local data. Your Markdown is unchanged.")
     default:
-      return '本地索引恢复未完成，Markdown 内容保持不变。'
+      return uiText("本地索引恢复未完成，Markdown 内容保持不变。","Index recovery is incomplete. Your Markdown is unchanged.")
   }
 }
 
@@ -136,13 +137,13 @@ function MainApplication({ services }: { services: AppServices }) {
       if (recoveryBusy.current) return
       recoveryBusy.current = true
       const request = ++recoveryRequest.current
-      setRecoveryNotice({ status: 'error', message: '本地索引恢复未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复', busy: true })
+      setRecoveryNotice({ status: 'error', message: uiText("本地索引恢复未完成，Markdown 内容保持不变。","Index recovery is incomplete. Your Markdown is unchanged."), retry: () => void retry(), retryLabel: uiText("重试启动恢复","Retry startup recovery"), busy: true })
       try {
         const report = await recovery.retry()
         if (!isCurrent(request)) return
         await show(report, true, request)
       } catch {
-        if (isCurrent(request)) setRecoveryNotice({ status: 'error', message: '本地索引恢复仍未完成，Markdown 内容保持不变。', retry: () => void retry(), retryLabel: '重试启动恢复' })
+        if (isCurrent(request)) setRecoveryNotice({ status: 'error', message: uiText("本地索引恢复仍未完成，Markdown 内容保持不变。","Index recovery is still incomplete. Your Markdown is unchanged."), retry: () => void retry(), retryLabel: uiText("重试启动恢复","Retry startup recovery") })
       } finally {
         if (recoveryRequest.current === request) recoveryBusy.current = false
       }
@@ -150,7 +151,7 @@ function MainApplication({ services }: { services: AppServices }) {
     const show = async (report: StartupRecoveryReport, refreshLibrary: boolean, request: number) => {
       if (!isCurrent(request)) return
       if (report.failure != null) {
-        setRecoveryNotice({ status: 'error', message: startupRecoveryFailureMessage(report.failure), retry: () => void retry(), retryLabel: '重试启动恢复' })
+        setRecoveryNotice({ status: 'error', message: startupRecoveryFailureMessage(report.failure), retry: () => void retry(), retryLabel: uiText("重试启动恢复","Retry startup recovery") })
         return
       }
       const actions = report.recovered.length + report.quarantined.length + (report.indexRebuilt ? 1 : 0)
@@ -168,7 +169,7 @@ function MainApplication({ services }: { services: AppServices }) {
       try {
         await show(await recovery.load(), false, request)
       } catch {
-        if (isCurrent(request)) setRecoveryNotice({ status: 'error', message: '无法读取启动恢复报告。', retry: () => void load(), retryLabel: '重试读取恢复报告' })
+        if (isCurrent(request)) setRecoveryNotice({ status: 'error', message: uiText("无法读取启动恢复报告。","Could not read the startup recovery report."), retry: () => void load(), retryLabel: uiText("重试读取恢复报告","Retry reading the recovery report") })
       }
     }
     void load()
@@ -188,7 +189,7 @@ function MainApplication({ services }: { services: AppServices }) {
       if (!active) stop()
       else unlisten = stop
     }).catch(() => {
-      if (active) setCloseNotice({ status: 'error', message: '无法确认窗口关闭方式，窗口保持打开。' })
+      if (active) setCloseNotice({ status: 'error', message: uiText("无法确认窗口关闭方式，窗口保持打开。","Could not confirm how to close the window. It remains open.") })
     })
     return () => { active = false; unlisten?.() }
   }, [services.lifecycle])
@@ -209,11 +210,11 @@ function MainApplication({ services }: { services: AppServices }) {
       else {
         unlisten = stop
         void services.navigation?.setReady?.(true).catch(() => {
-          if (active) setCloseNotice({ status: 'error', message: '托盘导航尚未就绪，请在主窗口中重试。' })
+          if (active) setCloseNotice({ status: 'error', message: uiText("托盘导航尚未就绪，请在主窗口中重试。","Tray navigation is not ready. Try again in the main window.") })
         })
       }
     }).catch(() => {
-      if (active) setCloseNotice({ status: 'error', message: '无法响应托盘操作，请在主窗口中重试。' })
+      if (active) setCloseNotice({ status: 'error', message: uiText("无法响应托盘操作，请在主窗口中重试。","Could not complete the tray action. Try again in the main window.") })
     })
     return () => {
       active = false
@@ -230,8 +231,8 @@ function MainApplication({ services }: { services: AppServices }) {
       setCloseNotice({
         status: 'error',
         message: failure.action === 'setup'
-          ? '系统托盘暂时不可用，主窗口将保持可见。'
-          : '无法新建临时便笺，请在主窗口中重试。',
+          ? uiText("系统托盘暂时不可用，主窗口将保持可见。","The system tray is unavailable. The main window will stay visible.")
+          : uiText("无法新建临时便笺，请在主窗口中重试。","Could not create a sticky note. Try again in the main window."),
       })
     }).then((stop) => {
       if (!active) stop()
@@ -258,32 +259,32 @@ function MainApplication({ services }: { services: AppServices }) {
       setCloseChoice((current) => current === null ? null : {
         ...current,
         busy: false,
-        error: remember ? '设置未能保存，窗口保持打开。请重试或取消。' : '无法执行关闭操作，窗口保持打开。',
+        error: remember ? uiText("设置未能保存，窗口保持打开。请重试或取消。","Settings could not be saved. The window remains open. Retry or cancel.") : uiText("无法执行关闭操作，窗口保持打开。","Could not close safely. The window remains open."),
       })
     }
   }, [closeChoice?.busy, services.lifecycle, services.settings])
   useLifecycleParticipant(services.lifecycle, {
     prepare: async (signal) => {
-      setCloseNotice({ status: 'status', message: '正在安全保存…' })
+      setCloseNotice({ status: 'status', message: uiText("正在安全保存…","Saving safely…") })
       const release = await libraryRef.current?.prepareExit(signal) ?? null
       if (release === null) {
-        if (!signal.aborted) setCloseNotice({ status: 'error', message: '无法继续：请先解决保存错误，然后重试。' })
+        if (!signal.aborted) setCloseNotice({ status: 'error', message: uiText("无法继续：请先解决保存错误，然后重试。","Resolve the save error before continuing.") })
         return null
       }
       setCloseNotice({ status: 'idle' })
       return release
     },
-  }, () => setCloseNotice({ status: 'error', message: '无法确认安全保存，请重试。' }), (failure) => {
+  }, () => setCloseNotice({ status: 'error', message: uiText("无法确认安全保存，请重试。","Could not confirm that changes were saved. Try again.") }), (failure) => {
     const failedSticky = temporaryIdFromLifecycleParticipant(failure.participant)
     if (failedSticky === null || services.temporaryWindows === undefined) {
-      setCloseNotice({ status: 'error', message: '未能安全保存全部编辑内容，窗口保持打开，请检查后重试。' })
+      setCloseNotice({ status: 'error', message: uiText("未能安全保存全部编辑内容，窗口保持打开，请检查后重试。","Some changes could not be saved. The window remains open. Check your work and try again.") })
       return
     }
-    setCloseNotice({ status: 'status', message: '正在重新打开便笺…' })
+    setCloseNotice({ status: 'status', message: uiText("正在重新打开便笺…","Reopening sticky note…") })
     void services.temporaryWindows.show(failedSticky).then(() => {
-      setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，已重新打开，请检查后重试。' })
+      setCloseNotice({ status: 'error', message: uiText("一张隐藏便笺未能安全保存，已重新打开，请检查后重试。","A hidden sticky note could not be saved and has been reopened. Check it and try again.") })
     }).catch(() => {
-      setCloseNotice({ status: 'error', message: '一张隐藏便笺未能安全保存，请从临时便笺中打开并检查。' })
+      setCloseNotice({ status: 'error', message: uiText("一张隐藏便笺未能安全保存，请从临时便笺中打开并检查。","A hidden sticky note could not be saved. Open it from the sticky-note inbox and check it.") })
     })
   })
   const content = <>
@@ -386,7 +387,7 @@ function StickyApplication({ services, route }: { services: AppServices; route: 
         ? <StickyAppearanceLoadError onRetry={loadAppearance} />
         : ready
           ? <StickyWindowEntry services={services} route={route} autosaveDelayMs={appearance.autosaveDelayMs} />
-          : <main className="sticky-window"><p role="status">正在加载便笺外观…</p></main>}
+          : <main className="sticky-window"><p role="status">{uiText("正在加载便笺外观…","Loading sticky-note appearance…")}</p></main>}
     </div>
   )
 }
@@ -449,9 +450,9 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
     }
   }, [route.noteId, services.temporary])
   if (error || services.temporary === undefined || services.temporaryWindows === undefined) {
-    return <main className="sticky-window"><p role="alert">无法打开这张临时便笺。</p></main>
+    return <main className="sticky-window"><p role="alert">{uiText("无法打开这张临时便笺。","Could not open this sticky note.")}</p></main>
   }
-  if (note === null) return <main className="sticky-window"><p role="status">正在打开便笺…</p></main>
+  if (note === null) return <main className="sticky-window"><p role="status">{uiText("正在打开便笺…","Opening sticky note…")}</p></main>
   return (
     <StickyWindow
       note={note}
@@ -467,11 +468,11 @@ function StickyWindowEntry({ services, route, autosaveDelayMs }: { services: App
 }
 
 function SettingsLoadError({ onRetry }: { onRetry(): Promise<void> }) {
-  return <p className="settings-load-error" role="alert">无法加载设置，当前编辑内容保持不变。<button type="button" onClick={() => void onRetry()}>重试加载设置</button></p>
+  return <p className="settings-load-error" role="alert">{uiText("无法加载设置，当前编辑内容保持不变。","Could not load settings. Your current work is unchanged.")}<button type="button" onClick={() => void onRetry()}>{uiText("重试加载设置","Retry loading settings")}</button></p>
 }
 
 function StickyAppearanceLoadError({ onRetry }: { onRetry(): Promise<void> }) {
-  return <main className="sticky-window"><p role="alert">无法加载便笺外观。<button type="button" onClick={() => void onRetry()}>重试加载便笺外观</button></p></main>
+  return <main className="sticky-window"><p role="alert">{uiText("无法加载便笺外观。","Could not load sticky-note appearance.")}<button type="button" onClick={() => void onRetry()}>{uiText("重试加载便笺外观","Retry loading sticky-note appearance")}</button></p></main>
 }
 
 function useSystemColorScheme(): 'light' | 'dark' {

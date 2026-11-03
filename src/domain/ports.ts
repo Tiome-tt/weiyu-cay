@@ -165,10 +165,16 @@ export interface SearchPort {
   updateTags(noteId: NoteId, tags: string[]): Promise<string[]>
 }
 
+export interface LinkNeighborhood {
+  nodes: Array<{id:NoteId;title:string;distance:number}>
+  edges: Array<{source:NoteId;target:NoteId}>
+  truncated:boolean
+}
 export interface LinkPort {
   listTargets(): Promise<NoteSummary[]>
   resolve(noteId: NoteId): Promise<NoteSummary | null>
   backlinks(noteId: NoteId): Promise<NoteSummary[]>
+  neighborhood?(noteId:NoteId):Promise<LinkNeighborhood>
   renameTargetLabels(
     noteId: NoteId,
     title: string,
@@ -217,7 +223,17 @@ export interface LibraryCollapsedPreference {
 
 export type LibraryOutlineCollapsedPreference = Record<string, string[]>
 
+export interface PdfReadingPosition {
+  page: number
+  scale: number
+  scrollTop: number
+  scrollLeft: number
+}
+
+export type WindowPreferencePort = Pick<SystemPort, 'getWindowPreference' | 'setWindowPreference'>
+
 export interface WindowPreferenceMap {
+  [key: `pdf-reading:${string}`]: PdfReadingPosition
   'library-starred-notes': NoteId[]
   'library-columns': LibraryColumnPreference
   'library-collapsed': LibraryCollapsedPreference
@@ -408,10 +424,12 @@ export interface AiPort {
 }
 export interface FileImportResult {
   imported: NoteDocument[]
+  importedFolders?: Folder[]
   failed: Array<{ name: string; message: string }>
 }
 export interface ExportSelection { filename: string; directory?: string }
 export interface FilePort {
+  createHtmlPreview?(noteId: NoteId): Promise<string>
   chooseExportDirectory?(): Promise<string | null>
   readOfficeParts?(noteId: NoteId): Promise<Array<{ name: string; text: string }>>
   saveTextExport?(noteId: NoteId, text: string, title: string, format: 'text' | 'html', selection?: ExportSelection): Promise<boolean>
