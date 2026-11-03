@@ -110,8 +110,41 @@ jobs:
       - name: Build unsigned desktop bundle
         run: pnpm tauri build
 
-  build:
+  prepare-draft:
     needs: [verify-tag, verify-gates]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out version record
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Create candidate draft once before parallel asset uploads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_CHANNEL: ${{ needs.verify-tag.outputs.channel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft > "$RUNNER_TEMP/cay-draft-state" 2>/dev/null; then
+            test "$(cat "$RUNNER_TEMP/cay-draft-state")" = true || { echo 'Cannot replace published release assets.' >&2; exit 1; }
+            exit 0
+          fi
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync} from 'node:fs'
+          const version=process.env.TAG_NAME.slice(1)
+          const entry=readFileSync('CHANGELOG.md','utf8').split(`### ${version} ·`)[1]?.split('\n### ')[0]
+          if(!entry)throw new Error('Missing changelog entry')
+          writeFileSync(`${process.env.RUNNER_TEMP}/cay-release-body.md`,`# Cay ${process.env.TAG_NAME}\n${entry}`)
+          NODE
+          args=()
+          if [ "$RELEASE_CHANNEL" = rc ]; then args+=(--prerelease); fi
+          gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "Cay $TAG_NAME" --notes-file "$RUNNER_TEMP/cay-release-body.md" "${args[@]}"
+
+  build:
+    needs: [verify-tag, verify-gates, prepare-draft]
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
@@ -119,8 +152,8 @@ jobs:
       VITE_CAY_LOCALE: ${{ matrix.locale }}
     strategy:
       fail-fast: false
-      # Keep draft asset writers serialized; generate both language manifests after all builds.
-      max-parallel: 1
+      # Asset names are disjoint; generate shared manifests only after all builds.
+      max-parallel: 4
       matrix:
         include:
           - os: windows-latest
@@ -246,18 +279,6 @@ jobs:
         run: |
           set -euo pipefail
           node --experimental-strip-types scripts/localized-release.ts --mode package --version "${TAG_NAME#v}" --platform '${{ matrix.platform }}' --locale '${{ matrix.locale }}' --root 'src-tauri/target/${{ matrix.target }}/release/bundle' --output "$RUNNER_TEMP/cay-release-assets"
-          if ! gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            node --input-type=module <<'NODE'
-          import {readFileSync,writeFileSync} from 'node:fs'
-          const version=process.env.TAG_NAME.slice(1)
-          const entry=readFileSync('CHANGELOG.md','utf8').split(`### ${version} ·`)[1]?.split('\n### ')[0]
-          if(!entry)throw new Error('Missing changelog entry')
-          writeFileSync(`${process.env.RUNNER_TEMP}/cay-release-body.md`,`# Cay ${process.env.TAG_NAME}\n${entry}`)
-          NODE
-            args=()
-            if [ "$RELEASE_CHANNEL" = rc ]; then args+=(--prerelease); fi
-            gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "Cay $TAG_NAME" --notes-file "$RUNNER_TEMP/cay-release-body.md" "${args[@]}"
-          fi
           gh release upload "$TAG_NAME" "$RUNNER_TEMP/cay-release-assets/"* --repo "$GITHUB_REPOSITORY" --clobber
       - name: Remove temporary release configuration
         if: always()
